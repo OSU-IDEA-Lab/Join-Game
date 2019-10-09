@@ -1708,12 +1708,42 @@ typedef struct JoinState
  *		NullInnerTupleSlot prepared null tuple for left outer joins
  * ----------------
  */
+
+typedef struct RelationPage {
+	int reward;
+	TupleTableSlot* tuples[8]; //TODO change this to a hash-set
+	int index;
+	int tupleCount;
+	bool hasReachedEndOfRelation;
+} RelationPage;
+
 typedef struct NestLoopState
 {
 	JoinState	js;				/* its first field is NodeTag */
 	bool		nl_NeedNewOuter;
 	bool		nl_MatchedOuter;
 	TupleTableSlot *nl_NullInnerTupleSlot;
+
+
+	RelationPage *relationPages[391]; //TODO chat this array into a heap
+	int activeRelationPages;
+	RelationPage *outerPage;
+	RelationPage *innerPage;
+
+	int lastReward;
+	bool isExploring;
+	
+	bool needOuterPage;
+	bool needInnerPage;
+	int exploitStepCounter;
+	int innerPageCounter;
+	int innerPageCounterTotal;
+	int outerPageCounter;
+	int forLoopCounter;
+	bool outerDone;
+	int innerTupleCounter;
+	int outerTupleCounter;
+
 } NestLoopState;
 
 /* ----------------

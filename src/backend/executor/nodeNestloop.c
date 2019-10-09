@@ -25,6 +25,7 @@
 #include "executor/nodeNestloop.h"
 #include "miscadmin.h"
 #include "utils/memutils.h"
+#include "utils/guc.h"
 
 
 /* ----------------------------------------------------------------
@@ -49,16 +50,287 @@
  *		  -- outerTuple contains current tuple from outer relation and
  *			 the right son(inner relation) maintains "cursor" at the tuple
  *			 returned previously.
- *				This is achieved by maintaining a scan position on the outer
- *				relation.
+ *				This is achieved by maintaining a scan position on the outer *				relation.
  *
  *		Initial States:
  *		  -- the outer child and the inner child
  *			   are prepared to return the first tuple.
  * ----------------------------------------------------------------
  */
+
+
+const int PAGE_SIZE = 8;
+const int SQRT_OF_N = 391; // this is sqrt of inner relation page count
+const int INNER_PAGE_COUNT = 152904; // inner relation page count 
+// outer has 26664 tuples, 3333 pages
+// inner has 1225105 tuples, 153138.1 pages
+// inner has alsmot 1.2M and 150K pages
+
+static RelationPage* CreateRelationPage() {
+	RelationPage* relationPage = palloc(sizeof(RelationPage));
+	int i;
+	relationPage->index = 0;
+	relationPage->tupleCount = 0;
+	relationPage->hasReachedEndOfRelation = false;
+	relationPage->reward = 0;
+	for (i = 0; i < PAGE_SIZE; i++){
+		relationPage->tuples[i] = NULL;
+	}
+	return relationPage;
+}
+
+static void RemoveRelationPage(RelationPage* relationPage) {
+	int i;
+	for (i = 0; i < PAGE_SIZE; i++){
+		if (!TupIsNull(relationPage->tuples[i])) {
+			ExecDropSingleTupleTableSlot(relationPage->tuples[i]);
+		}
+	}
+	pfree(relationPage);
+}
+
+static int LoadNextPage(PlanState* planState, RelationPage* relationPage) {
+	int i;
+	if (relationPage == NULL){
+		elog(ERROR, "LoadNextPage: null page");
+	}
+	relationPage->index = 0;
+	relationPage->tupleCount = 0;
+	relationPage->hasReachedEndOfRelation = false;
+	relationPage->reward = 0;
+	for (i = 0; i < PAGE_SIZE; i++) {
+	 	TupleTableSlot* tts = ExecProcNode(planState);
+		if (TupIsNull(tts)){
+			relationPage->hasReachedEndOfRelation = true;
+			relationPage->tuples[i] = NULL;
+			break;
+		} else {
+			if (!TupIsNull(relationPage->tuples[i])) {
+				// ExecClearTuple(relationPage->tuples[i]);
+				ExecDropSingleTupleTableSlot(relationPage->tuples[i]);
+			}
+			relationPage->tuples[i] = MakeSingleTupleTableSlot(tts->tts_tupleDescriptor);
+			ExecCopySlot(relationPage->tuples[i], tts);
+			// relationPage->tuples[i] = MakeSingleTupleTableSlot(CreateTupleDescCopy(tts->tts_tupleDescriptor));
+			// relationPage->tuples[i]->tts_tuple = ExecCopySlotTuple(tts);
+			relationPage->tupleCount++;
+		}	
+	}
+	return relationPage->tupleCount;
+}
+
+static RelationPage* PopBestPage(NestLoopState *node) {
+	int bestPageIndex = 0;
+	int i;
+	int size;
+	RelationPage* tmp;
+	size = node->activeRelationPages;
+	for (i = 1; i < size; i++) {
+		if (node->relationPages[i]->reward > node->relationPages[bestPageIndex]->reward) {
+			bestPageIndex = i;
+		}
+	}
+	tmp = node->relationPages[size - 1];
+	node->relationPages[size - 1] = node->relationPages[bestPageIndex];
+	node->relationPages[bestPageIndex] = tmp;
+	node->activeRelationPages--;
+
+	return node->relationPages[size - 1];
+}
+
+static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
+{
+	NestLoopState *node = castNode(NestLoopState, pstate);
+	NestLoop   *nl;
+	PlanState  *innerPlan;
+	PlanState  *outerPlan;
+	TupleTableSlot *outerTupleSlot;
+	TupleTableSlot *innerTupleSlot;
+	ExprState  *joinqual;
+	ExprState  *otherqual;
+	ExprContext *econtext;
+	ListCell   *lc;
+
+	CHECK_FOR_INTERRUPTS();
+
+	/*
+	 * get information from the node
+	 */
+	ENL1_printf("getting info from node");
+
+	nl = (NestLoop *) node->js.ps.plan;
+	joinqual = node->js.joinqual;
+	otherqual = node->js.ps.qual;
+	outerPlan = outerPlanState(node);
+	innerPlan = innerPlanState(node);
+	econtext = node->js.ps.ps_ExprContext;
+
+	/*
+	 * Reset per-tuple memory context to free any expression evaluation
+	 * storage allocated in the previous tuple cycle.
+	 */
+	ResetExprContext(econtext);
+
+	/*
+	 * Ok, everything is setup for the join so now loop until we return a
+	 * qualifying join tuple.
+	 */
+	ENL1_printf("entering main loop");
+
+	for (;;)
+	{
+		node->forLoopCounter++;
+		if (node->needOuterPage) {
+			if (!node->outerPage->hasReachedEndOfRelation){
+				if (node->activeRelationPages < SQRT_OF_N) { 
+					node->isExploring = true;
+					LoadNextPage(outerPlan, node->outerPage);
+					node->outerTupleCounter += node->outerPage->tupleCount;
+					node->outerPageCounter++;
+				} else { // if (node->activeRelationPages == SQRT_OF_N
+					node->outerPage = PopBestPage(node);
+					node->outerPage->index = 0;
+					node->isExploring = false;
+				}  
+				node->lastReward = 0;
+			} else {
+				if (node->activeRelationPages > 0) { // still has pages in stack
+					node->outerPage = PopBestPage(node);
+					node->isExploring = false;
+				} else { // join is done
+					elog(INFO, "  total inner pages: %d, current inner pages: %d outer pages: %d ", 
+							node->innerPageCounterTotal, node->innerPageCounter, node->outerPageCounter);
+					elog(INFO, "join done!");
+					return NULL;
+				}
+			}
+			node->needOuterPage = false;
+			node->needInnerPage = true;
+		}
+		if (node->needInnerPage) {
+			LoadNextPage(innerPlan, node->innerPage);
+			node->innerTupleCounter += node->innerPage->tupleCount;
+			if (node->innerPage->tupleCount < PAGE_SIZE){ // reached end of inner relation
+				node->innerPageCounter = 0;
+				// Getting ready for rescan
+				foreach(lc, nl->nestParams)
+				{
+					NestLoopParam *nlp = (NestLoopParam *) lfirst(lc);
+					int paramno = nlp->paramno;
+					ParamExecData *prm;
+
+					prm = &(econtext->ecxt_param_exec_vals[paramno]);
+					// Param value should be an OUTER_VAR var 
+					Assert(IsA(nlp->paramval, Var));
+					Assert(nlp->paramval->varno == OUTER_VAR);
+					Assert(nlp->paramval->varattno > 0);
+					// prm->value = slot_getattr(outerTupleSlot,
+					prm->value = slot_getattr(node->outerPage->tuples[0],
+							nlp->paramval->varattno,
+							&(prm->isnull));
+					// Flag parameter value as changed 
+					innerPlan->chgParam = bms_add_member(innerPlan->chgParam, paramno);
+				}
+				ExecReScan(innerPlan);
+				continue;//TODO this can be improved to use the last inner page completely
+			}
+			node->innerPageCounter++;
+			node->innerPageCounterTotal++;
+			node->needInnerPage = false;
+			continue;
+		} 
+		if (node->innerPage->index == node->innerPage->tupleCount
+			&& node->outerPage->index < node->outerPage->tupleCount - 1) {
+			node->outerPage->index++;
+			node->innerPage->index = 0;
+		} else if (node->innerPage->index == node->innerPage->tupleCount
+			&& node->outerPage->index == node->outerPage->tupleCount - 1) {
+			node->needInnerPage = true;
+			if (node->isExploring && node->lastReward > 0) { //stay with current
+				node->outerPage->index = 0;
+				node->lastReward = 0;
+			} else if (node->isExploring && node->lastReward == 0) {
+				node->outerPage->reward = node->lastReward;
+				//push the current explored page
+				node->relationPages[node->activeRelationPages++] = node->outerPage;
+				node->needOuterPage = true;
+			} else if (!node->isExploring && node->exploitStepCounter < INNER_PAGE_COUNT) { 
+				node->outerPage->index = 0;
+				node->exploitStepCounter++;
+			} else if (!node->isExploring && node->exploitStepCounter == INNER_PAGE_COUNT) {
+				node->exploitStepCounter = 0;
+				node->needOuterPage = true;
+			} else {
+				elog(ERROR, "Khiarlikh...");
+			}
+			continue;
+		}
+
+		outerTupleSlot = node->outerPage->tuples[node->outerPage->index];
+		econtext->ecxt_outertuple = outerTupleSlot;
+		innerTupleSlot = node->innerPage->tuples[node->innerPage->index]; 
+		econtext->ecxt_innertuple = innerTupleSlot;
+		node->innerPage->index++;
+		if (TupIsNull(innerTupleSlot)){
+			elog(INFO, "inner index: %d, count: %d", node->innerPage->index, node->innerPage->tupleCount);
+			elog(INFO, "inner pages: %d, tuples: %d", node->innerPageCounter, node->innerTupleCounter);
+			elog(ERROR, "inner tuple is null");
+		}
+		if (TupIsNull(outerTupleSlot)){
+			elog(INFO, "outer index: %d, count: %d", node->outerPage->index, node->outerPage->tupleCount);
+			elog(ERROR, "outer tuple is null");
+		}
+
+		/*
+		 * at this point we have a new pair of inner and outer tuples so we
+		 * test the inner and outer tuples to see if they satisfy the node's
+		 * qualification.
+		 *
+		 * Only the joinquals determine MatchedOuter status, but all quals
+		 * must pass to actually return the tuple.
+		 */
+		ENL1_printf("testing qualification");
+		/*
+		if (TupIsNull(outerTupleSlot) || TupIsNull(innerTupleSlot)){
+			elog(INFO, "one is null");
+		}
+		elog(INFO, "for loop: %d", node->forLoopCounter);
+		if (node->forLoopCounter > 220000){
+			elog(INFO, "for loop: %d", node->forLoopCounter);
+		}
+		*/
+		if (ExecQual(joinqual, econtext))
+		{
+
+			if (otherqual == NULL || ExecQual(otherqual, econtext))
+			{
+				/*
+				 * qualification was satisfied so we project and return the
+				 * slot containing the result tuple using ExecProject().
+				 */
+				ENL1_printf("qualification succeeded, projecting tuple");
+				node->lastReward++;
+				return ExecProject(node->js.ps.ps_ProjInfo);
+			}
+			else
+				InstrCountFiltered2(node, 1);
+		}
+		else
+			InstrCountFiltered1(node, 1);
+
+		/*
+		 * Tuple fails qual, so free per-tuple memory and try again.
+		 */
+		ResetExprContext(econtext);
+
+		ENL1_printf("qualification failed, looping");
+	}
+}
+
+
+
 static TupleTableSlot *
-ExecNestLoop(PlanState *pstate)
+ExecRegularNestLoop(PlanState *pstate)
 {
 	NestLoopState *node = castNode(NestLoopState, pstate);
 	NestLoop   *nl;
@@ -255,6 +527,20 @@ ExecNestLoop(PlanState *pstate)
 	}
 }
 
+
+static TupleTableSlot* ExecNestLoop(PlanState *pstate)
+{
+	TupleTableSlot *tts;
+	const char* fastjoin = GetConfigOption("enable_fastjoin", false, false);
+	if (strcmp(fastjoin, "on") == 0){
+		tts = ExecFastNestLoop(pstate);
+	} else {
+		tts = ExecRegularNestLoop(pstate);
+	}
+	return tts;
+}
+
+
 /* ----------------------------------------------------------------
  *		ExecInitNestLoop
  * ----------------------------------------------------------------
@@ -345,9 +631,28 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->nl_NeedNewOuter = true;
 	nlstate->nl_MatchedOuter = false;
 
+	/* Extra inits for our method */
+	// TODO set m based on relation size
+	nlstate->activeRelationPages = 0;
+	nlstate->isExploring = true;
+	nlstate->lastReward = 0;
+	nlstate->needOuterPage = true;
+	nlstate->needInnerPage = true;
+	nlstate->exploitStepCounter = 0;
+	nlstate->innerPageCounter = 0;
+	nlstate->innerPageCounterTotal = 0;
+	nlstate->outerPageCounter = 0;
+	nlstate->forLoopCounter = 0;
+	nlstate->outerDone = false;
+	nlstate->innerTupleCounter = 0;
+	nlstate->outerTupleCounter = 0;
+	nlstate->outerPage = CreateRelationPage();  
+	nlstate->innerPage = CreateRelationPage();
+
 	NL1_printf("ExecInitNestLoop: %s\n",
 			   "node initialized");
-
+	elog(INFO, "ExecInitNestLoop: %s\n",
+			   "node initialized");
 	return nlstate;
 }
 
@@ -360,6 +665,7 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 void
 ExecEndNestLoop(NestLoopState *node)
 {
+	elog(INFO, "ExecEndNestLoop");
 	NL1_printf("ExecEndNestLoop: %s\n",
 			   "ending node processing");
 
@@ -381,6 +687,9 @@ ExecEndNestLoop(NestLoopState *node)
 
 	NL1_printf("ExecEndNestLoop: %s\n",
 			   "node processing ended");
+	// Added
+	RemoveRelationPage(node->outerPage);
+	RemoveRelationPage(node->innerPage);
 }
 
 /* ----------------------------------------------------------------
@@ -405,6 +714,4 @@ ExecReScanNestLoop(NestLoopState *node)
 	 * outer Vars are used as run-time keys...
 	 */
 
-	node->nl_NeedNewOuter = true;
-	node->nl_MatchedOuter = false;
 }
