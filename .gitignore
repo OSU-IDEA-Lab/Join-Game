@@ -42,3 +42,6 @@ lib*.pc
 /Debug/
 /Release/
 /tmp_install/
+
+# Output logs
+*.out
