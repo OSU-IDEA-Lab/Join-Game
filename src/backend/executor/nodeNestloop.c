@@ -67,8 +67,8 @@ const int INNER_PAGE_COUNT = 152904; // inner relation page count
 // inner has alsmot 1.2M and 150K pages
 
 static RelationPage* CreateRelationPage() {
-	RelationPage* relationPage = palloc(sizeof(RelationPage));
 	int i;
+	RelationPage* relationPage = palloc(sizeof(RelationPage));
 	relationPage->index = 0;
 	relationPage->tupleCount = 0;
 	relationPage->hasReachedEndOfRelation = false;
@@ -98,6 +98,12 @@ static int LoadNextPage(PlanState* planState, RelationPage* relationPage) {
 	relationPage->tupleCount = 0;
 	relationPage->hasReachedEndOfRelation = false;
 	relationPage->reward = 0;
+	// Remove the old stored tuples
+	for (i = 0; i < PAGE_SIZE; i++) {
+		if (!TupIsNull(relationPage->tuples[i])) {
+			ExecDropSingleTupleTableSlot(relationPage->tuples[i]);
+		}
+	}
 	for (i = 0; i < PAGE_SIZE; i++) {
 	 	TupleTableSlot* tts = ExecProcNode(planState);
 		if (TupIsNull(tts)){
@@ -105,14 +111,8 @@ static int LoadNextPage(PlanState* planState, RelationPage* relationPage) {
 			relationPage->tuples[i] = NULL;
 			break;
 		} else {
-			if (!TupIsNull(relationPage->tuples[i])) {
-				// ExecClearTuple(relationPage->tuples[i]);
-				ExecDropSingleTupleTableSlot(relationPage->tuples[i]);
-			}
 			relationPage->tuples[i] = MakeSingleTupleTableSlot(tts->tts_tupleDescriptor);
 			ExecCopySlot(relationPage->tuples[i], tts);
-			// relationPage->tuples[i] = MakeSingleTupleTableSlot(CreateTupleDescCopy(tts->tts_tupleDescriptor));
-			// relationPage->tuples[i]->tts_tuple = ExecCopySlotTuple(tts);
 			relationPage->tupleCount++;
 		}	
 	}
@@ -120,11 +120,12 @@ static int LoadNextPage(PlanState* planState, RelationPage* relationPage) {
 }
 
 static RelationPage* PopBestPage(NestLoopState *node) {
-	int bestPageIndex = 0;
+	int bestPageIndex;
 	int i;
 	int size;
 	RelationPage* tmp;
 	size = node->activeRelationPages;
+	bestPageIndex = 0;
 	for (i = 1; i < size; i++) {
 		if (node->relationPages[i]->reward > node->relationPages[bestPageIndex]->reward) {
 			bestPageIndex = i;
@@ -182,21 +183,26 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 		node->forLoopCounter++;
 		if (node->needOuterPage) {
 			if (!node->outerPage->hasReachedEndOfRelation){
+				elog(INFO, "Reading outer. Pages so far: %d", node->outerPageCounter);
 				if (node->activeRelationPages < SQRT_OF_N) { 
 					node->isExploring = true;
 					LoadNextPage(outerPlan, node->outerPage);
 					node->outerTupleCounter += node->outerPage->tupleCount;
 					node->outerPageCounter++;
+					node->lastReward = 0;
 				} else { // if (node->activeRelationPages == SQRT_OF_N
 					node->outerPage = PopBestPage(node);
 					node->outerPage->index = 0;
 					node->isExploring = false;
+					node->exploitStepCounter = 0;
 				}  
-				node->lastReward = 0;
 			} else {
+				elog(INFO, "Outer done. stack size: %d", node->activeRelationPages);
 				if (node->activeRelationPages > 0) { // still has pages in stack
 					node->outerPage = PopBestPage(node);
+					node->outerPage->index = 0;
 					node->isExploring = false;
+					node->exploitStepCounter = 0;
 				} else { // join is done
 					elog(INFO, "  total inner pages: %d, current inner pages: %d outer pages: %d ", 
 							node->innerPageCounterTotal, node->innerPageCounter, node->outerPageCounter);
@@ -209,9 +215,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 		}
 		if (node->needInnerPage) {
 			LoadNextPage(innerPlan, node->innerPage);
-			node->innerTupleCounter += node->innerPage->tupleCount;
-			if (node->innerPage->tupleCount < PAGE_SIZE){ // reached end of inner relation
-				node->innerPageCounter = 0;
+			if (node->innerPage->hasReachedEndOfRelation) {
 				// Getting ready for rescan
 				foreach(lc, nl->nestParams)
 				{
@@ -231,41 +235,44 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 					// Flag parameter value as changed 
 					innerPlan->chgParam = bms_add_member(innerPlan->chgParam, paramno);
 				}
+				node->innerPageCounter = 0;
+				node->outerPage->hasReachedEndOfRelation = false;
 				ExecReScan(innerPlan);
-				continue;//TODO this can be improved to use the last inner page completely
-			}
+				if (node->innerPage->tupleCount == 0) {
+					continue;
+				}
+			} 
+			node->innerTupleCounter += node->innerPage->tupleCount;
 			node->innerPageCounter++;
 			node->innerPageCounterTotal++;
 			node->needInnerPage = false;
-			continue;
 		} 
-		if (node->innerPage->index == node->innerPage->tupleCount
-			&& node->outerPage->index < node->outerPage->tupleCount - 1) {
-			node->outerPage->index++;
-			node->innerPage->index = 0;
-		} else if (node->innerPage->index == node->innerPage->tupleCount
-			&& node->outerPage->index == node->outerPage->tupleCount - 1) {
-			node->needInnerPage = true;
-			if (node->isExploring && node->lastReward > 0) { //stay with current
-				node->outerPage->index = 0;
-				node->lastReward = 0;
-			} else if (node->isExploring && node->lastReward == 0) {
-				node->outerPage->reward = node->lastReward;
-				//push the current explored page
-				node->relationPages[node->activeRelationPages++] = node->outerPage;
-				node->needOuterPage = true;
-			} else if (!node->isExploring && node->exploitStepCounter < INNER_PAGE_COUNT) { 
-				node->outerPage->index = 0;
-				node->exploitStepCounter++;
-			} else if (!node->isExploring && node->exploitStepCounter == INNER_PAGE_COUNT) {
-				node->exploitStepCounter = 0;
-				node->needOuterPage = true;
+		if (node->innerPage->index == node->innerPage->tupleCount) {
+			if (node->outerPage->index < node->outerPage->tupleCount - 1) {
+				node->outerPage->index++;
+				node->innerPage->index = 0;
 			} else {
-				elog(ERROR, "Khiarlikh...");
+				node->needInnerPage = true;
+				if (node->isExploring && node->lastReward > 0) { //stay with current
+					node->outerPage->index = 0;
+					node->outerPage->reward += node->lastReward;
+					node->lastReward = 0;
+				} else if (node->isExploring && node->lastReward == 0) {
+					//push the current explored page
+					node->relationPages[node->activeRelationPages++] = node->outerPage;
+					node->needOuterPage = true;
+				} else if (!node->isExploring && node->exploitStepCounter < INNER_PAGE_COUNT) { 
+					node->outerPage->index = 0;
+					node->exploitStepCounter++;
+				} else if (!node->isExploring && node->exploitStepCounter == INNER_PAGE_COUNT) {
+					// Done with this outer page forever
+					node->needOuterPage = true;
+				} else {
+					elog(ERROR, "Khiarlikh...");
+				}
+				continue;
 			}
-			continue;
 		}
-
 		outerTupleSlot = node->outerPage->tuples[node->outerPage->index];
 		econtext->ecxt_outertuple = outerTupleSlot;
 		innerTupleSlot = node->innerPage->tuples[node->innerPage->index]; 
