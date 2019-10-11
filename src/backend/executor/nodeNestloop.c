@@ -236,7 +236,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 					innerPlan->chgParam = bms_add_member(innerPlan->chgParam, paramno);
 				}
 				node->innerPageCounter = 0;
-				node->outerPage->hasReachedEndOfRelation = false;
+				node->innerPage->hasReachedEndOfRelation = false;
 				ExecReScan(innerPlan);
 				if (node->innerPage->tupleCount == 0) {
 					continue;
