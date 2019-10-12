@@ -1743,6 +1743,7 @@ typedef struct NestLoopState
 	bool outerDone;
 	int innerTupleCounter;
 	int outerTupleCounter;
+	int nestloopInstance;
 
 } NestLoopState;
 
