@@ -58,14 +58,14 @@
  * ----------------------------------------------------------------
  */
 
+// Stats 
+// const int PAGE_SIZE = 8;
+// const int SQRT_OF_N = 46; // this is sqrt of inner relation page count
+// const int INNER_PAGE_COUNT = 2147; // inner relation page count 
 
 const int PAGE_SIZE = 8;
-const int SQRT_OF_N = 46; // this is sqrt of inner relation page count
-const int INNER_PAGE_COUNT = 2147; // inner relation page count 
-
-// const int PAGE_SIZE = 8;
-// const int SQRT_OF_N = 391; // this is sqrt of inner relation page count
-// const int INNER_PAGE_COUNT = 152904; // inner relation page count 
+const int SQRT_OF_N = 391; // this is sqrt of inner relation page count
+const int INNER_PAGE_COUNT = 152904; // inner relation page count 
 
 // outer has 26664 tuples, 3333 pages
 // inner has 1225105 tuples, 153138.1 pages
@@ -136,13 +136,11 @@ static RelationPage* PopBestPage(NestLoopState *node) {
 	RelationPage* tmp;
 	size = node->activeRelationPages;
 	bestPageIndex = 0;
-	/*
 	for (i = 1; i < size; i++) {
 		if (node->relationPages[i]->reward > node->relationPages[bestPageIndex]->reward) {
 			bestPageIndex = i;
 		}
 	}
-	*/
 	tmp = node->relationPages[size - 1];
 	node->relationPages[size - 1] = node->relationPages[bestPageIndex];
 	node->relationPages[bestPageIndex] = tmp;
@@ -193,9 +191,9 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 	if (nl->join.inner_unique)
 		elog(WARNING, "inner relation is detected as unique");
 
-	// TODO enable max in pop func
 	// TODO check for dups
-	// TODO when we want to do a complete join for a given outer page, the current counter system doesn't work 
+	// TODO why the row counts in the lefttree Plan are larger than their actual size (2260 instead of 100 on small dataset)
+	// 	if the above is currect, the INNER_PAGE_COUNT should be revised 
 	for (;;)
 	{
 		if (node->needOuterPage) {
@@ -227,9 +225,10 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 				} else { // join is done
 					elog(INFO, "Read outer pages: %d", node->outerPageCounter);
 					elog(INFO, "Read outer tuples: %d", node->outerTupleCounter);
-					elog(INFO, "Read inner pages: %d", node->innerPageCounter);
+					elog(INFO, "Read inner pages: %d", node->innerPageCounterTotal);
 					elog(INFO, "Read inner tuples: %d", node->innerTupleCounter);
 					elog(INFO, "Generated joins: %d", node->generatedJoins);
+					elog(INFO, "Rescan Count: %d", node->rescanCount);
 					return NULL;
 				}
 			}
@@ -259,6 +258,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 				}
 				node->innerPageCounter = 0;
 				ExecReScan(innerPlan);
+				node->rescanCount++;
 				node->reachedEndOfInner = false;
 			}
 			LoadNextPage(innerPlan, node->innerPage);
@@ -375,11 +375,13 @@ static TupleTableSlot* ExecPagedNestLoop(PlanState *pstate)
 			node->outerPageCounter++;
 			node->needOuterPage = false;
 			if (node->outerPage->tupleCount < PAGE_SIZE){ // join done
+				RemoveRelationPage(&(node->outerPage));
 				elog(INFO, "Read outer pages: %d", node->outerPageCounter);
 				elog(INFO, "Read outer tuples: %d", node->outerTupleCounter);
 				elog(INFO, "Read inner pages: %d", node->innerPageCounter);
 				elog(INFO, "Read inner tuples: %d", node->innerTupleCounter);
 				elog(INFO, "Generated joins: %d", node->generatedJoins);
+				elog(INFO, "Rescan count: %d", node->rescanCount);
 				return NULL; 
 			}
 		}
@@ -410,10 +412,9 @@ static TupleTableSlot* ExecPagedNestLoop(PlanState *pstate)
 				}
 				ENL1_printf("rescanning inner plan");
 				ExecReScan(innerPlan);
-				node->innerTupleCounter = 0;
-				node->innerPageCounter = 0;
+				node->rescanCount++;
 				node->needInnerPage = true;
-				RemoveRelationPage(node->outerPage);
+				RemoveRelationPage(&(node->outerPage));
 				node->needOuterPage = true;
 				continue;
 			}
@@ -780,14 +781,16 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->innerTupleCounter = 0;
 	nlstate->outerTupleCounter = 0;
 	nlstate->generatedJoins = 0;
+	nlstate->rescanCount = 0;
 
 	// nlstate->outerPage = CreateRelationPage();  
 	nlstate->innerPage = CreateRelationPage();
 
 	NL1_printf("ExecInitNestLoop: %s\n",
 			   "node initialized");
-	elog(INFO, "ExecInitNestLoop: %s\n",
-			   "node initialized");
+	elog(INFO, "ExecInitNestloop");
+	elog_node_display(INFO,"Left: ", node->join.plan.lefttree, true);
+	elog_node_display(INFO,"Right: ", node->join.plan.righttree, true);
 	return nlstate;
 }
 
