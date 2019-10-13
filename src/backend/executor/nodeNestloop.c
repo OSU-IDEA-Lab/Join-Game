@@ -59,13 +59,13 @@
  */
 
 
-// const int PAGE_SIZE = 8;
-// const int SQRT_OF_N = 46; // this is sqrt of inner relation page count
-// const int INNER_PAGE_COUNT = 2147; // inner relation page count 
-
 const int PAGE_SIZE = 8;
-const int SQRT_OF_N = 391; // this is sqrt of inner relation page count
-const int INNER_PAGE_COUNT = 152904; // inner relation page count 
+const int SQRT_OF_N = 46; // this is sqrt of inner relation page count
+const int INNER_PAGE_COUNT = 2147; // inner relation page count 
+
+// const int PAGE_SIZE = 8;
+// const int SQRT_OF_N = 391; // this is sqrt of inner relation page count
+// const int INNER_PAGE_COUNT = 152904; // inner relation page count 
 
 // outer has 26664 tuples, 3333 pages
 // inner has 1225105 tuples, 153138.1 pages
@@ -207,7 +207,6 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 					node->outerPage = CreateRelationPage(); 
 					LoadNextPage(outerPlan, node->outerPage);
 					if (node->outerPage->tupleCount < PAGE_SIZE) {
-						elog(INFO, "check");
 						node->reachedEndOfOuter = true;
 					}
 					node->outerTupleCounter += node->outerPage->tupleCount;
@@ -226,9 +225,11 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 					node->isExploring = false;
 					node->exploitStepCounter = 0;
 				} else { // join is done
-					elog(INFO, "  total inner pages: %d, current inner pages: %d outer pages: %d ", 
-							node->innerPageCounterTotal, node->innerPageCounter, node->outerPageCounter);
-					elog(INFO, "join done!");
+					elog(INFO, "Read outer pages: %d", node->outerPageCounter);
+					elog(INFO, "Read outer tuples: %d", node->outerTupleCounter);
+					elog(INFO, "Read inner pages: %d", node->innerPageCounter);
+					elog(INFO, "Read inner tuples: %d", node->innerTupleCounter);
+					elog(INFO, "Generated joins: %d", node->generatedJoins);
 					return NULL;
 				}
 			}
@@ -321,6 +322,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 			{
 				ENL1_printf("qualification succeeded, projecting tuple");
 				node->lastReward++;
+				node->generatedJoins++;
 				return ExecProject(node->js.ps.ps_ProjInfo);
 			}
 			else
@@ -372,7 +374,14 @@ static TupleTableSlot* ExecPagedNestLoop(PlanState *pstate)
 			node->outerTupleCounter += node->outerPage->tupleCount;
 			node->outerPageCounter++;
 			node->needOuterPage = false;
-			if (node->outerPage->tupleCount < PAGE_SIZE) return NULL; //join done
+			if (node->outerPage->tupleCount < PAGE_SIZE){ // join done
+				elog(INFO, "Read outer pages: %d", node->outerPageCounter);
+				elog(INFO, "Read outer tuples: %d", node->outerTupleCounter);
+				elog(INFO, "Read inner pages: %d", node->innerPageCounter);
+				elog(INFO, "Read inner tuples: %d", node->innerTupleCounter);
+				elog(INFO, "Generated joins: %d", node->generatedJoins);
+				return NULL; 
+			}
 		}
 		if (node->needInnerPage) {
 			LoadNextPage(innerPlan, node->innerPage);
@@ -404,6 +413,7 @@ static TupleTableSlot* ExecPagedNestLoop(PlanState *pstate)
 				node->innerTupleCounter = 0;
 				node->innerPageCounter = 0;
 				node->needInnerPage = true;
+				RemoveRelationPage(node->outerPage);
 				node->needOuterPage = true;
 				continue;
 			}
@@ -437,6 +447,7 @@ static TupleTableSlot* ExecPagedNestLoop(PlanState *pstate)
 		if (ExecQual(joinqual, econtext)) {
 			if (otherqual == NULL || ExecQual(otherqual, econtext)) {
 				ENL1_printf("qualification succeeded, projecting tuple");
+				node->generatedJoins++;
 				return ExecProject(node->js.ps.ps_ProjInfo);
 			}
 			else
@@ -768,6 +779,8 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->reachedEndOfInner = false;
 	nlstate->innerTupleCounter = 0;
 	nlstate->outerTupleCounter = 0;
+	nlstate->generatedJoins = 0;
+
 	// nlstate->outerPage = CreateRelationPage();  
 	nlstate->innerPage = CreateRelationPage();
 

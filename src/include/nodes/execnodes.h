@@ -1743,6 +1743,7 @@ typedef struct NestLoopState
 	int innerTupleCounter;
 	int outerTupleCounter;
 	int nestloopInstance;
+	int generatedJoins;
 
 } NestLoopState;
 
