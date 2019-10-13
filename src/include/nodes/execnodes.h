@@ -1714,7 +1714,6 @@ typedef struct RelationPage {
 	TupleTableSlot* tuples[8]; //TODO change this to a hash-set
 	int index;
 	int tupleCount;
-	bool hasReachedEndOfRelation;
 } RelationPage;
 
 typedef struct NestLoopState
@@ -1739,8 +1738,8 @@ typedef struct NestLoopState
 	int innerPageCounter;
 	int innerPageCounterTotal;
 	int outerPageCounter;
-	int forLoopCounter;
-	bool outerDone;
+	bool reachedEndOfOuter;
+	bool reachedEndOfInner;
 	int innerTupleCounter;
 	int outerTupleCounter;
 	int nestloopInstance;

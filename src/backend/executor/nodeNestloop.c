@@ -50,7 +50,7 @@
  *		  -- outerTuple contains current tuple from outer relation and
  *			 the right son(inner relation) maintains "cursor" at the tuple
  *			 returned previously.
- *				This is achieved by maintaining a scan position on the outer *				relation.
+ *				This is achieved by maintaining a scan position on the outer * relation.
  *
  *		Initial States:
  *		  -- the outer child and the inner child
@@ -76,7 +76,6 @@ static RelationPage* CreateRelationPage() {
 	RelationPage* relationPage = palloc(sizeof(RelationPage));
 	relationPage->index = 0;
 	relationPage->tupleCount = 0;
-	relationPage->hasReachedEndOfRelation = false;
 	relationPage->reward = 0;
 	for (i = 0; i < PAGE_SIZE; i++){
 		relationPage->tuples[i] = NULL;
@@ -108,7 +107,6 @@ static int LoadNextPage(PlanState* planState, RelationPage* relationPage) {
 	}
 	relationPage->index = 0;
 	relationPage->tupleCount = 0;
-	relationPage->hasReachedEndOfRelation = false;
 	relationPage->reward = 0;
 	// Remove the old stored tuples
 	for (i = 0; i < PAGE_SIZE; i++) {
@@ -120,7 +118,6 @@ static int LoadNextPage(PlanState* planState, RelationPage* relationPage) {
 	for (i = 0; i < PAGE_SIZE; i++) {
 	 	TupleTableSlot* tts = ExecProcNode(planState);
 		if (TupIsNull(tts)){
-			relationPage->hasReachedEndOfRelation = true;
 			relationPage->tuples[i] = NULL;
 			break;
 		} else {
@@ -196,23 +193,22 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 	if (nl->join.inner_unique)
 		elog(WARNING, "inner relation is detected as unique");
 
-	// TODO remove has reached end of 
+	// TODO enable max in pop func
 	// TODO check for dups
 	// TODO when we want to do a complete join for a given outer page, the current counter system doesn't work 
 	for (;;)
 	{
-		// node->forLoopCounter++;
 		if (node->needOuterPage) {
-			if (!node->outerDone){
+			if (!node->reachedEndOfOuter){
 				if (node->activeRelationPages < SQRT_OF_N) { 
 					if (node->outerPageCounter % 1000 == 0)
 						elog(INFO, "Read pages: %d", node->outerPageCounter);
 					node->isExploring = true;
 					node->outerPage = CreateRelationPage(); 
 					LoadNextPage(outerPlan, node->outerPage);
-					if (node->outerPage->hasReachedEndOfRelation) {
+					if (node->outerPage->tupleCount < PAGE_SIZE) {
 						elog(INFO, "check");
-						node->outerDone = true;
+						node->reachedEndOfOuter = true;
 					}
 					node->outerTupleCounter += node->outerPage->tupleCount;
 					node->outerPageCounter++;
@@ -240,8 +236,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 			node->needInnerPage = true;
 		}
 		if (node->needInnerPage) {
-			LoadNextPage(innerPlan, node->innerPage);
-			if (node->innerPage->hasReachedEndOfRelation) {
+			if (node->reachedEndOfInner) {
 				// Getting ready for rescan
 				foreach(lc, nl->nestParams)
 				{
@@ -262,11 +257,13 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 					innerPlan->chgParam = bms_add_member(innerPlan->chgParam, paramno);
 				}
 				node->innerPageCounter = 0;
-				node->innerPage->hasReachedEndOfRelation = false;
 				ExecReScan(innerPlan);
-				if (node->innerPage->tupleCount == 0) {
-					continue;
-				}
+				node->reachedEndOfInner = false;
+			}
+			LoadNextPage(innerPlan, node->innerPage);
+			if (node->innerPage->tupleCount < PAGE_SIZE) {
+				node->reachedEndOfInner = true;
+				if (node->innerPage->tupleCount == 0) continue;
 			} 
 			node->innerTupleCounter += node->innerPage->tupleCount;
 			node->innerPageCounter++;
@@ -300,6 +297,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 				continue;
 			}
 		}
+
 		outerTupleSlot = node->outerPage->tuples[node->outerPage->index];
 		econtext->ecxt_outertuple = outerTupleSlot;
 		innerTupleSlot = node->innerPage->tuples[node->innerPage->index]; 
@@ -766,8 +764,8 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->innerPageCounter = 0;
 	nlstate->innerPageCounterTotal = 0;
 	nlstate->outerPageCounter = 0;
-	nlstate->forLoopCounter = 0;
-	nlstate->outerDone = false;
+	nlstate->reachedEndOfOuter = false;
+	nlstate->reachedEndOfInner = false;
 	nlstate->innerTupleCounter = 0;
 	nlstate->outerTupleCounter = 0;
 	// nlstate->outerPage = CreateRelationPage();  
