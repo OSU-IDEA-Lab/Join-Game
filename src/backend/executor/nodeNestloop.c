@@ -80,6 +80,7 @@ static RelationPage* CreateRelationPage() {
 	for (i = 0; i < PAGE_SIZE; i++){
 		relationPage->tuples[i] = NULL;
 	}
+	relationPage->joinedPageIds = NULL;
 	return relationPage;
 }
 
@@ -98,6 +99,15 @@ static void RemoveRelationPage(RelationPage** relationPageAdr) {
 	}
 	pfree(relationPage);
 	(*relationPageAdr) = NULL;
+}
+
+static void AddPageIdToJoinedPages(RelationPage* relationPage, int pageId) {
+	lcons_int(pageId, relationPage->joinedPageIds);
+}
+
+static bool HasJoinedPage(RelationPage* relationPage, int pageId) {
+	if (relationPage->joinedPageIds == NULL) return false;
+	return list_member_int(relationPage->joinedPageIds, pageId);
 }
 
 static int LoadNextPage(PlanState* planState, RelationPage* relationPage) {
@@ -206,6 +216,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 					LoadNextPage(outerPlan, node->outerPage);
 					if (node->outerPage->tupleCount < PAGE_SIZE) {
 						node->reachedEndOfOuter = true;
+						if (node->outerPage->tupleCount == 0) continue;
 					}
 					node->outerTupleCounter += node->outerPage->tupleCount;
 					node->outerPageCounter++;
@@ -305,13 +316,17 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 		econtext->ecxt_innertuple = innerTupleSlot;
 		node->innerPage->index++;
 		if (TupIsNull(innerTupleSlot)){
-			elog(INFO, "inner index: %d, count: %d", node->innerPage->index, node->innerPage->tupleCount);
-			elog(INFO, "inner pages: %d, tuples: %d", node->innerPageCounter, node->innerTupleCounter);
-			elog(ERROR, "inner tuple is null");
+			elog(WARNING, "inner tuple is null");
+			elog(INFO, "Read outer pages: %d", node->outerPageCounter);
+			return NULL;
 		}
 		if (TupIsNull(outerTupleSlot)){
-			elog(INFO, "outer index: %d, count: %d", node->outerPage->index, node->outerPage->tupleCount);
-			elog(ERROR, "outer tuple is null");
+			elog(WARNING, "outer tuple is null");
+			elog(INFO, "Read outer pages: %d", node->outerPageCounter);
+			if (node->activeRelationPages > 0) { // still has pages in stack
+				continue;
+			}
+			return NULL;
 		}
 
 		ENL1_printf("testing qualification");
@@ -323,6 +338,10 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 				ENL1_printf("qualification succeeded, projecting tuple");
 				node->lastReward++;
 				node->generatedJoins++;
+				if (HasJoinedPage(node->outerPage, node->innerPageCounter)) {
+					continue;
+				}
+				AddPageIdToJoinedPages(node->outerPage, node->innerPageCounter);
 				return ExecProject(node->js.ps.ps_ProjInfo);
 			}
 			else

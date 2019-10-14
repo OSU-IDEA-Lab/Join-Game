@@ -1714,6 +1714,7 @@ typedef struct RelationPage {
 	TupleTableSlot* tuples[8]; //TODO change this to a hash-set
 	int index;
 	int tupleCount;
+	List* joinedPageIds;
 } RelationPage;
 
 typedef struct NestLoopState
