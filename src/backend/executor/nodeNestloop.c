@@ -21,6 +21,8 @@
 
 #include "postgres.h"
 
+#include <math.h>
+
 #include "executor/execdebug.h"
 #include "executor/nodeNestloop.h"
 #include "miscadmin.h"
@@ -64,8 +66,9 @@
 // const int INNER_PAGE_COUNT = 2147; // inner relation page count 
 
 const int PAGE_SIZE = 8;
-const int SQRT_OF_N = 391; // this is sqrt of inner relation page count
-const int INNER_PAGE_COUNT = 152904; // inner relation page count 
+// const int SQRT_OF_N = 391; // this is sqrt of inner relation page count
+// const int INNER_PAGE_COUNT = 152904; // inner relation page count 
+
 
 // outer has 26664 tuples, 3333 pages
 // inner has 1225105 tuples, 153138.1 pages
@@ -159,6 +162,15 @@ static RelationPage* PopBestPage(NestLoopState *node) {
 	return node->relationPages[size - 1];
 }
 
+static void PrintNodeCounters(NestLoopState *node){
+	elog(INFO, "Read outer pages: %d", node->outerPageCounter);
+	elog(INFO, "Read outer tuples: %ld", node->outerTupleCounter);
+	elog(INFO, "Read inner pages: %d", node->innerPageCounterTotal);
+	elog(INFO, "Read inner tuples: %ld", node->innerTupleCounter);
+	elog(INFO, "Generated joins: %d", node->generatedJoins);
+	elog(INFO, "Rescan Count: %d", node->rescanCount);
+}
+
 static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 {
 	NestLoopState *node = castNode(NestLoopState, pstate);
@@ -201,14 +213,11 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 	if (nl->join.inner_unique)
 		elog(WARNING, "inner relation is detected as unique");
 
-	// TODO check for dups
-	// TODO why the row counts in the lefttree Plan are larger than their actual size (2260 instead of 100 on small dataset)
-	// 	if the above is currect, the INNER_PAGE_COUNT should be revised 
 	for (;;)
 	{
 		if (node->needOuterPage) {
 			if (!node->reachedEndOfOuter){
-				if (node->activeRelationPages < SQRT_OF_N) { 
+				if (node->activeRelationPages < node->sqrtOfInnerPages) { 
 					if (node->outerPageCounter % 1000 == 0)
 						elog(INFO, "Read pages: %d", node->outerPageCounter);
 					node->isExploring = true;
@@ -221,7 +230,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 					node->outerTupleCounter += node->outerPage->tupleCount;
 					node->outerPageCounter++;
 					node->lastReward = 0;
-				} else { // if (node->activeRelationPages == SQRT_OF_N
+				} else { // if (node->activeRelationPages == node->sqrtOfInnerPagesSQRT_OF_N
 					node->outerPage = PopBestPage(node);
 					node->outerPage->index = 0;
 					node->isExploring = false;
@@ -234,12 +243,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 					node->isExploring = false;
 					node->exploitStepCounter = 0;
 				} else { // join is done
-					elog(INFO, "Read outer pages: %d", node->outerPageCounter);
-					elog(INFO, "Read outer tuples: %d", node->outerTupleCounter);
-					elog(INFO, "Read inner pages: %d", node->innerPageCounterTotal);
-					elog(INFO, "Read inner tuples: %d", node->innerTupleCounter);
-					elog(INFO, "Generated joins: %d", node->generatedJoins);
-					elog(INFO, "Rescan Count: %d", node->rescanCount);
+					PrintNodeCounters(node);
 					return NULL;
 				}
 			}
@@ -296,10 +300,10 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 					//push the current explored page
 					node->relationPages[node->activeRelationPages++] = node->outerPage;
 					node->needOuterPage = true;
-				} else if (!node->isExploring && node->exploitStepCounter < INNER_PAGE_COUNT) { 
+				} else if (!node->isExploring && node->exploitStepCounter < node->innerPageNumber) { 
 					node->outerPage->index = 0;
 					node->exploitStepCounter++;
-				} else if (!node->isExploring && node->exploitStepCounter == INNER_PAGE_COUNT) {
+				} else if (!node->isExploring && node->exploitStepCounter == node->innerPageNumber) {
 					// Done with this outer page forever
 					RemoveRelationPage(&(node->outerPage));
 					node->needOuterPage = true;
@@ -350,131 +354,6 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 		else
 			InstrCountFiltered1(node, 1);
 
-		ResetExprContext(econtext);
-		ENL1_printf("qualification failed, looping");
-	}
-}
-
-
-static TupleTableSlot* ExecPagedNestLoop(PlanState *pstate)
-{
-	NestLoopState *node = castNode(NestLoopState, pstate);
-	NestLoop   *nl;
-	PlanState  *innerPlan;
-	PlanState  *outerPlan;
-	TupleTableSlot *outerTupleSlot;
-	TupleTableSlot *innerTupleSlot;
-	ExprState  *joinqual;
-	ExprState  *otherqual;
-	ExprContext *econtext;
-	ListCell   *lc;
-
-	CHECK_FOR_INTERRUPTS();
-	ENL1_printf("getting info from node");
-
-	nl = (NestLoop *) node->js.ps.plan;
-	joinqual = node->js.joinqual;
-	otherqual = node->js.ps.qual;
-	outerPlan = outerPlanState(node);
-	innerPlan = innerPlanState(node);
-	econtext = node->js.ps.ps_ExprContext;
-	ResetExprContext(econtext);
-	ENL1_printf("entering main loop");
-
-	if (nl->join.inner_unique)
-		elog(WARNING, "inner relation is detected as unique");
-
-	for (;;) {
-		if (node->needOuterPage) {
-			if (node->outerPageCounter % 1000 == 0)
-				elog(INFO, "Read pages so far: %d", node->outerPageCounter);
-			node->outerPage = CreateRelationPage(); 
-			LoadNextPage(outerPlan, node->outerPage);
-			node->outerTupleCounter += node->outerPage->tupleCount;
-			node->outerPageCounter++;
-			node->needOuterPage = false;
-			if (node->outerPage->tupleCount < PAGE_SIZE){ // join done
-				RemoveRelationPage(&(node->outerPage));
-				elog(INFO, "Read outer pages: %d", node->outerPageCounter);
-				elog(INFO, "Read outer tuples: %d", node->outerTupleCounter);
-				elog(INFO, "Read inner pages: %d", node->innerPageCounter);
-				elog(INFO, "Read inner tuples: %d", node->innerTupleCounter);
-				elog(INFO, "Generated joins: %d", node->generatedJoins);
-				elog(INFO, "Rescan count: %d", node->rescanCount);
-				return NULL; 
-			}
-		}
-		if (node->needInnerPage) {
-			LoadNextPage(innerPlan, node->innerPage);
-			node->innerTupleCounter += node->innerPage->tupleCount;
-			node->innerPageCounter++;
-			node->innerPageCounterTotal++;
-			node->needInnerPage = false;
-			if (node->innerPage->tupleCount < PAGE_SIZE){ // done with one outer page, move to next
-				foreach(lc, nl->nestParams)
-				{
-					NestLoopParam *nlp = (NestLoopParam *) lfirst(lc);
-					int			paramno = nlp->paramno;
-					ParamExecData *prm;
-
-					prm = &(econtext->ecxt_param_exec_vals[paramno]);
-					/* Param value should be an OUTER_VAR var */
-					Assert(IsA(nlp->paramval, Var));
-					Assert(nlp->paramval->varno == OUTER_VAR);
-					Assert(nlp->paramval->varattno > 0);
-					prm->value = slot_getattr(node->outerPage->tuples[node->outerPage->index],
-							nlp->paramval->varattno,
-							&(prm->isnull));
-					/* Flag parameter value as changed */
-					innerPlan->chgParam = bms_add_member(innerPlan->chgParam,
-							paramno);
-				}
-				ENL1_printf("rescanning inner plan");
-				ExecReScan(innerPlan);
-				node->rescanCount++;
-				node->needInnerPage = true;
-				RemoveRelationPage(&(node->outerPage));
-				node->needOuterPage = true;
-				continue;
-			}
-		} 
-		if (node->innerPage->index == PAGE_SIZE) {
-			if (node->outerPage->index < PAGE_SIZE - 1){
-				node->outerPage->index++;
-				node->innerPage->index = 0;
-			} else { // outer page reached its end
-				node->needInnerPage = true;
-				node->outerPage->index = 0;
-			}
-			continue;
-		} 		
-
-		outerTupleSlot = node->outerPage->tuples[node->outerPage->index];
-		innerTupleSlot = node->innerPage->tuples[node->innerPage->index];
-
-		if (TupIsNull(innerTupleSlot)) {
-			elog(ERROR, "Inner slot is null");
-		}
-		if (TupIsNull(outerTupleSlot)){
-			elog(ERROR, "Outer slot is null");
-		}
-		econtext->ecxt_outertuple = outerTupleSlot;
-		econtext->ecxt_innertuple = innerTupleSlot;
-		node->innerPage->index++;
-
-		ENL1_printf("testing qualification");
-
-		if (ExecQual(joinqual, econtext)) {
-			if (otherqual == NULL || ExecQual(otherqual, econtext)) {
-				ENL1_printf("qualification succeeded, projecting tuple");
-				node->generatedJoins++;
-				return ExecProject(node->js.ps.ps_ProjInfo);
-			}
-			else
-				InstrCountFiltered2(node, 1);
-		}
-		else
-			InstrCountFiltered1(node, 1);
 		ResetExprContext(econtext);
 		ENL1_printf("qualification failed, looping");
 	}
@@ -687,8 +566,8 @@ static TupleTableSlot* ExecNestLoop(PlanState *pstate)
 	if (strcmp(fastjoin, "on") == 0){
 		tts = ExecFastNestLoop(pstate);
 	} else {
-		tts = ExecPagedNestLoop(pstate);
-		// tts = ExecRegularNestLoop(pstate);
+		// tts = ExecPagedNestLoop(pstate);
+		tts = ExecRegularNestLoop(pstate);
 	}
 	return tts;
 }
@@ -801,6 +680,10 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->outerTupleCounter = 0;
 	nlstate->generatedJoins = 0;
 	nlstate->rescanCount = 0;
+	nlstate->innerPageNumber = (long)node->join.plan.righttree->plan_rows / PAGE_SIZE + 1;
+	nlstate->sqrtOfInnerPages = (int)sqrt(nlstate->innerPageNumber);
+	elog(INFO, "Computed inner page count: %ld, and sqrt: %d", 
+		nlstate->innerPageNumber, nlstate->sqrtOfInnerPages);
 
 	// nlstate->outerPage = CreateRelationPage();  
 	nlstate->innerPage = CreateRelationPage();
@@ -845,7 +728,7 @@ ExecEndNestLoop(NestLoopState *node)
 	NL1_printf("ExecEndNestLoop: %s\n",
 			   "node processing ended");
 	// Added
-	// RemoveRelationPage(&(node->outerPage));
+	RemoveRelationPage(&(node->outerPage));
 	RemoveRelationPage(&(node->innerPage));
 }
 

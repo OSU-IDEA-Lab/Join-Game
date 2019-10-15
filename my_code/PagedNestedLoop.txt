@@ -13,10 +13,6 @@ static TupleTableSlot* ExecPagedNestLoop(PlanState *pstate)
 	ListCell   *lc;
 
 	CHECK_FOR_INTERRUPTS();
-
-	/*
-	 * get information from the node
-	 */
 	ENL1_printf("getting info from node");
 
 	nl = (NestLoop *) node->js.ps.plan;
@@ -25,129 +21,91 @@ static TupleTableSlot* ExecPagedNestLoop(PlanState *pstate)
 	outerPlan = outerPlanState(node);
 	innerPlan = innerPlanState(node);
 	econtext = node->js.ps.ps_ExprContext;
-
-	/*
-	 * Reset per-tuple memory context to free any expression evaluation
-	 * storage allocated in the previous tuple cycle.
-	 */
 	ResetExprContext(econtext);
-
-	/*
-	 * Ok, everything is setup for the join so now loop until we return a
-	 * qualifying join tuple.
-	 */
 	ENL1_printf("entering main loop");
 
-	for (;;)
-	{
-		node->forLoopCounter++;
-		if (node->needOuterPage) {
-			if (node->outerPage != NULL){
-				pfree(node->outerPage);
-			}
+	if (nl->join.inner_unique)
+		elog(WARNING, "inner relation is detected as unique");
 
-			node->outerPage = InitRelationPage();
+	for (;;) {
+		if (node->needOuterPage) {
+			if (node->outerPageCounter % 1000 == 0)
+				elog(INFO, "Read pages so far: %d", node->outerPageCounter);
+			node->outerPage = CreateRelationPage(); 
 			LoadNextPage(outerPlan, node->outerPage);
 			node->outerTupleCounter += node->outerPage->tupleCount;
-			node->needOuterPage = false;
 			node->outerPageCounter++;
-			continue;
+			node->needOuterPage = false;
+			if (node->outerPage->tupleCount < PAGE_SIZE){ // join done
+				RemoveRelationPage(&(node->outerPage));
+				PrintNodeCounters(node);
+				return NULL; 
+			}
 		}
 		if (node->needInnerPage) {
-			if (node->innerPage != NULL){
-				pfree(node->innerPage);
-			}
-			node->innerPage = InitRelationPage();
 			LoadNextPage(innerPlan, node->innerPage);
 			node->innerTupleCounter += node->innerPage->tupleCount;
-			node->needInnerPage = false;
 			node->innerPageCounter++;
 			node->innerPageCounterTotal++;
-		} 
+			node->needInnerPage = false;
+			if (node->innerPage->tupleCount < PAGE_SIZE){ // done with one outer page, move to next
+				foreach(lc, nl->nestParams)
+				{
+					NestLoopParam *nlp = (NestLoopParam *) lfirst(lc);
+					int			paramno = nlp->paramno;
+					ParamExecData *prm;
 
-		if (node->innerPage->index < PAGE_SIZE && node->outerPage->index < PAGE_SIZE) {
-			outerTupleSlot = node->outerPage->tuples[node->outerPage->index];
-			innerTupleSlot = node->innerPage->tuples[node->innerPage->index];
-		} else if (node->innerPage->index == PAGE_SIZE) {
+					prm = &(econtext->ecxt_param_exec_vals[paramno]);
+					/* Param value should be an OUTER_VAR var */
+					Assert(IsA(nlp->paramval, Var));
+					Assert(nlp->paramval->varno == OUTER_VAR);
+					Assert(nlp->paramval->varattno > 0);
+					prm->value = slot_getattr(node->outerPage->tuples[node->outerPage->index],
+							nlp->paramval->varattno,
+							&(prm->isnull));
+					/* Flag parameter value as changed */
+					innerPlan->chgParam = bms_add_member(innerPlan->chgParam,
+							paramno);
+				}
+				ENL1_printf("rescanning inner plan");
+				ExecReScan(innerPlan);
+				node->rescanCount++;
+				node->needInnerPage = true;
+				RemoveRelationPage(&(node->outerPage));
+				node->needOuterPage = true;
+				continue;
+			}
+		} 
+		if (node->innerPage->index == PAGE_SIZE) {
 			if (node->outerPage->index < PAGE_SIZE - 1){
 				node->outerPage->index++;
 				node->innerPage->index = 0;
 			} else { // outer page reached its end
 				node->needInnerPage = true;
 				node->outerPage->index = 0;
-				// return NULL;
 			}
 			continue;
-		} else {
-			elog(ERROR, "shouldn't endup here");
-		}
-		
-		if (TupIsNull(innerTupleSlot))
-		{
-			/*
-			 * fetch the values of any outer Vars that must be passed to the
-			 * inner scan, and store them in the appropriate PARAM_EXEC slots.
-			 */
-			foreach(lc, nl->nestParams)
-			{
-				NestLoopParam *nlp = (NestLoopParam *) lfirst(lc);
-				int			paramno = nlp->paramno;
-				ParamExecData *prm;
+		} 		
 
-				prm = &(econtext->ecxt_param_exec_vals[paramno]);
-				/* Param value should be an OUTER_VAR var */
-				Assert(IsA(nlp->paramval, Var));
-				Assert(nlp->paramval->varno == OUTER_VAR);
-				Assert(nlp->paramval->varattno > 0);
-				prm->value = slot_getattr(outerTupleSlot,
-										  nlp->paramval->varattno,
-										  &(prm->isnull));
-				/* Flag parameter value as changed */
-				innerPlan->chgParam = bms_add_member(innerPlan->chgParam,
-													 paramno);
-			}
+		outerTupleSlot = node->outerPage->tuples[node->outerPage->index];
+		innerTupleSlot = node->innerPage->tuples[node->innerPage->index];
 
-			/*
-			 * now rescan the inner plan
-			 */
-			ENL1_printf("rescanning inner plan");
-			ExecReScan(innerPlan);
-			node->innerTupleCounter = 0;
-			node->needInnerPage = true;
-			node->needOuterPage = true;
-			continue;
+		if (TupIsNull(innerTupleSlot)) {
+			elog(ERROR, "Inner slot is null");
 		}
 		if (TupIsNull(outerTupleSlot)){
-			elog(INFO, " current outer is null");
-			elog(INFO, "inner tups: %d outer tups: %d", 
-					node->innerTupleCounter, node->outerTupleCounter);
-			elog(INFO, "join done!");
-			return NULL;
+			elog(ERROR, "Outer slot is null");
 		}
 		econtext->ecxt_outertuple = outerTupleSlot;
 		econtext->ecxt_innertuple = innerTupleSlot;
 		node->innerPage->index++;
 
-		/*
-		 * at this point we have a new pair of inner and outer tuples so we
-		 * test the inner and outer tuples to see if they satisfy the node's
-		 * qualification.
-		 *
-		 * Only the joinquals determine MatchedOuter status, but all quals
-		 * must pass to actually return the tuple.
-		 */
 		ENL1_printf("testing qualification");
 
-		if (ExecQual(joinqual, econtext))
-		{
-
-			if (otherqual == NULL || ExecQual(otherqual, econtext))
-			{
-				/*
-				 * qualification was satisfied so we project and return the
-				 * slot containing the result tuple using ExecProject().
-				 */
+		if (ExecQual(joinqual, econtext)) {
+			if (otherqual == NULL || ExecQual(otherqual, econtext)) {
 				ENL1_printf("qualification succeeded, projecting tuple");
+				node->generatedJoins++;
 				return ExecProject(node->js.ps.ps_ProjInfo);
 			}
 			else
@@ -155,12 +113,8 @@ static TupleTableSlot* ExecPagedNestLoop(PlanState *pstate)
 		}
 		else
 			InstrCountFiltered1(node, 1);
-
-		/*
-		 * Tuple fails qual, so free per-tuple memory and try again.
-		 */
 		ResetExprContext(econtext);
-
 		ENL1_printf("qualification failed, looping");
 	}
 }
+

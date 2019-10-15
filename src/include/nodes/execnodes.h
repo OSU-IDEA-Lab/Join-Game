@@ -1732,6 +1732,8 @@ typedef struct NestLoopState
 
 	int lastReward;
 	bool isExploring;
+	long innerPageNumber;
+	int sqrtOfInnerPages;
 	
 	bool needOuterPage;
 	bool needInnerPage;
@@ -1741,8 +1743,8 @@ typedef struct NestLoopState
 	int outerPageCounter;
 	bool reachedEndOfOuter;
 	bool reachedEndOfInner;
-	int innerTupleCounter;
-	int outerTupleCounter;
+	unsigned long innerTupleCounter;
+	unsigned long outerTupleCounter;
 	int nestloopInstance;
 	int generatedJoins;
 	int rescanCount;
