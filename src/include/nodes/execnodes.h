@@ -1725,7 +1725,7 @@ typedef struct NestLoopState
 	TupleTableSlot *nl_NullInnerTupleSlot;
 
 
-	RelationPage *relationPages[391]; //TODO chat this array into a heap
+	RelationPage **relationPages; //TODO chat this array into a heap
 	int activeRelationPages;
 	RelationPage *outerPage;
 	RelationPage *innerPage;

@@ -104,6 +104,13 @@ static void RemoveRelationPage(RelationPage** relationPageAdr) {
 	(*relationPageAdr) = NULL;
 }
 
+static void RemoveAllRelationPages(NestLoopState* node) {
+	while (node->activeRelationPages > 0){
+		RemoveRelationPage(&(node->relationPages[node->activeRelationPages - 1]));
+		node->activeRelationPages--;
+	}
+}
+
 static void AddPageIdToJoinedPages(RelationPage* relationPage, int pageId) {
 	lcons_int(pageId, relationPage->joinedPageIds);
 }
@@ -145,21 +152,18 @@ static int LoadNextPage(PlanState* planState, RelationPage* relationPage) {
 static RelationPage* PopBestPage(NestLoopState *node) {
 	int bestPageIndex;
 	int i;
-	int size;
 	RelationPage* tmp;
-	size = node->activeRelationPages;
 	bestPageIndex = 0;
-	for (i = 1; i < size; i++) {
+	for (i = 1; i < node->activeRelationPages; i++) {
 		if (node->relationPages[i]->reward > node->relationPages[bestPageIndex]->reward) {
 			bestPageIndex = i;
 		}
 	}
-	tmp = node->relationPages[size - 1];
-	node->relationPages[size - 1] = node->relationPages[bestPageIndex];
+	tmp = node->relationPages[node->activeRelationPages - 1];
+	node->relationPages[node->activeRelationPages - 1] = node->relationPages[bestPageIndex];
 	node->relationPages[bestPageIndex] = tmp;
 	node->activeRelationPages--;
-
-	return node->relationPages[size - 1];
+	return node->relationPages[node->activeRelationPages];
 }
 
 static void PrintNodeCounters(NestLoopState *node){
@@ -682,6 +686,7 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->rescanCount = 0;
 	nlstate->innerPageNumber = (long)node->join.plan.righttree->plan_rows / PAGE_SIZE + 1;
 	nlstate->sqrtOfInnerPages = (int)sqrt(nlstate->innerPageNumber);
+	nlstate->relationPages = palloc(nlstate->sqrtOfInnerPages * sizeof(RelationPage*));
 
 	// nlstate->outerPage = CreateRelationPage();  
 	nlstate->innerPage = CreateRelationPage();
@@ -727,9 +732,11 @@ ExecEndNestLoop(NestLoopState *node)
 
 	NL1_printf("ExecEndNestLoop: %s\n",
 			   "node processing ended");
-	// Added
+	// Releasing memory 
 	RemoveRelationPage(&(node->outerPage));
 	RemoveRelationPage(&(node->innerPage));
+	RemoveAllRelationPages(node);
+	pfree(node->relationPages);
 }
 
 /* ----------------------------------------------------------------
