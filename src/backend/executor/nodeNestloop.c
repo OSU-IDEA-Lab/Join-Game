@@ -682,8 +682,6 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->rescanCount = 0;
 	nlstate->innerPageNumber = (long)node->join.plan.righttree->plan_rows / PAGE_SIZE + 1;
 	nlstate->sqrtOfInnerPages = (int)sqrt(nlstate->innerPageNumber);
-	elog(INFO, "Computed inner page count: %ld, and sqrt: %d", 
-		nlstate->innerPageNumber, nlstate->sqrtOfInnerPages);
 
 	// nlstate->outerPage = CreateRelationPage();  
 	nlstate->innerPage = CreateRelationPage();
@@ -693,6 +691,8 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	elog(INFO, "ExecInitNestloop");
 	elog_node_display(INFO,"Left: ", node->join.plan.lefttree, true);
 	elog_node_display(INFO,"Right: ", node->join.plan.righttree, true);
+	elog(INFO, "Computed inner page count: %ld, and sqrt: %d", 
+		nlstate->innerPageNumber, nlstate->sqrtOfInnerPages);
 	return nlstate;
 }
 
