@@ -668,7 +668,6 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->nl_MatchedOuter = false;
 
 	/* Extra inits for our method */
-	// TODO set m based on relation size
 	nlstate->activeRelationPages = 0;
 	nlstate->isExploring = true;
 	nlstate->lastReward = 0;

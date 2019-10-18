@@ -1711,7 +1711,7 @@ typedef struct JoinState
 
 typedef struct RelationPage {
 	int reward;
-	TupleTableSlot* tuples[8]; //TODO change this to a hash-set
+	TupleTableSlot* tuples[8]; 
 	int index;
 	int tupleCount;
 	List* joinedPageIds;
@@ -1725,7 +1725,7 @@ typedef struct NestLoopState
 	TupleTableSlot *nl_NullInnerTupleSlot;
 
 
-	RelationPage **relationPages; //TODO chat this array into a heap
+	RelationPage **relationPages; //TODO change this array into a heap
 	int activeRelationPages;
 	RelationPage *outerPage;
 	RelationPage *innerPage;
