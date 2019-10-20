@@ -65,7 +65,7 @@
 // const int SQRT_OF_N = 46; // this is sqrt of inner relation page count
 // const int INNER_PAGE_COUNT = 2147; // inner relation page count 
 
-const int PAGE_SIZE = 8;
+const int PAGE_SIZE = 128;
 // const int SQRT_OF_N = 391; // this is sqrt of inner relation page count
 // const int INNER_PAGE_COUNT = 152904; // inner relation page count 
 
@@ -692,11 +692,13 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 
 	NL1_printf("ExecInitNestLoop: %s\n",
 			   "node initialized");
+	/*
 	elog(INFO, "ExecInitNestloop");
 	elog_node_display(INFO,"Left: ", node->join.plan.lefttree, true);
 	elog_node_display(INFO,"Right: ", node->join.plan.righttree, true);
 	elog(INFO, "Computed inner page count: %ld, and sqrt: %d", 
 		nlstate->innerPageNumber, nlstate->sqrtOfInnerPages);
+	*/
 	return nlstate;
 }
 
