@@ -65,7 +65,7 @@
 // const int SQRT_OF_N = 46; // this is sqrt of inner relation page count
 // const int INNER_PAGE_COUNT = 2147; // inner relation page count 
 
-const int PAGE_SIZE = 128;
+// const int PAGE_SIZE = 128;
 // const int SQRT_OF_N = 391; // this is sqrt of inner relation page count
 // const int INNER_PAGE_COUNT = 152904; // inner relation page count 
 
