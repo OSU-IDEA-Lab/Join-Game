@@ -214,8 +214,9 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 	 */
 	ENL1_printf("entering main loop");
 
-	if (nl->join.inner_unique)
-		elog(WARNING, "inner relation is detected as unique");
+
+	// if (nl->join.inner_unique)
+		// elog(WARNING, "inner relation is detected as unique");
 
 	for (;;)
 	{
