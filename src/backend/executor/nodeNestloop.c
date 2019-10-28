@@ -149,11 +149,40 @@ static int LoadNextPage(PlanState* planState, RelationPage* relationPage) {
 	return relationPage->tupleCount;
 }
 
+static void dummyFileRead() {
+	FILE *fp;
+	char buffer[PAGE_SIZE * 10];
+
+	fp = fopen("/tmp/test.txt", "r");
+	while (fgets(buffer, sizeof buffer, (FILE*)fp) != NULL) {
+		// process buffer
+	}
+	if (feof(fp)) {
+		// hit end of file
+	} else {
+		// some other error interrupted the read
+	}
+	fclose(fp);
+}
+
+static void dummyFileWrite() {
+	FILE *fp;
+	int pages;
+
+	fp = fopen("/tmp/test.txt", "w");
+	pages = PAGE_SIZE;
+	while(pages-- > 0){
+		fputs("XXXXX\n", fp);
+	}
+	fclose(fp);
+}
+
 static RelationPage* PopBestPage(NestLoopState *node) {
 	int bestPageIndex;
 	int i;
 	RelationPage* tmp;
 	bestPageIndex = 0;
+	dummyFileRead();
 	for (i = 1; i < node->activeRelationPages; i++) {
 		if (node->relationPages[i]->reward > node->relationPages[bestPageIndex]->reward) {
 			bestPageIndex = i;
@@ -304,6 +333,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 				} else if (node->isExploring && node->lastReward == 0) {
 					//push the current explored page
 					node->relationPages[node->activeRelationPages++] = node->outerPage;
+					dummyFileWrite();
 					node->needOuterPage = true;
 				} else if (!node->isExploring && node->exploitStepCounter < node->innerPageNumber) { 
 					node->outerPage->index = 0;
