@@ -1750,6 +1750,14 @@ typedef struct NestLoopState
 	int generatedJoins;
 	int rescanCount;
 
+	long* xids;
+	int* rewards;
+	int xidPageCount;
+	// long currentXid;
+	long pageXid;
+	long xidReward;
+	ScanKey xidScanKey;
+
 } NestLoopState;
 
 /* ----------------
