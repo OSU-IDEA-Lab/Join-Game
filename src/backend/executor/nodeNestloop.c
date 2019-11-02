@@ -60,26 +60,11 @@
  * ----------------------------------------------------------------
  */
 
-// Stats 
-// const int PAGE_SIZE = 8;
-// const int SQRT_OF_N = 46; // this is sqrt of inner relation page count
-// const int INNER_PAGE_COUNT = 2147; // inner relation page count 
-
-// const int PAGE_SIZE = 128;
-// const int SQRT_OF_N = 391; // this is sqrt of inner relation page count
-// const int INNER_PAGE_COUNT = 152904; // inner relation page count 
-
-
-// outer has 26664 tuples, 3333 pages
-// inner has 1225105 tuples, 153138.1 pages
-// inner has alsmot 1.2M and 150K pages
-
 static RelationPage* CreateRelationPage() {
 	int i;
 	RelationPage* relationPage = palloc(sizeof(RelationPage));
 	relationPage->index = 0;
 	relationPage->tupleCount = 0;
-	relationPage->reward = 0;
 	for (i = 0; i < PAGE_SIZE; i++){
 		relationPage->tuples[i] = NULL;
 	}
@@ -104,21 +89,6 @@ static void RemoveRelationPage(RelationPage** relationPageAdr) {
 	(*relationPageAdr) = NULL;
 }
 
-static void RemoveAllRelationPages(NestLoopState* node) {
-	while (node->activeRelationPages > 0){
-		RemoveRelationPage(&(node->relationPages[node->activeRelationPages - 1]));
-		node->activeRelationPages--;
-	}
-}
-
-static void AddPageIdToJoinedPages(RelationPage* relationPage, int pageId) {
-	lcons_int(pageId, relationPage->joinedPageIds);
-}
-
-static bool HasJoinedPage(RelationPage* relationPage, int pageId) {
-	if (relationPage->joinedPageIds == NULL) return false;
-	return list_member_int(relationPage->joinedPageIds, pageId);
-}
 
 static int LoadNextPage(PlanState* planState, RelationPage* relationPage) {
 	int i;
@@ -127,7 +97,6 @@ static int LoadNextPage(PlanState* planState, RelationPage* relationPage) {
 	}
 	relationPage->index = 0;
 	relationPage->tupleCount = 0;
-	relationPage->reward = 0;
 	// Remove the old stored tuples
 	for (i = 0; i < PAGE_SIZE; i++) {
 		if (!TupIsNull(relationPage->tuples[i])) {
@@ -153,11 +122,10 @@ static int LoadNextOuterPage(PlanState* outerPlan, RelationPage* relationPage, S
 	int i;
 	TupleTableSlot* tts;
 	if (relationPage == NULL){
-		elog(ERROR, "LoadNextPage: null page");
+		elog(ERROR, "LoadNextOuterPage: null page");
 	}
 	relationPage->index = 0;
 	relationPage->tupleCount = 0;
-	relationPage->reward = 0;
 	// Remove the old stored tuples
 	for (i = 0; i < PAGE_SIZE; i++) {
 		if (!TupIsNull(relationPage->tuples[i])) {
@@ -189,53 +157,6 @@ static int LoadNextOuterPage(PlanState* outerPlan, RelationPage* relationPage, S
 	}
 	return relationPage->tupleCount;
 }
-/*
-static void dummyFileRead() {
-	FILE *fp;
-	char buffer[PAGE_SIZE * 10];
-
-	fp = fopen("/tmp/test.txt", "r");
-	while (fgets(buffer, sizeof buffer, (FILE*)fp) != NULL) {
-		// process buffer
-	}
-	if (feof(fp)) {
-		// hit end of file
-	} else {
-		// some other error interrupted the read
-	}
-	fclose(fp);
-}
-
-static void dummyFileWrite() {
-	FILE *fp;
-	int pages;
-
-	fp = fopen("/tmp/test.txt", "w");
-	pages = PAGE_SIZE;
-	while(pages-- > 0){
-		fputs("XXXXX\n", fp);
-	}
-	fclose(fp);
-}
-
-static RelationPage* PopBestPage(NestLoopState *node) {
-	int bestPageIndex;
-	int i;
-	RelationPage* tmp;
-	bestPageIndex = 0;
-	dummyFileRead();
-	for (i = 1; i < node->activeRelationPages; i++) {
-		if (node->relationPages[i]->reward > node->relationPages[bestPageIndex]->reward) {
-			bestPageIndex = i;
-		}
-	}
-	tmp = node->relationPages[node->activeRelationPages - 1];
-	node->relationPages[node->activeRelationPages - 1] = node->relationPages[bestPageIndex];
-	node->relationPages[bestPageIndex] = tmp;
-	node->activeRelationPages--;
-	return node->relationPages[node->activeRelationPages];
-}
-*/
 
 static long popBestPageXid(NestLoopState *node) {
 	int i;
@@ -315,10 +236,8 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 		if (node->needOuterPage) {
 			if (!node->reachedEndOfOuter && node->activeRelationPages < node->sqrtOfInnerPages) { 
 				// explore
-				if (node->outerPageCounter % 1000 == 0)
-					elog(INFO, "Read pages: %d", node->outerPageCounter);
 				node->isExploring = true;
-				node->outerPage = CreateRelationPage(); 
+				node->pageXid = node->pageXid < node->lastPageXid ? node->lastPageXid : node->pageXid;
 				LoadNextOuterPage(outerPlan, node->outerPage, node->xidScanKey, node->pageXid);
 				node->pageXid += node->outerPage->tupleCount;
 				if (node->outerPage->tupleCount < PAGE_SIZE) {
@@ -327,7 +246,6 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 				}
 				node->outerTupleCounter += node->outerPage->tupleCount;
 				node->outerPageCounter++;
-				node->pageXid += node->outerPage->tupleCount;
 				node->lastReward = 0;
 				node->exploreStepCounter = 0;
 			} else if ((!node->reachedEndOfOuter && node->activeRelationPages == node->sqrtOfInnerPages) || 
@@ -336,10 +254,9 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 				node->outerPage->index = 0;
 				node->isExploring = false;
 				node->exploitStepCounter = 0;
-				node->lastExploredPageXid = node->pageXid;
+				node->lastPageXid = node->pageXid < node->lastPageXid ? node->lastPageXid : node->pageXid;
 				node->pageXid = popBestPageXid(node);
 				LoadNextOuterPage(outerPlan, node->outerPage, node->xidScanKey, node->pageXid);
-				node->pageXid = node->lastExploredPageXid;
 			} else {
 				// join is done
 				PrintNodeCounters(node);
@@ -394,7 +311,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 				if (node->isExploring && node->lastReward > 0 
 						&& node->exploreStepCounter < node->innerPageNumber) { //stay with current
 					node->outerPage->index = 0;
-					node->outerPage->reward += node->lastReward;
+					node->reward += node->lastReward;
 					node->lastReward = 0;
 					node->exploreStepCounter++;
 				} else if (node->isExploring && node->exploreStepCounter == node->innerPageNumber) {
@@ -403,9 +320,8 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 					node->needOuterPage = true;
 				} else if (node->isExploring && node->lastReward == 0) {
 					//push the current explored page
-					node->relationPages[node->activeRelationPages++] = node->outerPage;
 					node->xids[node->activeRelationPages] = node->pageXid;
-					node->rewards[node->activeRelationPages] = node->outerPage->reward;
+					node->rewards[node->activeRelationPages] = node->reward;
 					node->activeRelationPages++;
 					node->needOuterPage = true;
 				} else if (!node->isExploring && node->exploitStepCounter < node->innerPageNumber) { 
@@ -413,7 +329,6 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 					node->exploitStepCounter++;
 				} else if (!node->isExploring && node->exploitStepCounter == node->innerPageNumber) {
 					// Done with this outer page forever
-					RemoveRelationPage(&(node->outerPage));
 					node->needOuterPage = true;
 				} else {
 					elog(ERROR, "Khiarlikh...");
@@ -450,10 +365,13 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 				ENL1_printf("qualification succeeded, projecting tuple");
 				node->lastReward++;
 				node->generatedJoins++;
-				if (HasJoinedPage(node->outerPage, node->innerPageCounter)) {
+				//TODO do this check earlier in the algorithm
+				if (node->xidToJoinResults[node->pageXid] != NULL && 
+						list_member_int(node->xidToJoinResults[node->pageXid], node->innerPageCounter)) {
 					continue;
 				}
-				AddPageIdToJoinedPages(node->outerPage, node->innerPageCounter);
+				// Add current xid-innerPageCounter to result sets
+				lcons_int(node->innerPageCounter, node->xidToJoinResults[node->pageXid]);  
 				return ExecProject(node->js.ps.ps_ProjInfo);
 			}
 			else
@@ -691,6 +609,7 @@ NestLoopState *
 ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 {
 	NestLoopState *nlstate;
+	int i;
 
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
@@ -791,15 +710,21 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->rescanCount = 0;
 	nlstate->innerPageNumber = (long)node->join.plan.righttree->plan_rows / PAGE_SIZE + 1;
 	nlstate->sqrtOfInnerPages = (int)sqrt(nlstate->innerPageNumber);
-	nlstate->relationPages = palloc(nlstate->sqrtOfInnerPages * sizeof(RelationPage*));
 	nlstate->xids = palloc(nlstate->sqrtOfInnerPages * sizeof(long));
 	nlstate->rewards = palloc(nlstate->sqrtOfInnerPages * sizeof(int));
 	nlstate->pageXid = 1;
 	// nlstate->currentXid = 1;
 	nlstate->xidScanKey = (ScanKey) palloc(sizeof(ScanKeyData));
+	nlstate->xidToJoinResults = palloc(node->join.plan.lefttree->plan_rows * sizeof(List*));
+	i = node->join.plan.lefttree->plan_rows;
+	elog(INFO, "Left tree row count: %d", i);
+	i--;
+	while (i >= 0){
+		nlstate->xidToJoinResults[i] = NULL;
+		i--;
+	}
 
-
-	// nlstate->outerPage = CreateRelationPage();  
+	nlstate->outerPage = CreateRelationPage();  
 	nlstate->innerPage = CreateRelationPage();
 
 	NL1_printf("ExecInitNestLoop: %s\n",
@@ -848,9 +773,8 @@ ExecEndNestLoop(NestLoopState *node)
 	// Releasing memory 
 	RemoveRelationPage(&(node->outerPage));
 	RemoveRelationPage(&(node->innerPage));
-	RemoveAllRelationPages(node);
-	pfree(node->relationPages);
 	pfree(node->xidScanKey);
+	pfree(node->xidToJoinResults);//TODO remove each entry?
 }
 
 /* ----------------------------------------------------------------

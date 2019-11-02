@@ -1711,11 +1711,9 @@ typedef struct JoinState
 
 #define PAGE_SIZE 128
 typedef struct RelationPage {
-	int reward;
 	TupleTableSlot* tuples[PAGE_SIZE]; 
 	int index;
 	int tupleCount;
-	List* joinedPageIds;
 } RelationPage;
 
 typedef struct NestLoopState
@@ -1726,12 +1724,12 @@ typedef struct NestLoopState
 	TupleTableSlot *nl_NullInnerTupleSlot;
 
 
-	RelationPage **relationPages; //TODO change this array into a heap
 	int activeRelationPages;
 	RelationPage *outerPage;
 	RelationPage *innerPage;
 
 	int lastReward;
+	int reward;
 	bool isExploring;
 	long innerPageNumber;
 	int sqrtOfInnerPages;
@@ -1751,12 +1749,13 @@ typedef struct NestLoopState
 	int generatedJoins;
 	int rescanCount;
 
-	long* xids;
+	long* xids; //TODO these could be heaps to improve time
 	int* rewards;
-	// long currentXid;
 	long pageXid;
-	long lastExploredPageXid;
+	long lastPageXid;
 	ScanKey xidScanKey;
+
+	List** xidToJoinResults;
 
 } NestLoopState;
 
