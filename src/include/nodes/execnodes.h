@@ -1738,6 +1738,7 @@ typedef struct NestLoopState
 	
 	bool needOuterPage;
 	bool needInnerPage;
+	int exploreStepCounter;
 	int exploitStepCounter;
 	int innerPageCounter;
 	int innerPageCounterTotal;
@@ -1752,10 +1753,9 @@ typedef struct NestLoopState
 
 	long* xids;
 	int* rewards;
-	int xidPageCount;
 	// long currentXid;
 	long pageXid;
-	long xidReward;
+	long lastExploredPageXid;
 	ScanKey xidScanKey;
 
 } NestLoopState;
