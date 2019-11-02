@@ -46,3 +46,4 @@ lib*.pc
 # Output logs
 *.out
 *.swp
+src/tags
