@@ -68,7 +68,6 @@ static RelationPage* CreateRelationPage() {
 	for (i = 0; i < PAGE_SIZE; i++){
 		relationPage->tuples[i] = NULL;
 	}
-	relationPage->joinedPageIds = NULL;
 	return relationPage;
 }
 
@@ -344,13 +343,14 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 		node->innerPage->index++;
 		if (TupIsNull(innerTupleSlot)){
 			elog(WARNING, "inner tuple is null");
-			elog(INFO, "Read outer pages: %d", node->outerPageCounter);
+			PrintNodeCounters(node);
 			return NULL;
 		}
 		if (TupIsNull(outerTupleSlot)){
-			elog(WARNING, "outer tuple is null");
-			elog(INFO, "Read outer pages: %d", node->outerPageCounter);
 			if (node->activeRelationPages > 0) { // still has pages in stack
+				// elog(WARNING, "Finishing join while there are active pages");
+				elog(INFO, "null outer detected");
+				node->needOuterPage = true;
 				continue;
 			}
 			return NULL;
@@ -366,12 +366,11 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 				node->lastReward++;
 				node->generatedJoins++;
 				//TODO do this check earlier in the algorithm
-				if (node->xidToJoinResults[node->pageXid] != NULL && 
-						list_member_int(node->xidToJoinResults[node->pageXid], node->innerPageCounter)) {
+				if (list_member_int(node->xidToJoinResults[(node->pageXid - 1) / PAGE_SIZE], node->innerPageCounter)) {
 					continue;
 				}
 				// Add current xid-innerPageCounter to result sets
-				lcons_int(node->innerPageCounter, node->xidToJoinResults[node->pageXid]);  
+				lcons_int(node->innerPageCounter, node->xidToJoinResults[(node->pageXid - 1) / PAGE_SIZE]);  
 				return ExecProject(node->js.ps.ps_ProjInfo);
 			}
 			else
@@ -708,20 +707,18 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->outerTupleCounter = 0;
 	nlstate->generatedJoins = 0;
 	nlstate->rescanCount = 0;
-	nlstate->innerPageNumber = (long)node->join.plan.righttree->plan_rows / PAGE_SIZE + 1;
+	nlstate->outerPageNumber = node->join.plan.lefttree->plan_rows / PAGE_SIZE + 1;
+	nlstate->innerPageNumber = (long)node->join.plan.righttree->plan_rows / PAGE_SIZE + 1; 
 	nlstate->sqrtOfInnerPages = (int)sqrt(nlstate->innerPageNumber);
 	nlstate->xids = palloc(nlstate->sqrtOfInnerPages * sizeof(long));
 	nlstate->rewards = palloc(nlstate->sqrtOfInnerPages * sizeof(int));
 	nlstate->pageXid = 1;
-	// nlstate->currentXid = 1;
 	nlstate->xidScanKey = (ScanKey) palloc(sizeof(ScanKeyData));
-	nlstate->xidToJoinResults = palloc(node->join.plan.lefttree->plan_rows * sizeof(List*));
-	i = node->join.plan.lefttree->plan_rows;
-	elog(INFO, "Left tree row count: %d", i);
-	i--;
-	while (i >= 0){
-		nlstate->xidToJoinResults[i] = NULL;
-		i--;
+	nlstate->xidToJoinResults = palloc(nlstate->outerPageNumber * sizeof(List*));
+	i = 0;
+	while (i < nlstate->outerPageNumber){
+		nlstate->xidToJoinResults[i] = NIL;
+		i++;
 	}
 
 	nlstate->outerPage = CreateRelationPage();  
@@ -729,8 +726,8 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 
 	NL1_printf("ExecInitNestLoop: %s\n",
 			   "node initialized");
-	/*
 	elog(INFO, "ExecInitNestloop");
+	/*
 	elog_node_display(INFO,"Left: ", node->join.plan.lefttree, true);
 	elog_node_display(INFO,"Right: ", node->join.plan.righttree, true);
 	elog(INFO, "Computed inner page count: %ld, and sqrt: %d", 
@@ -748,6 +745,7 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 void
 ExecEndNestLoop(NestLoopState *node)
 {
+	int i;
 	elog(INFO, "ExecEndNestLoop");
 	NL1_printf("ExecEndNestLoop: %s\n",
 			   "ending node processing");
@@ -770,9 +768,19 @@ ExecEndNestLoop(NestLoopState *node)
 
 	NL1_printf("ExecEndNestLoop: %s\n",
 			   "node processing ended");
+
 	// Releasing memory 
+	//list_free
+	i = 0;
+	while (i < node->outerPageNumber){
+		list_free(node->xidToJoinResults[i]);
+		node->xidToJoinResults[i] = NULL;
+		i++;
+	}
 	RemoveRelationPage(&(node->outerPage));
 	RemoveRelationPage(&(node->innerPage));
+	pfree(node->xids);
+	pfree(node->rewards);
 	pfree(node->xidScanKey);
 	pfree(node->xidToJoinResults);//TODO remove each entry?
 }

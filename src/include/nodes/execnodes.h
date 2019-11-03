@@ -1710,6 +1710,7 @@ typedef struct JoinState
  */
 
 #define PAGE_SIZE 128
+// #define PAGE_SIZE 8
 typedef struct RelationPage {
 	TupleTableSlot* tuples[PAGE_SIZE]; 
 	int index;
@@ -1732,6 +1733,7 @@ typedef struct NestLoopState
 	int reward;
 	bool isExploring;
 	long innerPageNumber;
+	int outerPageNumber;
 	int sqrtOfInnerPages;
 	
 	bool needOuterPage;
