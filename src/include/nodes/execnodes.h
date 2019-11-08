@@ -1751,13 +1751,13 @@ typedef struct NestLoopState
 	int generatedJoins;
 	int rescanCount;
 
-	long* xids; //TODO these could be heaps to improve time
+	int* xids; //TODO these could be heaps to improve time
 	int* rewards;
-	long pageXid;
-	long lastPageXid;
+	int pageIndex;
+	int lastPageIndex;
 	ScanKey xidScanKey;
 
-	List** xidToJoinResults;
+	List** pageIdJoinIdLists;
 
 } NestLoopState;
 
