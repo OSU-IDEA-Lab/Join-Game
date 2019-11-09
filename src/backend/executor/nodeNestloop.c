@@ -145,8 +145,15 @@ static int LoadNextOuterPage(PlanState* outerPlan, RelationPage* relationPage, S
 				0, // ((OpExpr *) clause)->inputcollid,	/* collation */
 				65, /* reg proc to use */
 				fromXid + i); /* constant */
-		((IndexScanState*)outerPlan)->iss_NumScanKeys = 1;
-		((IndexScanState*)outerPlan)->iss_ScanKeys = xidScanKey;
+		if (IsA(outerPlan, IndexScanState)) {
+			((IndexScanState*)outerPlan)->iss_NumScanKeys = 1;
+			((IndexScanState*)outerPlan)->iss_ScanKeys = xidScanKey;
+		} else if (IsA(outerPlan, IndexOnlyScanState)) {
+			((IndexOnlyScanState*)outerPlan)->ioss_NumScanKeys = 1;
+			((IndexOnlyScanState*)outerPlan)->ioss_ScanKeys = xidScanKey;
+		} else {
+			elog(ERROR, "Outer plan type is not index scan");
+		}
 		ExecReScan(outerPlan);
 	 	tts = ExecProcNode(outerPlan);
 		if (TupIsNull(tts)){
@@ -242,9 +249,9 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 				node->isExploring = true;
 				node->pageIndex = MAX(node->pageIndex, node->lastPageIndex); 
 				LoadNextOuterPage(outerPlan, node->outerPage, node->xidScanKey, node->pageIndex);
-				node->pageIndex += 1;
+				node->pageIndex++;
 				if (node->outerPage->tupleCount < PAGE_SIZE) {
-					elog(INFO, "reached end of outer");
+					elog(INFO, "Reached end of outer");
 					node->reachedEndOfOuter = true;
 					if (node->outerPage->tupleCount == 0) continue;
 				}
@@ -263,6 +270,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 				LoadNextOuterPage(outerPlan, node->outerPage, node->xidScanKey, node->pageIndex);
 			} else {
 				// join is done
+				elog(INFO, "Join finished normally");
 				PrintNodeCounters(node);
 				return NULL;
 
@@ -354,7 +362,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 		if (TupIsNull(outerTupleSlot)){
 			if (node->activeRelationPages > 0) { // still has pages in stack
 				// elog(WARNING, "Finishing join while there are active pages");
-				elog(INFO, "null outer detected");
+				elog(INFO, "Null outer detected");
 				node->needOuterPage = true;
 				continue;
 			}
@@ -370,9 +378,9 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 				ENL1_printf("qualification succeeded, projecting tuple");
 				node->lastReward++;
 				node->generatedJoins++;
-				elog(INFO, "index: %d", node->pageIndex);
-				if (node->pageIndex >= node->outerPageCounter){
-					elog(WARNING, "pageIndex > outerPageCount!?");
+				if (node->pageIndex >= node->outerPageNumber){
+					elog(WARNING, "pageIndex > outerPageNumber!?");
+					return NULL;
 				}
 				//TODO do this check earlier in the algorithm
 				if (list_member_int(node->pageIdJoinIdLists[node->pageIndex], node->innerPageCounter)) {
@@ -725,7 +733,6 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->lastPageIndex = 0;
 	nlstate->xidScanKey = (ScanKey) palloc(sizeof(ScanKeyData));
 	nlstate->pageIdJoinIdLists = palloc(nlstate->outerPageNumber * sizeof(List*));
-	elog(INFO, "outer page number: %d", nlstate->outerPageNumber);
 	i = 0;
 	while (i < nlstate->outerPageNumber){
 		nlstate->pageIdJoinIdLists[i] = NIL;
@@ -737,7 +744,7 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 
 	NL1_printf("ExecInitNestLoop: %s\n",
 			   "node initialized");
-	elog(INFO, "ExecInitNestloop");
+	elog(INFO, "ExecInitNestloop done");
 	/*
 	elog_node_display(INFO,"Left: ", node->join.plan.lefttree, true);
 	elog_node_display(INFO,"Right: ", node->join.plan.righttree, true);
