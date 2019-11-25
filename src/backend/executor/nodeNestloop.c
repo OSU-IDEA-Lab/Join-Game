@@ -195,6 +195,7 @@ static void PrintNodeCounters(NestLoopState *node){
 	elog(INFO, "Rescan Count: %d", node->rescanCount);
 	elog(INFO, "Current XidPage: %d", node->pageIndex);
 	elog(INFO, "Active Relations: %d", node->activeRelationPages);
+	elog(INFO, "Total page reads: %d", (node->outerPageCounter + node->innerPageCounterTotal));
 }
 
 static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
@@ -429,8 +430,6 @@ static TupleTableSlot* ExecPagedNestLoop(PlanState *pstate)
 
 	for (;;) {
 		if (node->needOuterPage) {
-			if (node->outerPageCounter % 1000 == 0)
-				elog(INFO, "Read pages so far: %d", node->outerPageCounter);
 			node->outerPage = CreateRelationPage(); 
 			LoadNextPage(outerPlan, node->outerPage);
 			node->outerTupleCounter += node->outerPage->tupleCount;
@@ -726,11 +725,14 @@ static TupleTableSlot* ExecNestLoop(PlanState *pstate)
 	const char* fastjoin = GetConfigOption("enable_fastjoin", false, false);
 	const char* blocknestloop = GetConfigOption("enable_block", false, false);
 	if (strcmp(fastjoin, "on") == 0){
+		elog(INFO, "Running bandit join..");
 		tts = ExecFastNestLoop(pstate);
 	} else {
 		if (strcmp(blocknestloop, "on") == 0) {
+			elog(INFO, "Running block nested loop..");
 			tts = ExecPagedNestLoop(pstate);
 		} else {
+			elog(INFO, "Running nested loop..");
 			tts = ExecRegularNestLoop(pstate);
 		}
 	}
@@ -865,7 +867,6 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 
 	NL1_printf("ExecInitNestLoop: %s\n",
 			   "node initialized");
-	elog(INFO, "ExecInitNestloop done");
 	/*
 	elog_node_display(INFO,"Left: ", node->join.plan.lefttree, true);
 	elog_node_display(INFO,"Right: ", node->join.plan.righttree, true);
@@ -885,7 +886,6 @@ void
 ExecEndNestLoop(NestLoopState *node)
 {
 	int i;
-	elog(INFO, "ExecEndNestLoop");
 	NL1_printf("ExecEndNestLoop: %s\n",
 			   "ending node processing");
 
