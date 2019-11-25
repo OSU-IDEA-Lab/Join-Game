@@ -438,7 +438,7 @@ static TupleTableSlot* ExecPagedNestLoop(PlanState *pstate)
 			node->needOuterPage = false;
 			if (node->outerPage->tupleCount < PAGE_SIZE){ // join done
 				RemoveRelationPage(&(node->outerPage));
-				elog(INFO, "Join Done")
+				elog(INFO, "Join Done");
 				return NULL; 
 			}
 		}
