@@ -724,11 +724,15 @@ static TupleTableSlot* ExecNestLoop(PlanState *pstate)
 {
 	TupleTableSlot *tts;
 	const char* fastjoin = GetConfigOption("enable_fastjoin", false, false);
+	const char* blocknestloop = GetConfigOption("enable_block", false, false);
 	if (strcmp(fastjoin, "on") == 0){
 		tts = ExecFastNestLoop(pstate);
 	} else {
-		tts = ExecPagedNestLoop(pstate);
-		// tts = ExecRegularNestLoop(pstate);
+		if (strcmp(blocknestloop, "on") == 0) {
+			tts = ExecPagedNestLoop(pstate);
+		} else {
+			tts = ExecRegularNestLoop(pstate);
+		}
 	}
 	return tts;
 }

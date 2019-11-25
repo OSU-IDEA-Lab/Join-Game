@@ -919,10 +919,19 @@ static struct config_bool ConfigureNamesBool[] =
 	},
 	{
 		{"enable_fastjoin", PGC_USERSET, QUERY_TUNING_METHOD,
-			gettext_noop("Enables the planner's use of hash join plans."),
+			gettext_noop("Enables the planner's use of bandit join plans."),
 			NULL
 		},
 		&enable_fastjoin,
+		true,
+		NULL, NULL, NULL
+	},
+	{
+		{"enable_block", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Enables the planner's use of block nested loop join plans."),
+			NULL
+		},
+		&enable_block,
 		true,
 		NULL, NULL, NULL
 	},
