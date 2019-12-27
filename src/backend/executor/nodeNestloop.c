@@ -606,6 +606,140 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 	}
 }
 
+
+static TupleTableSlot* ExecRightBlockNestedLoop(PlanState *pstate)
+{
+	NestLoopState *node = castNode(NestLoopState, pstate);
+	NestLoop   *nl;
+	PlanState  *innerPlan;
+	PlanState  *outerPlan;
+	TupleTableSlot *outerTupleSlot;
+	TupleTableSlot *innerTupleSlot;
+	ExprState  *joinqual;
+	ExprState  *otherqual;
+	ExprContext *econtext;
+	ListCell   *lc;
+
+	CHECK_FOR_INTERRUPTS();
+	ENL1_printf("getting info from node");
+
+	nl = (NestLoop *) node->js.ps.plan;
+	joinqual = node->js.joinqual;
+	otherqual = node->js.ps.qual;
+	outerPlan = outerPlanState(node);
+	innerPlan = innerPlanState(node);
+	econtext = node->js.ps.ps_ExprContext;
+	ResetExprContext(econtext);
+	ENL1_printf("entering main loop");
+
+	if (nl->join.inner_unique)
+		elog(WARNING, "inner relation is detected as unique");
+
+	for (;;) {
+		if (node->needOuterPage) {
+			if (node->reachedEndOfOuter){
+				RemoveRelationPage(&(node->outerPage));
+				elog(INFO, "Join Done");
+				return NULL; 
+			}
+			node->outerPage = CreateRelationPage(); 
+			LoadNextPage(outerPlan, node->outerPage);
+			node->outerTupleCounter += node->outerPage->tupleCount;
+			node->outerPageCounter++;
+			node->needOuterPage = false;
+			if (node->outerPage->tupleCount < PAGE_SIZE){ 
+				node->reachedEndOfOuter = true;
+				if (node->outerPage->tupleCount == 0) continue;
+			}
+		}
+		if (node->needInnerPage) {
+			LoadNextPage(innerPlan, node->innerPage);
+			node->innerTupleCounter += node->innerPage->tupleCount;
+			node->innerPageCounter++;
+			node->innerPageCounterTotal++;
+			node->needInnerPage = false;
+			if (node->innerPage->tupleCount < PAGE_SIZE){ // done with one outer page, move to next
+				foreach(lc, nl->nestParams)
+				{
+					NestLoopParam *nlp = (NestLoopParam *) lfirst(lc);
+					int			paramno = nlp->paramno;
+					ParamExecData *prm;
+
+					prm = &(econtext->ecxt_param_exec_vals[paramno]);
+					/* Param value should be an OUTER_VAR var */
+					Assert(IsA(nlp->paramval, Var));
+					Assert(nlp->paramval->varno == OUTER_VAR);
+					Assert(nlp->paramval->varattno > 0);
+					prm->value = slot_getattr(node->outerPage->tuples[node->outerPage->index],
+							nlp->paramval->varattno,
+							&(prm->isnull));
+					/* Flag parameter value as changed */
+					innerPlan->chgParam = bms_add_member(innerPlan->chgParam,
+							paramno);
+				}
+				ENL1_printf("rescanning inner plan");
+				ExecReScan(innerPlan);
+				node->rescanCount++;
+				node->needOuterPage = true;
+				if (node->innerPage->tupleCount == 0){
+					node->needInnerPage = true;
+					continue;
+				}
+				// node->needInnerPage = true;
+				// RemoveRelationPage(&(node->outerPage));
+				// node->needOuterPage = true;
+				// continue;
+			}
+		} 
+		if (node->innerPage->index == node->innerPage->tupleCount) {
+			if (node->outerPage->index < node->outerPage->tupleCount - 1){
+				node->outerPage->index++;
+				node->innerPage->index = 0;
+			} else { // mini join is done 
+				node->needInnerPage = true;
+				node->outerPage->index = 0;
+			}
+			continue;
+		} 		
+
+		outerTupleSlot = node->outerPage->tuples[node->outerPage->index];
+		innerTupleSlot = node->innerPage->tuples[node->innerPage->index];
+
+		if (TupIsNull(innerTupleSlot)) {
+			elog(ERROR, "Inner slot is null");
+		}
+		if (TupIsNull(outerTupleSlot)){
+			elog(INFO, "outer tuples: %d", node->outerPage->tupleCount);
+			elog(INFO, "outer index: %d", node->outerPage->index);
+			elog(INFO, "inner tuples: %d", node->innerPage->tupleCount);
+			elog(INFO, "inner index: %d", node->innerPage->index);
+			elog(INFO, "===============");
+			PrintNodeCounters(node);
+			elog(ERROR, "Outer slot is null");
+		}
+		econtext->ecxt_outertuple = outerTupleSlot;
+		econtext->ecxt_innertuple = innerTupleSlot;
+		node->innerPage->index++;
+
+		ENL1_printf("testing qualification");
+
+		if (ExecQual(joinqual, econtext)) {
+			if (otherqual == NULL || ExecQual(otherqual, econtext)) {
+				ENL1_printf("qualification succeeded, projecting tuple");
+				node->generatedJoins++;
+				return ExecProject(node->js.ps.ps_ProjInfo);
+			}
+			else
+				InstrCountFiltered2(node, 1);
+		}
+		else
+			InstrCountFiltered1(node, 1);
+		ResetExprContext(econtext);
+		ENL1_printf("qualification failed, looping");
+	}
+}
+
+
 static TupleTableSlot* ExecBlockNestedLoop(PlanState *pstate)
 {
 	NestLoopState *node = castNode(NestLoopState, pstate);
@@ -1051,8 +1185,8 @@ static TupleTableSlot* ExecNestLoop(PlanState *pstate)
 	} else if (strcmp(blocknestloop, "on") == 0) {
 		tts = ExecBlockNestedLoop(pstate);
 	} else {
-		tts = ExecRightRegularNestLoop(pstate);
-		// tts = ExecRegularNestLoop(pstate);
+		// tts = ExecRightRegularNestLoop(pstate);
+		tts = ExecRegularNestLoop(pstate);
 	}
 	return tts;
 }
@@ -1279,3 +1413,4 @@ ExecReScanNestLoop(NestLoopState *node)
 	 */
 
 }
+
