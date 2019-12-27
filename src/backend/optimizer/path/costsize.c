@@ -135,6 +135,7 @@ bool		enable_mergejoin = true;
 bool		enable_hashjoin = true;
 bool		enable_fastjoin = false;
 bool		enable_block = false;
+bool		enable_fliporder= false;
 bool		enable_gathermerge = true;
 bool		enable_partitionwise_join = false;
 bool		enable_partitionwise_aggregate = false;

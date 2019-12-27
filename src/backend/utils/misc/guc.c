@@ -936,6 +936,15 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 	{
+		{"enable_fliporder", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("flips the inner and outer relations in nested loop join plans."),
+			NULL
+		},
+		&enable_fliporder,
+		false,
+		NULL, NULL, NULL
+	},
+	{
 		{"enable_gathermerge", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of gather merge plans."),
 			NULL
