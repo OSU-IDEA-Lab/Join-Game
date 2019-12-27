@@ -198,7 +198,7 @@ static void PrintNodeCounters(NestLoopState *node){
 	elog(INFO, "Total page reads: %d", (node->outerPageCounter + node->innerPageCounterTotal));
 }
 
-static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
+static TupleTableSlot* ExecRightBanditJoin(PlanState *pstate)
 {
 	NestLoopState *node = castNode(NestLoopState, pstate);
 	NestLoop   *nl;
@@ -402,7 +402,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 	}
 }
 
-static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
+static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 {
 	NestLoopState *node = castNode(NestLoopState, pstate);
 	NestLoop   *nl;
@@ -425,8 +425,10 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 	nl = (NestLoop *) node->js.ps.plan;
 	joinqual = node->js.joinqual;
 	otherqual = node->js.ps.qual;
-	outerPlan = outerPlanState(node);
-	innerPlan = innerPlanState(node);
+	// outerPlan = outerPlanState(node);
+	// innerPlan = innerPlanState(node);
+	outerPlan = innerPlanState(node);
+	innerPlan = outerPlanState(node);
 	econtext = node->js.ps.ps_ExprContext;
 
 	/*
@@ -604,7 +606,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 	}
 }
 
-static TupleTableSlot* ExecPagedNestLoop(PlanState *pstate)
+static TupleTableSlot* ExecBlockNestedLoop(PlanState *pstate)
 {
 	NestLoopState *node = castNode(NestLoopState, pstate);
 	NestLoop   *nl;
@@ -634,15 +636,19 @@ static TupleTableSlot* ExecPagedNestLoop(PlanState *pstate)
 
 	for (;;) {
 		if (node->needOuterPage) {
+			if (node->reachedEndOfOuter){
+				RemoveRelationPage(&(node->outerPage));
+				elog(INFO, "Join Done");
+				return NULL; 
+			}
 			node->outerPage = CreateRelationPage(); 
 			LoadNextPage(outerPlan, node->outerPage);
 			node->outerTupleCounter += node->outerPage->tupleCount;
 			node->outerPageCounter++;
 			node->needOuterPage = false;
-			if (node->outerPage->tupleCount < PAGE_SIZE){ // join done
-				RemoveRelationPage(&(node->outerPage));
-				elog(INFO, "Join Done");
-				return NULL; 
+			if (node->outerPage->tupleCount < PAGE_SIZE){ 
+				node->reachedEndOfOuter = true;
+				if (node->outerPage->tupleCount == 0) continue;
 			}
 		}
 		if (node->needInnerPage) {
@@ -673,17 +679,22 @@ static TupleTableSlot* ExecPagedNestLoop(PlanState *pstate)
 				ENL1_printf("rescanning inner plan");
 				ExecReScan(innerPlan);
 				node->rescanCount++;
-				node->needInnerPage = true;
-				RemoveRelationPage(&(node->outerPage));
 				node->needOuterPage = true;
-				continue;
+				if (node->innerPage->tupleCount == 0){
+					node->needInnerPage = true;
+					continue;
+				}
+				// node->needInnerPage = true;
+				// RemoveRelationPage(&(node->outerPage));
+				// node->needOuterPage = true;
+				// continue;
 			}
 		} 
-		if (node->innerPage->index == PAGE_SIZE) {
-			if (node->outerPage->index < PAGE_SIZE - 1){
+		if (node->innerPage->index == node->innerPage->tupleCount) {
+			if (node->outerPage->index < node->outerPage->tupleCount - 1){
 				node->outerPage->index++;
 				node->innerPage->index = 0;
-			} else { // outer page reached its end
+			} else { // mini join is done 
 				node->needInnerPage = true;
 				node->outerPage->index = 0;
 			}
@@ -697,6 +708,12 @@ static TupleTableSlot* ExecPagedNestLoop(PlanState *pstate)
 			elog(ERROR, "Inner slot is null");
 		}
 		if (TupIsNull(outerTupleSlot)){
+			elog(INFO, "outer tuples: %d", node->outerPage->tupleCount);
+			elog(INFO, "outer index: %d", node->outerPage->index);
+			elog(INFO, "inner tuples: %d", node->innerPage->tupleCount);
+			elog(INFO, "inner index: %d", node->innerPage->index);
+			elog(INFO, "===============");
+			PrintNodeCounters(node);
 			elog(ERROR, "Outer slot is null");
 		}
 		econtext->ecxt_outertuple = outerTupleSlot;
@@ -721,8 +738,109 @@ static TupleTableSlot* ExecPagedNestLoop(PlanState *pstate)
 	}
 }
 
-static TupleTableSlot *
-ExecRegularNestLoop(PlanState *pstate)
+
+static TupleTableSlot* ExecRightRegularNestLoop(PlanState *pstate)
+{
+	NestLoopState *node = castNode(NestLoopState, pstate);
+	NestLoop   *nl;
+	PlanState  *innerPlan;
+	PlanState  *outerPlan;
+	TupleTableSlot *outerTupleSlot;
+	TupleTableSlot *innerTupleSlot;
+	ExprState  *joinqual;
+	ExprState  *otherqual;
+	ExprContext *econtext;
+	ListCell   *lc;
+
+	CHECK_FOR_INTERRUPTS();
+
+	/*
+	 * get information from the node
+	 */
+	ENL1_printf("getting info from node");
+
+	nl = (NestLoop *) node->js.ps.plan;
+	joinqual = node->js.joinqual;
+	otherqual = node->js.ps.qual;
+	outerPlan = outerPlanState(node);
+	innerPlan = innerPlanState(node);
+	econtext = node->js.ps.ps_ExprContext;
+
+	/*
+	 * Reset per-tuple memory context to free any expression evaluation
+	 * storage allocated in the previous tuple cycle.
+	 */
+	ResetExprContext(econtext);
+
+	/*
+	 * Ok, everything is setup for the join so now loop until we return a
+	 * qualifying join tuple.
+	 */
+	ENL1_printf("entering main loop");
+
+	if (node->innerTupleCounter == 0) {
+		ExecReScan(innerPlan);
+		innerTupleSlot = ExecProcNode(innerPlan);
+		econtext->ecxt_innertuple = innerTupleSlot;
+		if (TupIsNull(innerTupleSlot)) {
+			// join is done
+			return NULL;
+		}
+		node->innerTupleCounter++;
+	}
+
+	for (;;)
+	{
+		/*
+		 * get the next outer tuple 
+		 */
+
+		outerTupleSlot = ExecProcNode(outerPlan);
+		if (TupIsNull(outerTupleSlot))
+		{
+			ENL1_printf("no outer tuple, ending join");
+			ExecReScan(outerPlan);
+			innerTupleSlot = ExecProcNode(innerPlan);
+			econtext->ecxt_innertuple = innerTupleSlot;
+			if (TupIsNull(innerTupleSlot)) {
+				// join is done
+				return NULL;
+			}
+			node->innerTupleCounter++;
+			continue;
+		}
+		node->outerTupleCounter++;
+		ENL1_printf("saving new outer tuple information");
+		econtext->ecxt_outertuple = outerTupleSlot;
+
+		if (ExecQual(joinqual, econtext))
+		{
+			if (otherqual == NULL || ExecQual(otherqual, econtext))
+			{
+				/*
+				 * qualification was satisfied so we project and return the
+				 * slot containing the result tuple using ExecProject().
+				 */
+				ENL1_printf("qualification succeeded, projecting tuple");
+
+				return ExecProject(node->js.ps.ps_ProjInfo);
+			}
+			else
+				InstrCountFiltered2(node, 1);
+		}
+		else
+			InstrCountFiltered1(node, 1);
+
+		/*
+		 * Tuple fails qual, so free per-tuple memory and try again.
+		 */
+		ResetExprContext(econtext);
+
+		ENL1_printf("qualification failed, looping");
+	}
+}
+
+static TupleTableSlot* ExecRegularNestLoop(PlanState *pstate)
 {
 	NestLoopState *node = castNode(NestLoopState, pstate);
 	NestLoop   *nl;
@@ -772,7 +890,6 @@ ExecRegularNestLoop(PlanState *pstate)
 			ENL1_printf("getting new outer tuple");
 
 			outerTupleSlot = ExecProcNode(outerPlan);
-
 			node->outerTupleCounter++;
 
 			/*
@@ -930,13 +1047,12 @@ static TupleTableSlot* ExecNestLoop(PlanState *pstate)
 	const char* fastjoin = GetConfigOption("enable_fastjoin", false, false);
 	const char* blocknestloop = GetConfigOption("enable_block", false, false);
 	if (strcmp(fastjoin, "on") == 0){
-		tts = ExecBanditJoin(pstate);
+		tts = ExecRightBanditJoin(pstate);
+	} else if (strcmp(blocknestloop, "on") == 0) {
+		tts = ExecBlockNestedLoop(pstate);
 	} else {
-		if (strcmp(blocknestloop, "on") == 0) {
-			tts = ExecPagedNestLoop(pstate);
-		} else {
-			tts = ExecRegularNestLoop(pstate);
-		}
+		tts = ExecRightRegularNestLoop(pstate);
+		// tts = ExecRegularNestLoop(pstate);
 	}
 	return tts;
 }
@@ -985,13 +1101,11 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	 * values.
 	 */
 	outerPlanState(nlstate) = ExecInitNode(outerPlan(node), estate, eflags);
-	// outerPlanState(nlstate) = ExecInitNode(innerPlan(node), estate, eflags);
 	if (node->nestParams == NIL)
 		eflags |= EXEC_FLAG_REWIND;
 	else
 		eflags &= ~EXEC_FLAG_REWIND;
 	innerPlanState(nlstate) = ExecInitNode(innerPlan(node), estate, eflags);
-	// innerPlanState(nlstate) = ExecInitNode(outerPlan(node), estate, eflags);
 
 	/*
 	 * Initialize result slot, type and projection.
