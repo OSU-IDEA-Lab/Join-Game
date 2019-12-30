@@ -1732,7 +1732,7 @@ typedef struct NestLoopState
 	int reward;
 	bool isExploring;
 	long innerPageNumber;
-	int outerPageNumber;
+	long outerPageNumber;
 	int sqrtOfInnerPages;
 	
 	bool needOuterPage;

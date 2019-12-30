@@ -240,7 +240,9 @@ static TupleTableSlot* ExecRightBanditJoin(PlanState *pstate)
 
 	// if (nl->join.inner_unique)
 		// elog(WARNING, "inner relation is detected as unique");
-
+		//
+	if (node->innerTupleCounter == 0)
+		ExecReScan(outerPlan);
 
 	for (;;)
 	{
@@ -248,9 +250,9 @@ static TupleTableSlot* ExecRightBanditJoin(PlanState *pstate)
 			if (!node->reachedEndOfOuter && node->activeRelationPages < node->sqrtOfInnerPages) { 
 				// explore
 				node->isExploring = true;
+				node->pageIndex++;
 				node->pageIndex = MAX(node->pageIndex, node->lastPageIndex); 
 				LoadNextOuterPage(outerPlan, node->outerPage, node->xidScanKey, node->pageIndex);
-				node->pageIndex++;
 				if (node->outerPage->tupleCount < PAGE_SIZE) {
 					elog(INFO, "Reached end of outer");
 					node->reachedEndOfOuter = true;
@@ -259,7 +261,7 @@ static TupleTableSlot* ExecRightBanditJoin(PlanState *pstate)
 				node->outerTupleCounter += node->outerPage->tupleCount;
 				node->outerPageCounter++;
 				node->lastReward = 0;
-				node->exploreStepCounter = 0;
+				node->exploreStepCounter = 1;
 			} else if ((!node->reachedEndOfOuter && node->activeRelationPages == node->sqrtOfInnerPages) || 
 					(node->reachedEndOfOuter && node->activeRelationPages > 0)){
 				// exploit
@@ -423,10 +425,8 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 	nl = (NestLoop *) node->js.ps.plan;
 	joinqual = node->js.joinqual;
 	otherqual = node->js.ps.qual;
-	// outerPlan = outerPlanState(node);
-	// innerPlan = innerPlanState(node);
-	outerPlan = innerPlanState(node);
-	innerPlan = outerPlanState(node);
+	outerPlan = outerPlanState(node);
+	innerPlan = innerPlanState(node);
 	econtext = node->js.ps.ps_ExprContext;
 
 	/*
@@ -452,9 +452,9 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 			if (!node->reachedEndOfOuter && node->activeRelationPages < node->sqrtOfInnerPages) { 
 				// explore
 				node->isExploring = true;
+				node->pageIndex++;
 				node->pageIndex = MAX(node->pageIndex, node->lastPageIndex); 
 				LoadNextOuterPage(outerPlan, node->outerPage, node->xidScanKey, node->pageIndex);
-				node->pageIndex++;
 				if (node->outerPage->tupleCount < PAGE_SIZE) {
 					elog(INFO, "Reached end of outer");
 					node->reachedEndOfOuter = true;
@@ -463,7 +463,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 				node->outerTupleCounter += node->outerPage->tupleCount;
 				node->outerPageCounter++;
 				node->lastReward = 0;
-				node->exploreStepCounter = 0;
+				node->exploreStepCounter = 1;
 			} else if ((!node->reachedEndOfOuter && node->activeRelationPages == node->sqrtOfInnerPages) || 
 					(node->reachedEndOfOuter && node->activeRelationPages > 0)){
 				// exploit
@@ -634,7 +634,7 @@ static TupleTableSlot* ExecRightBlockNestedLoop(PlanState *pstate)
 		elog(WARNING, "inner relation is detected as unique");
 
 	if (node->innerTupleCounter == 0)
-		ExecReScan(innerPlan);
+		ExecReScan(outerPlan);
 
 	for (;;) {
 		if (node->needOuterPage) {
@@ -1277,6 +1277,7 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->nl_MatchedOuter = false;
 
 	/* Extra inits for bandit join*/
+	fliporder = GetConfigOption("enable_fliporder", false, false);
 	nlstate->activeRelationPages = 0;
 	nlstate->isExploring = true;
 	nlstate->lastReward = 0;
@@ -1292,13 +1293,21 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->outerTupleCounter = 0;
 	nlstate->generatedJoins = 0;
 	nlstate->rescanCount = 0;
-	//TODO change the following lines based on enable_fliporder
-	nlstate->outerPageNumber = node->join.plan.lefttree->plan_rows / PAGE_SIZE + 1;
-	nlstate->innerPageNumber = node->join.plan.righttree->plan_rows / PAGE_SIZE + 1; 
+	if (strcmp(fliporder, "on") == 0) {
+		nlstate->outerPageNumber = innerPlan(node)->plan_rows / PAGE_SIZE + 1; 
+		nlstate->innerPageNumber = outerPlan(node)->plan_rows / PAGE_SIZE + 1;
+	} else {
+		nlstate->outerPageNumber = outerPlan(node)->plan_rows / PAGE_SIZE + 1;
+		nlstate->innerPageNumber = innerPlan(node)->plan_rows / PAGE_SIZE + 1; 
+	}
+	//TODO sometimes the inner plan_rows does not match the exact row numbers 
+	// elog(INFO, "Outer page number: %ld", nlstate->outerPageNumber);
+	// elog(INFO, "Inner page number: %ld", nlstate->innerPageNumber);
+
 	nlstate->sqrtOfInnerPages = (int)sqrt(nlstate->innerPageNumber);
 	nlstate->xids = palloc(nlstate->sqrtOfInnerPages * sizeof(int));
 	nlstate->rewards = palloc(nlstate->sqrtOfInnerPages * sizeof(int));
-	nlstate->pageIndex = 0;
+	nlstate->pageIndex = -1;
 	nlstate->lastPageIndex = 0;
 	nlstate->xidScanKey = (ScanKey) palloc(sizeof(ScanKeyData));
 	nlstate->pageIdJoinIdLists = palloc(nlstate->outerPageNumber * sizeof(List*));
@@ -1321,7 +1330,6 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	*/
 	fastjoin = GetConfigOption("enable_fastjoin", false, false);
 	blocknestloop = GetConfigOption("enable_block", false, false);
-	fliporder = GetConfigOption("enable_fliporder", false, false);
 	if (strcmp(fastjoin, "on") == 0){
 		elog(INFO, "Running bandit join..");
 	} else {
@@ -1412,6 +1420,10 @@ ExecReScanNestLoop(NestLoopState *node)
 	 */
 
 	if (strcmp(fliporder, "on") == 0) {
+		RemoveRelationPage(&(node->outerPage));
+		RemoveRelationPage(&(node->innerPage));
+		node->outerPage = CreateRelationPage();
+		node->innerPage = CreateRelationPage();
 		ExecReScan(innerPlan);
 		node->innerTupleCounter = 0;
 	}
