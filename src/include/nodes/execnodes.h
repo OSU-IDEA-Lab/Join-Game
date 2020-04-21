@@ -1751,6 +1751,7 @@ typedef struct NestLoopState
 	int rescanCount;
 	int oneFailureTermination;
 	int currentGeneratedJoins;
+	int failCount;
 
 	int* xids; //TODO these could be heaps to improve time
 	int* rewards;
