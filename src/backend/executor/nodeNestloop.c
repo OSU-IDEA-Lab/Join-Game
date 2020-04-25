@@ -198,6 +198,7 @@ static void PrintNodeCounters(NestLoopState *node) {
 	elog(INFO, "Active Relations: %d", node->activeRelationPages);
 	elog(INFO, "Total page reads: %d",
 			(node->outerPageCounter + node->innerPageCounterTotal));
+	elog(INFO, "Total duplicates: %d", node->duplicatesCount);
 }
 
 static TupleTableSlot* ExecRightBanditJoin(PlanState *pstate) {
@@ -623,6 +624,15 @@ static TupleTableSlot* ExecOneFailure(PlanState *pstate) {
 	ExprContext *econtext;
 	ListCell *lc;
 
+	int currentGeneratedJoins = 0;// Count of generated joins for an outer-inner page pair
+	int failCount = 0;					// To avoid getting stuck at worst page
+
+	char *keyOuter1 = malloc(PAGE_SIZE / 2);// Collect unique identifier from a produced join
+	char *keyOuter2 = malloc(PAGE_SIZE / 2);
+	char *keyForDup = malloc(PAGE_SIZE);
+	int intKeyForDup = 0;
+
+	bool isNull;
 	CHECK_FOR_INTERRUPTS();
 
 	/*
@@ -649,9 +659,6 @@ static TupleTableSlot* ExecOneFailure(PlanState *pstate) {
 	 */
 	ENL1_printf("entering main loop");
 
-	//if (nl->join.inner_unique)
-	//	elog(WARNING, "inner relation is detected as unique");
-
 	for (;;) {
 
 		if (node->needInnerPage) {
@@ -668,7 +675,6 @@ static TupleTableSlot* ExecOneFailure(PlanState *pstate) {
 					Assert(IsA(nlp->paramval, Var));
 					Assert(nlp->paramval->varno == OUTER_VAR);
 					Assert(nlp->paramval->varattno > 0);
-					// prm->value = slot_getattr(outerTupleSlot,
 					prm->value = slot_getattr(node->outerPage->tuples[0],
 							nlp->paramval->varattno, &(prm->isnull));
 					// Flag parameter value as changed
@@ -694,12 +700,13 @@ static TupleTableSlot* ExecOneFailure(PlanState *pstate) {
 
 		if (node->needOuterPage) {
 			if (node->reachedEndOfOuter) {
-				if (node->oneFailureTermination > 0) {
+				if (node->oneFailureTermination > 0) {// Rescan outer when all outer pages are exhausted
 					//node->outerPageCounter = 0;
 					ExecReScan(outerPlan);
 					node->reachedEndOfOuter = false;
 					node->oneFailureTermination--;
 				} else
+					// Terminating condition of outermost for loop
 					return NULL;
 			}
 
@@ -712,26 +719,25 @@ static TupleTableSlot* ExecOneFailure(PlanState *pstate) {
 			node->outerTupleCounter += node->outerPage->tupleCount;
 			node->outerPageCounter++;
 			//elog(INFO, "outerPageCounter %d", node->outerPageCounter);
-			//node->needInnerPage = true;
 			node->needOuterPage = false;
 		}
 
-		if (node->innerPage->index == node->innerPage->tupleCount) {
-			if (node->outerPage->index < node->outerPage->tupleCount - 1) {
+		if (node->innerPage->index == node->innerPage->tupleCount) {// Last tuple in current inner page
+			if (node->outerPage->index < node->outerPage->tupleCount - 1) {	// Last tuple in current outer page is not reached yet
 				node->outerPage->index++;
 				node->innerPage->index = 0;
-			} else { // mini join is done
+			} else { // mini join is done								// Both current outer and inner page are at their last tuple
 
-				if (node->currentGeneratedJoins > 0 || node->failCount > PAGE_SIZE) {
+				if (currentGeneratedJoins > 0 || failCount > PAGE_SIZE) { // If any joins were produced, continue with same outer, next inner
 					node->outerPage->index = 0;
 					node->needInnerPage = true;
-					node->failCount = 0;
-				} else {
+					failCount = 0;
+				} else {			// Failure occurred, go to next outer page
 					node->needOuterPage = true;
 					node->innerPage->index = 0;
-					node->failCount++;
+					failCount++;
 				}
-				node->currentGeneratedJoins = 0;
+				currentGeneratedJoins = 0;
 				continue;
 			}
 		}
@@ -755,11 +761,32 @@ static TupleTableSlot* ExecOneFailure(PlanState *pstate) {
 		ENL1_printf("testing qualification");
 		if (ExecQual(joinqual, econtext)) {
 
-			if (otherqual == NULL || ExecQual(otherqual, econtext)) {
-				ENL1_printf("qualification succeeded, projecting tuple");
-				node->generatedJoins++;
-				node->currentGeneratedJoins++;
-				return ExecProject(node->js.ps.ps_ProjInfo);
+			/* Extract unique attributes from produced join for duplicates handling */
+			snprintf(keyOuter1, 16, "%d",
+					DatumGetInt32(slot_getattr(econtext->ecxt_outertuple, 1, &isNull)));
+			snprintf(keyOuter2, 16, "%d",
+					DatumGetChar(slot_getattr(econtext->ecxt_outertuple, 4, &isNull)));
+			strcpy(keyForDup, keyOuter1);
+			strcat(keyForDup, keyOuter2);
+			intKeyForDup = atoi(keyForDup);
+
+			//elog(INFO, "val %d", intKeyForDup);
+
+			if ((otherqual == NULL || ExecQual(otherqual, econtext))) {
+				if (!bms_is_member(intKeyForDup, node->setForDuplicates)) {	// New join
+					ENL1_printf("qualification succeeded, projecting tuple");
+					node->generatedJoins++;
+					currentGeneratedJoins++;
+					node->setForDuplicates = bms_add_member(
+							node->setForDuplicates, intKeyForDup);
+					// elog(INFO, "first %d", bms_first_member(node->setForDuplicates));
+					// elog(INFO, "total %d", bms_num_members(node->setForDuplicates));
+					return ExecProject(node->js.ps.ps_ProjInfo);
+				} else {											// Duplicate
+					node->duplicatesCount += 1;
+					// elog(INFO, "count %d", node->duplicatesCount);
+				}
+
 			} else {
 				InstrCountFiltered2(node, 1);
 			}
@@ -1417,9 +1444,9 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags) {
 	nlstate->innerTupleCounter = 0;
 	nlstate->outerTupleCounter = 0;
 	nlstate->generatedJoins = 0;
-	nlstate->currentGeneratedJoins = 0;
-	nlstate->failCount = 0;
 	nlstate->rescanCount = 0;
+	nlstate->duplicatesCount = 0;
+	nlstate->setForDuplicates = NULL;
 	if (strcmp(fliporder, "on") == 0) {
 		nlstate->outerPageNumber = innerPlan(node)->plan_rows / PAGE_SIZE + 1;
 		nlstate->innerPageNumber = outerPlan(node)->plan_rows / PAGE_SIZE + 1;
@@ -1523,6 +1550,7 @@ void ExecEndNestLoop(NestLoopState *node) {
 	pfree(node->rewards);
 	pfree(node->xidScanKey);
 	pfree(node->pageIdJoinIdLists);	//TODO remove each entry?
+	bms_free(node->setForDuplicates);
 }
 
 /* ----------------------------------------------------------------

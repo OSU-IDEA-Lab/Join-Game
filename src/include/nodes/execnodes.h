@@ -1750,8 +1750,8 @@ typedef struct NestLoopState
 	int generatedJoins;
 	int rescanCount;
 	int oneFailureTermination;
-	int currentGeneratedJoins;
-	int failCount;
+	int duplicatesCount;
+	Bitmapset *setForDuplicates;
 
 	int* xids; //TODO these could be heaps to improve time
 	int* rewards;
