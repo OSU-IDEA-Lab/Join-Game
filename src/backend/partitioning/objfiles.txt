@@ -1,0 +1,1 @@
+src/backend/partitioning/partprune.o src/backend/partitioning/partbounds.o

@@ -1,0 +1,9 @@
+Name: libecpg_compat
+Description: PostgreSQL libecpg_compat library
+Url: http://www.postgresql.org/
+Version: 11.5
+Requires: 
+Requires.private: libecpg libpgtypes
+Cflags: -I/opt/postgresql-11.5/update-1-multijoin/include
+Libs: -L/opt/postgresql-11.5/update-1-multijoin/lib -lecpg_compat
+Libs.private:  -lm

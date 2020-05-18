@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" /><title>pg_verify_checksums</title><link rel="stylesheet" type="text/css" href="stylesheet.css" /><link rev="made" href="pgsql-docs@lists.postgresql.org" /><meta name="generator" content="DocBook XSL Stylesheets V1.79.1" /><link rel="prev" href="pgupgrade.html" title="pg_upgrade" /><link rel="next" href="pgwaldump.html" title="pg_waldump" /></head><body><div xmlns="http://www.w3.org/TR/xhtml1/transitional" class="navheader"><table width="100%" summary="Navigation header"><tr><th colspan="5" align="center"><span xmlns="http://www.w3.org/1999/xhtml" class="application">pg_verify_checksums</span></th></tr><tr><td width="10%" align="left"><a accesskey="p" href="pgupgrade.html" title="pg_upgrade">Prev</a> </td><td width="10%" align="left"><a accesskey="u" href="reference-server.html" title="PostgreSQL Server Applications">Up</a></td><th width="60%" align="center">PostgreSQL Server Applications</th><td width="10%" align="right"><a accesskey="h" href="index.html" title="PostgreSQL 11.5 Documentation">Home</a></td><td width="10%" align="right"> <a accesskey="n" href="pgwaldump.html" title="pg_waldump">Next</a></td></tr></table><hr></hr></div><div class="refentry" id="PGVERIFYCHECKSUMS"><div class="titlepage"></div><a id="id-1.9.5.12.1" class="indexterm"></a><div class="refnamediv"><h2><span class="refentrytitle"><span class="application">pg_verify_checksums</span></span></h2><p>pg_verify_checksums — verify data checksums in a <span class="productname">PostgreSQL</span> database cluster</p></div><div class="refsynopsisdiv"><h2>Synopsis</h2><div class="cmdsynopsis"><p id="id-1.9.5.12.4.1"><code class="command">pg_verify_checksums</code> [<em class="replaceable"><code>option</code></em>...] [[ <code class="option">-D</code>  |   <code class="option">--pgdata</code> ]<em class="replaceable"><code> datadir</code></em>]</p></div></div><div class="refsect1" id="R1-APP-PG_VERIFY_CHECKSUMS-1"><h2>Description</h2><p>
+   <code class="command">pg_verify_checksums</code> verifies data checksums in a
+   <span class="productname">PostgreSQL</span> cluster.  The server must be shut
+   down cleanly before running <span class="application">pg_verify_checksums</span>.
+   The exit status is zero if there are no checksum errors, otherwise nonzero.
+  </p></div><div class="refsect1" id="id-1.9.5.12.6"><h2>Options</h2><p>
+    The following command-line options are available:
+
+    </p><div class="variablelist"><dl class="variablelist"><dt><span class="term"><code class="option">-D <em class="replaceable"><code>directory</code></em></code><br /></span><span class="term"><code class="option">--pgdata=<em class="replaceable"><code>directory</code></em></code></span></dt><dd><p>
+        Specifies the directory where the database cluster is stored.
+       </p></dd><dt><span class="term"><code class="option">-v</code><br /></span><span class="term"><code class="option">--verbose</code></span></dt><dd><p>
+        Enable verbose output. Lists all checked files.
+       </p></dd><dt><span class="term"><code class="option">-r <em class="replaceable"><code>relfilenode</code></em></code></span></dt><dd><p>
+        Only validate checksums in the relation with specified relfilenode.
+       </p></dd><dt><span class="term"><code class="option">-V</code><br /></span><span class="term"><code class="option">--version</code></span></dt><dd><p>
+        Print the <span class="application">pg_verify_checksums</span> version and exit.
+       </p></dd><dt><span class="term"><code class="option">-?</code><br /></span><span class="term"><code class="option">--help</code></span></dt><dd><p>
+         Show help about <span class="application">pg_verify_checksums</span> command line
+         arguments, and exit.
+        </p></dd></dl></div><p>
+   </p></div><div class="refsect1" id="id-1.9.5.12.7"><h2>Environment</h2><div class="variablelist"><dl class="variablelist"><dt><span class="term"><code class="envar">PGDATA</code></span></dt><dd><p>
+      Specifies the directory where the database cluster is
+      stored; can be overridden using the <code class="option">-D</code> option.
+     </p></dd></dl></div></div></div><div class="navfooter"><hr /><table width="100%" summary="Navigation footer"><tr><td width="40%" align="left"><a accesskey="p" href="pgupgrade.html">Prev</a> </td><td width="20%" align="center"><a accesskey="u" href="reference-server.html">Up</a></td><td width="40%" align="right"> <a accesskey="n" href="pgwaldump.html">Next</a></td></tr><tr><td width="40%" align="left" valign="top"><span class="application">pg_upgrade</span> </td><td width="20%" align="center"><a accesskey="h" href="index.html">Home</a></td><td width="40%" align="right" valign="top"> <span class="application">pg_waldump</span></td></tr></table></div></body></html>

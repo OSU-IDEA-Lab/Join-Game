@@ -1,0 +1,70 @@
+pg_verify_checksums.o: pg_verify_checksums.c \
+ ../../../src/include/postgres_fe.h ../../../src/include/c.h \
+ ../../../src/include/postgres_ext.h ../../../src/include/pg_config_ext.h \
+ ../../../src/include/pg_config.h ../../../src/include/pg_config_manual.h \
+ ../../../src/include/pg_config_os.h ../../../src/include/port.h \
+ ../../../src/include/common/fe_memutils.h \
+ ../../../src/include/catalog/pg_control.h \
+ ../../../src/include/access/xlogdefs.h ../../../src/include/pgtime.h \
+ ../../../src/include/port/pg_crc32c.h \
+ ../../../src/include/port/pg_bswap.h \
+ ../../../src/include/common/controldata_utils.h \
+ ../../../src/include/getopt_long.h ../../../src/include/pg_getopt.h \
+ ../../../src/include/pg_getopt.h ../../../src/include/storage/bufpage.h \
+ ../../../src/include/storage/block.h ../../../src/include/storage/item.h \
+ ../../../src/include/storage/off.h ../../../src/include/storage/itemid.h \
+ ../../../src/include/storage/checksum.h \
+ ../../../src/include/storage/checksum_impl.h \
+ ../../../src/include/storage/fd.h
+
+../../../src/include/postgres_fe.h:
+
+../../../src/include/c.h:
+
+../../../src/include/postgres_ext.h:
+
+../../../src/include/pg_config_ext.h:
+
+../../../src/include/pg_config.h:
+
+../../../src/include/pg_config_manual.h:
+
+../../../src/include/pg_config_os.h:
+
+../../../src/include/port.h:
+
+../../../src/include/common/fe_memutils.h:
+
+../../../src/include/catalog/pg_control.h:
+
+../../../src/include/access/xlogdefs.h:
+
+../../../src/include/pgtime.h:
+
+../../../src/include/port/pg_crc32c.h:
+
+../../../src/include/port/pg_bswap.h:
+
+../../../src/include/common/controldata_utils.h:
+
+../../../src/include/getopt_long.h:
+
+../../../src/include/pg_getopt.h:
+
+../../../src/include/pg_getopt.h:
+
+../../../src/include/storage/bufpage.h:
+
+../../../src/include/storage/block.h:
+
+../../../src/include/storage/item.h:
+
+../../../src/include/storage/off.h:
+
+../../../src/include/storage/itemid.h:
+
+../../../src/include/storage/checksum.h:
+
+../../../src/include/storage/checksum_impl.h:
+
+../../../src/include/storage/fd.h:

@@ -1,0 +1,77 @@
+sqlda.o: sqlda.c ../../../../src/include/postgres_fe.h \
+ ../../../../src/include/c.h ../../../../src/include/postgres_ext.h \
+ ../../../../src/include/pg_config_ext.h \
+ ../../../../src/include/pg_config.h \
+ ../../../../src/include/pg_config_manual.h \
+ ../../../../src/include/pg_config_os.h ../../../../src/include/port.h \
+ ../../../../src/include/common/fe_memutils.h \
+ ../../../../src/include/catalog/pg_type_d.h \
+ ../include/ecpg-pthread-win32.h ../include/decimal.h \
+ ../include/ecpg_informix.h ../include/ecpglib.h \
+ ../../../../src/interfaces/libpq/libpq-fe.h \
+ ../../../../src/include/postgres_ext.h ../include/ecpgtype.h \
+ ../include/sqlca.h ../include/pgtypes_date.h ../include/pgtypes.h \
+ ../include/pgtypes_timestamp.h ../include/pgtypes_interval.h \
+ ../include/ecpg_config.h ../include/pgtypes_numeric.h \
+ ../include/ecpgtype.h ../include/ecpgerrno.h extern.h ../include/sqlca.h \
+ ../include/sqlda-native.h ../include/sqlda-compat.h
+
+../../../../src/include/postgres_fe.h:
+
+../../../../src/include/c.h:
+
+../../../../src/include/postgres_ext.h:
+
+../../../../src/include/pg_config_ext.h:
+
+../../../../src/include/pg_config.h:
+
+../../../../src/include/pg_config_manual.h:
+
+../../../../src/include/pg_config_os.h:
+
+../../../../src/include/port.h:
+
+../../../../src/include/common/fe_memutils.h:
+
+../../../../src/include/catalog/pg_type_d.h:
+
+../include/ecpg-pthread-win32.h:
+
+../include/decimal.h:
+
+../include/ecpg_informix.h:
+
+../include/ecpglib.h:
+
+../../../../src/interfaces/libpq/libpq-fe.h:
+
+../../../../src/include/postgres_ext.h:
+
+../include/ecpgtype.h:
+
+../include/sqlca.h:
+
+../include/pgtypes_date.h:
+
+../include/pgtypes.h:
+
+../include/pgtypes_timestamp.h:
+
+../include/pgtypes_interval.h:
+
+../include/ecpg_config.h:
+
+../include/pgtypes_numeric.h:
+
+../include/ecpgtype.h:
+
+../include/ecpgerrno.h:
+
+extern.h:
+
+../include/sqlca.h:
+
+../include/sqlda-native.h:
+
+../include/sqlda-compat.h:

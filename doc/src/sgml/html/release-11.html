@@ -1,0 +1,1098 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" /><title>E.6. Release 11</title><link rel="stylesheet" type="text/css" href="stylesheet.css" /><link rev="made" href="pgsql-docs@lists.postgresql.org" /><meta name="generator" content="DocBook XSL Stylesheets V1.79.1" /><link rel="prev" href="release-11-1.html" title="E.5. Release 11.1" /><link rel="next" href="release-prior.html" title="E.7. Prior Releases" /></head><body><div xmlns="http://www.w3.org/TR/xhtml1/transitional" class="navheader"><table width="100%" summary="Navigation header"><tr><th colspan="5" align="center">E.6. Release 11</th></tr><tr><td width="10%" align="left"><a accesskey="p" href="release-11-1.html" title="E.5. Release 11.1">Prev</a> </td><td width="10%" align="left"><a accesskey="u" href="release.html" title="Appendix E. Release Notes">Up</a></td><th width="60%" align="center">Appendix E. Release Notes</th><td width="10%" align="right"><a accesskey="h" href="index.html" title="PostgreSQL 11.5 Documentation">Home</a></td><td width="10%" align="right"> <a accesskey="n" href="release-prior.html" title="E.7. Prior Releases">Next</a></td></tr></table><hr></hr></div><div class="sect1" id="RELEASE-11"><div class="titlepage"><div><div><h2 class="title" style="clear: both">E.6. Release 11</h2></div></div></div><div class="toc"><dl class="toc"><dt><span class="sect2"><a href="release-11.html#id-1.11.6.10.3">E.6.1. Overview</a></span></dt><dt><span class="sect2"><a href="release-11.html#id-1.11.6.10.4">E.6.2. Migration to Version 11</a></span></dt><dt><span class="sect2"><a href="release-11.html#id-1.11.6.10.5">E.6.3. Changes</a></span></dt><dt><span class="sect2"><a href="release-11.html#RELEASE-11-ACKNOWLEDGEMENTS">E.6.4. Acknowledgments</a></span></dt></dl></div><p><strong>Release date: </strong>2018-10-18</p><div class="sect2" id="id-1.11.6.10.3"><div class="titlepage"><div><div><h3 class="title">E.6.1. Overview</h3></div></div></div><p>
+    Major enhancements in <span class="productname">PostgreSQL</span> 11 include:
+   </p><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+      Improvements to partitioning functionality, including:
+      </p><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: circle; "><li class="listitem"><p>
+         Add support for partitioning by a hash key
+        </p></li><li class="listitem"><p>
+         Add support for <code class="literal">PRIMARY KEY</code>, <code class="literal">FOREIGN
+         KEY</code>, indexes, and triggers on partitioned tables
+        </p></li><li class="listitem"><p>
+         Allow creation of a <span class="quote">“<span class="quote">default</span>”</span> partition for storing
+         data that does not match any of the remaining partitions
+        </p></li><li class="listitem"><p>
+         <code class="command">UPDATE</code> statements that change a partition key
+         column now cause affected rows to be moved to the appropriate
+         partitions
+        </p></li><li class="listitem"><p>
+         Improve <code class="command">SELECT</code> performance through enhanced
+         partition elimination strategies during query planning and execution
+        </p></li></ul></div><p>
+     </p></li><li class="listitem"><p>
+      Improvements to parallelism, including:
+      </p><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: circle; "><li class="listitem"><p>
+         <code class="command">CREATE INDEX</code> can now use parallel processing
+         while building a B-tree index
+        </p></li><li class="listitem"><p>
+         Parallelization is now possible in <code class="command">CREATE TABLE
+         ... AS</code>,
+         <code class="command">CREATE MATERIALIZED VIEW</code>, and certain
+         queries using <code class="literal">UNION</code>
+        </p></li><li class="listitem"><p>
+         Parallelized hash joins and parallelized sequential scans now
+         perform better
+        </p></li></ul></div><p>
+     </p></li><li class="listitem"><p>
+      SQL stored procedures that support embedded transactions
+     </p></li><li class="listitem"><p>
+      Optional Just-in-Time (JIT) compilation for some SQL code, speeding
+      evaluation of expressions
+     </p></li><li class="listitem"><p>
+      Window functions now support all framing options shown in the SQL:2011
+      standard, including <code class="literal">RANGE <em class="replaceable"><code>distance</code></em>
+      PRECEDING/FOLLOWING</code>, <code class="literal">GROUPS</code> mode, and
+      frame exclusion options
+     </p></li><li class="listitem"><p>
+      Covering indexes can now be created, using the
+      <code class="literal">INCLUDE</code> clause of <code class="command">CREATE INDEX</code>
+     </p></li><li class="listitem"><p>
+      Many other useful performance improvements, including the ability to
+      avoid a table rewrite for <code class="command">ALTER TABLE ... ADD COLUMN</code>
+      with a non-null column default
+     </p></li></ul></div><p>
+    The above items are explained in more detail in the sections below.
+   </p></div><div class="sect2" id="id-1.11.6.10.4"><div class="titlepage"><div><div><h3 class="title">E.6.2. Migration to Version 11</h3></div></div></div><p>
+    A dump/restore using <a class="xref" href="app-pg-dumpall.html" title="pg_dumpall"><span class="refentrytitle"><span class="application">pg_dumpall</span></span></a>, or use of <a class="xref" href="pgupgrade.html" title="pg_upgrade"><span class="refentrytitle"><span class="application">pg_upgrade</span></span></a>, is required for those wishing to migrate data
+    from any previous release.
+   </p><p>
+    Version 11 contains a number of changes that may affect compatibility
+    with previous releases.  Observe the following incompatibilities:
+   </p><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Make <a class="link" href="app-pgdump.html" title="pg_dump"><span class="application">pg_dump</span></a>
+        dump the properties of a database, not just its contents
+        (Haribabu Kommi)
+       </p><p>
+        Previously, attributes of the database itself, such as database-level
+        <code class="command">GRANT</code>/<code class="command">REVOKE</code> permissions and
+        <code class="command">ALTER DATABASE SET</code> variable settings, were only
+        dumped by <a class="link" href="app-pg-dumpall.html" title="pg_dumpall"><span class="application">pg_dumpall</span></a>.
+        Now <code class="command">pg_dump --create</code> and
+        <code class="command">pg_restore --create</code> will restore these database
+        properties in addition to the objects within the
+        database.  <code class="command">pg_dumpall -g</code> now only dumps role-
+        and tablespace-related attributes.
+        <span class="application">pg_dumpall</span>'s complete output (without
+        <code class="option">-g</code>) is unchanged.
+       </p><p>
+        <span class="application">pg_dump</span> and
+        <span class="application">pg_restore</span>, without
+        <code class="option">--create</code>, no longer dump/restore database-level
+        comments and security labels; those are now treated as properties of
+        the database.
+       </p><p>
+        <span class="application">pg_dumpall</span>'s output script will now always
+        create databases with their original locale and encoding, and hence
+        will fail if the locale or encoding name is unknown to the
+        destination system.  Previously, <code class="command">CREATE DATABASE</code>
+        would be emitted without these specifications if the database locale
+        and encoding matched the old cluster's defaults.
+       </p><p>
+        <code class="command">pg_dumpall --clean</code> now restores the original
+        locale and encoding settings of the <code class="literal">postgres</code>
+        and <code class="literal">template1</code> databases, as well as those of
+        user-created databases.
+       </p></li><li class="listitem"><p>
+        Consider syntactic form when disambiguating function versus column
+        references (Tom Lane)
+       </p><p>
+        When <em class="replaceable"><code>x</code></em> is a table name or composite
+        column, <span class="productname">PostgreSQL</span> has traditionally
+        considered the syntactic
+        forms <code class="literal"><em class="replaceable"><code>f</code></em>(<em class="replaceable"><code>x</code></em>)</code>
+        and <code class="literal"><em class="replaceable"><code>x</code></em>.<em class="replaceable"><code>f</code></em></code>
+        to be equivalent, allowing tricks such as writing a function and
+        then using it as though it were a computed-on-demand column.
+        However, if both interpretations are feasible, the column
+        interpretation was always chosen, leading to surprising results if
+        the user intended the function interpretation.  Now, if there is
+        ambiguity, the interpretation that matches the syntactic form is
+        chosen.
+       </p></li><li class="listitem"><p>
+        Fully enforce uniqueness of table and domain constraint names
+        (Tom Lane)
+       </p><p>
+        <span class="productname">PostgreSQL</span> expects the names of a table's
+        constraints to be distinct, and likewise for the names of a domain's
+        constraints.  However, there was not rigid enforcement of this, and
+        previously there were corner cases where duplicate names could be
+        created.
+       </p></li><li class="listitem"><p>
+        Make <code class="function">power(numeric, numeric)</code>
+        and <code class="function">power(float8, float8)</code>
+        handle <code class="literal">NaN</code> inputs according to the POSIX standard
+        (Tom Lane, Dang Minh Huong)
+       </p><p>
+        POSIX says that <code class="literal">NaN ^ 0 = 1</code> and <code class="literal">1 ^ NaN
+        = 1</code>, but all other cases with <code class="literal">NaN</code>
+        input(s) should return <code class="literal">NaN</code>.
+        <code class="function">power(numeric, numeric)</code> just
+        returned <code class="literal">NaN</code> in all such cases; now it honors the
+        two exceptions.  <code class="function">power(float8, float8)</code> followed
+        the standard if the C library does; but on some old Unix platforms
+        the library doesn't, and there were also problems on some versions
+        of Windows.
+       </p></li><li class="listitem"><p>
+        Prevent <a class="link" href="functions-formatting.html#FUNCTIONS-FORMATTING-NUMERIC-TABLE" title="Table 9.26. Template Patterns for Numeric Formatting"><code class="function">to_number()</code></a>
+        from consuming characters when the template separator does not
+        match (Oliver Ford)
+       </p><p>
+        Specifically, <code class="command">SELECT to_number('1234', '9,999')</code>
+        used to return <code class="literal">134</code>.  It will now
+        return <code class="literal">1234</code>.  <code class="literal">L</code> and
+        <code class="literal">TH</code> now only consume characters that are not
+        digits, positive/negative signs, decimal points, or commas.
+       </p></li><li class="listitem"><p>
+        Fix <a class="link" href="functions-formatting.html" title="9.8. Data Type Formatting Functions"><code class="function">to_date()</code></a>,
+        <code class="function">to_number()</code>, and
+        <code class="function">to_timestamp()</code> to skip a character for each
+        template character (Tom Lane)
+       </p><p>
+        Previously, they skipped one <span class="emphasis"><em>byte</em></span> for each byte
+        of template character, resulting in strange behavior if either string
+        contained multibyte characters.
+       </p></li><li class="listitem"><p>
+        Adjust the handling of backslashes inside double-quotes in
+        template strings for <code class="function">to_char()</code>,
+        <code class="function">to_number()</code>, and
+        <code class="function">to_timestamp()</code>.
+       </p><p>
+        Such a backslash now escapes the character after it, particularly
+        a double-quote or another backslash.
+       </p></li><li class="listitem"><p>
+        Correctly handle relative path expressions
+        in <code class="function">xmltable()</code>, <code class="function">xpath()</code>,
+        and other XML-handling functions (Markus Winand)
+       </p><p>
+        Per the SQL standard, relative paths start from the document node of
+        the XML input document, not the root node as these functions
+        previously did.
+       </p></li><li class="listitem"><p>
+        In the <a class="link" href="protocol-overview.html#PROTOCOL-QUERY-CONCEPTS" title="53.1.2. Extended Query Overview">extended query
+        protocol</a>,
+        make <a class="link" href="runtime-config-client.html#GUC-STATEMENT-TIMEOUT"><code class="varname">statement_timeout</code></a>
+        apply to each Execute message separately, not to all commands before
+        Sync (Tatsuo Ishii, Andres Freund)
+       </p></li><li class="listitem"><p>
+        Remove the <code class="structfield">relhaspkey</code> column from system
+        catalog <code class="structname">pg_class</code> (Peter Eisentraut)
+       </p><p>
+        Applications needing to check for a primary key should consult
+        <code class="structname">pg_index</code>.
+       </p></li><li class="listitem"><p>
+        Replace system catalog <code class="structname">pg_proc</code>'s
+        <code class="structfield">proisagg</code> and
+        <code class="structfield">proiswindow</code> columns with
+        <code class="structfield">prokind</code> (Peter Eisentraut)
+       </p><p>
+        This new column more clearly distinguishes functions, procedures,
+        aggregates, and window functions.
+       </p></li><li class="listitem"><p>
+        Correct information schema column <a class="link" href="infoschema-tables.html" title="37.52. tables"><code class="structname">tables</code>.<code class="structfield">table_type</code></a>
+        to return <code class="literal">FOREIGN</code> instead of <code class="literal">FOREIGN
+        TABLE</code> (Peter Eisentraut)
+       </p><p>
+        This new output matches the SQL standard.
+       </p></li><li class="listitem"><p>
+        Change the ps process display
+        labels for background workers to match the <a class="link" href="monitoring-stats.html#PG-STAT-ACTIVITY-VIEW" title="Table 28.3. pg_stat_activity View"><code class="structname">pg_stat_activity</code>.<code class="structfield">backend_type</code></a>
+        labels (Peter Eisentraut)
+       </p></li><li class="listitem"><p>
+        Cause large object permission checks
+        to happen during large object open, <a class="link" href="lo-interfaces.html#LO-OPEN" title="35.3.4. Opening an Existing Large Object"><code class="function">lo_open()</code></a>, not
+        when a read or write is attempted (Tom Lane, Michael Paquier)
+       </p><p>
+        If write access is requested and not available, an error will now be
+        thrown even if the large object is never written to.
+       </p></li><li class="listitem"><p>
+        Prevent non-superusers from reindexing shared catalogs
+        (Michael Paquier, Robert Haas)
+       </p><p>
+        Previously, database owners were also allowed to do this, but
+        now it is considered outside the bounds of their privileges.
+       </p></li><li class="listitem"><p>
+        Remove deprecated <a class="link" href="adminpack.html" title="F.1. adminpack"><code class="filename">adminpack</code></a> functions
+        <code class="function">pg_file_read()</code>,
+        <code class="function">pg_file_length()</code>, and
+        <code class="function">pg_logfile_rotate()</code> (Stephen Frost)
+       </p><p>
+        Equivalent functionality is now present in the core backend.
+        Existing <code class="filename">adminpack</code> installs will continue to have
+        access to these functions until they are updated via <code class="command">ALTER
+        EXTENSION ... UPDATE</code>.
+       </p></li><li class="listitem"><p>
+        Honor the capitalization of double-quoted command options
+        (Daniel Gustafsson)
+       </p><p>
+        Previously, option names in certain SQL commands were forcibly
+        lower-cased even if entered with double quotes; thus for example
+        <code class="literal">"FillFactor"</code> would be accepted as an index storage
+        option, though properly its name is lower-case.  Such cases will now
+        generate an error.
+       </p></li><li class="listitem"><p>
+        Remove server parameter <code class="varname">replacement_sort_tuples</code>
+        (Peter Geoghegan)
+       </p><p>
+        Replacement sorts were determined to be no longer useful.
+       </p></li><li class="listitem"><p>
+        Remove <code class="literal">WITH</code> clause in <a class="link" href="sql-createfunction.html" title="CREATE FUNCTION"><code class="command">CREATE
+        FUNCTION</code></a> (Michael Paquier)
+       </p><p>
+        <span class="productname">PostgreSQL</span> has long supported a more
+        standard-compliant syntax for this capability.
+       </p></li><li class="listitem"><p>
+        In PL/pgSQL trigger functions, the <code class="varname">OLD</code>
+        and <code class="varname">NEW</code> variables now read as NULL when not
+        assigned (Tom Lane)
+       </p><p>
+        Previously, references to these variables could be parsed but not
+        executed.
+       </p></li></ul></div></div><div class="sect2" id="id-1.11.6.10.5"><div class="titlepage"><div><div><h3 class="title">E.6.3. Changes</h3></div></div></div><p>
+    Below you will find a detailed account of the changes between
+    <span class="productname">PostgreSQL</span> 11 and the previous major
+    release.
+   </p><div class="sect3" id="id-1.11.6.10.5.3"><div class="titlepage"><div><div><h4 class="title">E.6.3.1. Server</h4></div></div></div><div class="sect4" id="id-1.11.6.10.5.3.2"><div class="titlepage"><div><div><h5 class="title">E.6.3.1.1. Partitioning</h5></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Allow the creation of partitions based on hashing a key column
+        (Amul Sul)
+       </p></li><li class="listitem"><p>
+        Support indexes on partitioned tables (Álvaro Herrera,
+        Amit Langote)
+       </p><p>
+        An <span class="quote">“<span class="quote">index</span>”</span> on a partitioned table is not a physical
+        index across the whole partitioned table, but rather a template for
+        automatically creating similar indexes on each partition of the
+        table.
+       </p><p>
+        If the partition key is part of the index's column set, a
+        partitioned index may be declared <code class="literal">UNIQUE</code>.
+        It will represent a valid uniqueness constraint across the whole
+        partitioned table, even though each physical index only enforces
+        uniqueness within its own partition.
+       </p><p>
+        The new command <a class="link" href="sql-alterindex.html" title="ALTER INDEX"><code class="command">ALTER
+        INDEX ATTACH PARTITION</code></a> causes an existing index on
+        a partition to be associated with a matching index template for its
+        partitioned table.  This provides flexibility in setting up a new
+        partitioned index for an existing partitioned table.
+       </p></li><li class="listitem"><p>
+        Allow foreign keys on partitioned tables (Álvaro Herrera)
+       </p></li><li class="listitem"><p>
+        Allow <code class="literal">FOR EACH ROW</code> triggers on partitioned
+        tables (Álvaro Herrera)
+       </p><p>
+        Creation of a trigger on a partitioned table automatically creates
+        triggers on all existing and future partitions.
+        This also allows deferred unique constraints on partitioned tables.
+       </p></li><li class="listitem"><p>
+        Allow partitioned tables to have a default partition (Jeevan Ladhe,
+        Beena Emerson, Ashutosh Bapat, Rahila Syed, Robert Haas)
+       </p><p>
+        The default partition will store rows that don't match any of the
+        other defined partitions, and is searched accordingly.
+       </p></li><li class="listitem"><p>
+        <code class="command">UPDATE</code> statements that change a partition key
+        column now cause affected rows to be moved to the appropriate
+        partitions (Amit Khandekar)
+       </p></li><li class="listitem"><p>
+        Allow <code class="command">INSERT</code>, <code class="command">UPDATE</code>, and
+        <code class="command">COPY</code> on partitioned tables to properly route
+        rows to foreign partitions (Etsuro Fujita, Amit Langote)
+       </p><p>
+        This is supported by <code class="filename">postgres_fdw</code>
+        foreign tables.
+        Since the <code class="function">ExecForeignInsert</code> callback function
+        is called for this in a different way than it used to be,
+        foreign data wrappers must be modified to cope with this change.
+       </p></li><li class="listitem"><p>
+        Allow faster partition elimination during query processing (Amit
+        Langote, David Rowley, Dilip Kumar)
+       </p><p>
+        This speeds access to partitioned tables with many partitions.
+       </p></li><li class="listitem"><p>
+        Allow partition elimination during query execution (David Rowley,
+        Beena Emerson)
+       </p><p>
+        Previously, partition elimination only happened at planning
+        time, meaning many joins and prepared queries could not use
+        partition elimination.
+       </p></li><li class="listitem"><p>
+        In an equality join between partitioned tables, allow matching
+        partitions to be joined directly (Ashutosh Bapat)
+       </p><p>
+        This feature is disabled by default
+        but can be enabled by changing <a class="link" href="runtime-config-query.html#GUC-ENABLE-PARTITIONWISE-JOIN"><code class="varname">enable_partitionwise_join</code></a>.
+       </p></li><li class="listitem"><p>
+        Allow aggregate functions on partitioned tables to be evaluated
+        separately for each partition, subsequently merging the results
+        (Jeevan Chalke, Ashutosh Bapat, Robert Haas)
+       </p><p>
+        This feature is disabled by default
+        but can be enabled by changing <a class="link" href="runtime-config-query.html#GUC-ENABLE-PARTITIONWISE-AGGREGATE"><code class="varname">enable_partitionwise_aggregate</code></a>.
+       </p></li><li class="listitem"><p>
+        Allow <a class="link" href="postgres-fdw.html" title="F.33. postgres_fdw"><code class="filename">postgres_fdw</code></a>
+        to push down aggregates to foreign tables that are partitions
+        (Jeevan Chalke)
+       </p></li></ul></div></div><div class="sect4" id="id-1.11.6.10.5.3.3"><div class="titlepage"><div><div><h5 class="title">E.6.3.1.2. Parallel Queries</h5></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Allow parallel building of a btree index (Peter Geoghegan,
+        Rushabh Lathia, Heikki Linnakangas)
+       </p></li><li class="listitem"><p>
+        Allow hash joins to be performed in parallel using a shared hash
+        table (Thomas Munro)
+       </p></li><li class="listitem"><p>
+        Allow <code class="literal">UNION</code> to run each
+        <code class="command">SELECT</code> in parallel if the individual
+        <code class="command">SELECT</code>s cannot be parallelized (Amit Khandekar,
+        Robert Haas, Amul Sul)
+       </p></li><li class="listitem"><p>
+        Allow partition scans to more efficiently use parallel workers
+        (Amit Khandekar, Robert Haas, Amul Sul)
+       </p></li><li class="listitem"><p>
+        Allow <code class="literal">LIMIT</code> to be passed to parallel workers
+        (Robert Haas, Tom Lane)
+       </p><p>
+        This allows workers to reduce returned results and use targeted
+        index scans.
+       </p></li><li class="listitem"><p>
+        Allow single-evaluation queries, e.g. <code class="literal">WHERE</code>
+        clause aggregate queries, and functions in the target list to be
+        parallelized (Amit Kapila, Robert Haas)
+       </p></li><li class="listitem"><p>
+        Add server parameter <a class="link" href="runtime-config-query.html#GUC-PARALLEL-LEADER-PARTICIPATION"><code class="varname">parallel_leader_participation</code></a>
+        to control whether the leader also executes subplans (Thomas Munro)
+       </p><p>
+        The default is enabled, meaning the leader will execute subplans.
+       </p></li><li class="listitem"><p>
+        Allow parallelization of commands <code class="command">CREATE TABLE
+        ... AS</code>, <code class="command">SELECT INTO</code>, and
+        <code class="command">CREATE MATERIALIZED VIEW</code> (Haribabu Kommi)
+       </p></li><li class="listitem"><p>
+        Improve performance of sequential scans with many parallel workers
+        (David Rowley)
+       </p></li><li class="listitem"><p>
+        Add reporting of parallel workers' sort activity in
+        <code class="command">EXPLAIN</code> (Robert Haas, Tom Lane)
+       </p></li></ul></div></div><div class="sect4" id="id-1.11.6.10.5.3.4"><div class="titlepage"><div><div><h5 class="title">E.6.3.1.3. Indexes</h5></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Allow B-tree indexes to include columns that are not part of the
+        search key or unique constraint, but are available to be read by
+        index-only scans (Anastasia Lubennikova, Alexander Korotkov, Teodor
+        Sigaev)
+       </p><p>
+        This is enabled by the new <code class="literal">INCLUDE</code> clause of <a class="link" href="sql-createindex.html" title="CREATE INDEX"><code class="command">CREATE INDEX</code></a>.
+        It facilitates building <span class="quote">“<span class="quote">covering indexes</span>”</span> that optimize
+        specific types of queries.  Columns can be included even if their
+        data types don't have B-tree support.
+       </p></li><li class="listitem"><p>
+        Improve performance of monotonically increasing index additions
+        (Pavan Deolasee, Peter Geoghegan)
+       </p></li><li class="listitem"><p>
+        Improve performance of hash index scans (Ashutosh Sharma)
+       </p></li><li class="listitem"><p>
+        Add predicate locking for hash, GiST and GIN indexes (Shubham
+        Barai)
+       </p><p>
+        This reduces the likelihood of serialization conflicts in
+        serializable-mode transactions.
+       </p></li></ul></div><div class="sect5" id="id-1.11.6.10.5.3.4.3"><div class="titlepage"><div><div><h6 class="title">E.6.3.1.3.1. <a class="link" href="spgist.html" title="Chapter 65. SP-GiST Indexes">SP-Gist</a></h6></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Add prefix-match
+        operator <code class="type">text</code> <code class="literal">^@</code> <code class="type">text</code>,
+        which is supported by SP-GiST (Ildus Kurbangaliev)
+       </p><p>
+        This is similar to using <em class="replaceable"><code>var</code></em> <code class="literal">LIKE
+        'word%'</code> with a btree index, but it is more efficient.
+       </p></li><li class="listitem"><p>
+        Allow polygons to be indexed with SP-GiST (Nikita Glukhov,
+        Alexander Korotkov)
+       </p></li><li class="listitem"><p>
+        Allow SP-GiST to use lossy representation of leaf keys (Teodor Sigaev,
+        Heikki Linnakangas, Alexander Korotkov, Nikita Glukhov)
+       </p></li></ul></div></div></div><div class="sect4" id="id-1.11.6.10.5.3.5"><div class="titlepage"><div><div><h5 class="title">E.6.3.1.4. Optimizer</h5></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Improve selection of the most common values for statistics
+        (Jeff Janes, Dean Rasheed)
+       </p><p>
+        Previously, the most common values (<acronym class="acronym">MCV</acronym>s) were
+        identified based on their frequency compared to all column
+        values.  Now, <acronym class="acronym">MCV</acronym>s are chosen based on their
+        frequency compared to the non-<acronym class="acronym">MCV</acronym> values.
+        This improves the robustness of the algorithm for both uniform and
+        non-uniform distributions.
+       </p></li><li class="listitem"><p>
+        Improve selectivity estimates for <code class="literal">&gt;=</code>
+        and <code class="literal">&lt;=</code> (Tom Lane)
+       </p><p>
+        Previously, such cases used the same selectivity estimates
+        as <code class="literal">&gt;</code> and <code class="literal">&lt;</code>, respectively,
+        unless the comparison constants are <acronym class="acronym">MCV</acronym>s.
+        This change is particularly helpful for queries
+        involving <code class="literal">BETWEEN</code> with small ranges.
+       </p></li><li class="listitem"><p>
+        Reduce <em class="replaceable"><code>var</code></em> <code class="literal">=</code>
+        <em class="replaceable"><code>var</code></em>
+        to <em class="replaceable"><code>var</code></em> <code class="literal">IS NOT NULL</code>
+        where equivalent (Tom Lane)
+       </p><p>
+        This leads to better selectivity estimates.
+       </p></li><li class="listitem"><p>
+        Improve optimizer's row count estimates for <code class="literal">EXISTS</code>
+        and <code class="literal">NOT EXISTS</code> queries (Tom Lane)
+       </p></li><li class="listitem"><p>
+        Make the optimizer account for evaluation costs and selectivity
+        of <code class="literal">HAVING</code> clauses (Tom Lane)
+       </p></li></ul></div></div><div class="sect4" id="id-1.11.6.10.5.3.6"><div class="titlepage"><div><div><h5 class="title">E.6.3.1.5. General Performance</h5></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Add <a class="link" href="jit.html" title="Chapter 32. Just-in-Time Compilation (JIT)">Just-in-Time</a>
+        (<acronym class="acronym">JIT</acronym>) compilation of some parts of query plans
+        to improve execution speed (Andres Freund)
+       </p><p>
+        This feature requires <span class="application">LLVM</span> to be
+        available.  It is not currently enabled by default, even in
+        builds that support it.
+       </p></li><li class="listitem"><p>
+        Allow bitmap scans to perform index-only scans when possible
+        (Alexander Kuzmenkov)
+       </p></li><li class="listitem"><p>
+        Update the free space map during <code class="command">VACUUM</code>
+        (Claudio Freire)
+       </p><p>
+        This allows free space to be reused more quickly.
+       </p></li><li class="listitem"><p>
+        Allow <code class="command">VACUUM</code> to avoid unnecessary index scans
+        (Masahiko Sawada, Alexander Korotkov)
+       </p></li><li class="listitem"><p>
+        Improve performance of committing multiple concurrent transactions
+        (Amit Kapila)
+       </p></li><li class="listitem"><p>
+        Reduce memory usage for queries using set-returning functions in
+        their target lists (Andres Freund)
+       </p></li><li class="listitem"><p>
+        Improve the speed of aggregate computations (Andres Freund)
+       </p></li><li class="listitem"><p>
+        Allow <a class="link" href="postgres-fdw.html" title="F.33. postgres_fdw"><code class="filename">postgres_fdw</code></a>
+        to push <code class="command">UPDATE</code>s and <code class="command">DELETE</code>s
+        using joins to foreign servers (Etsuro Fujita)
+       </p><p>
+        Previously, only non-join <code class="command">UPDATE</code>s and
+        <code class="command">DELETE</code>s were pushed.
+       </p></li><li class="listitem"><p>
+        Add support for <em class="firstterm">large pages</em> on Windows
+        (Takayuki Tsunakawa, Thomas Munro)
+       </p><p>
+        This is controlled by the <a class="link" href="runtime-config-resource.html#GUC-HUGE-PAGES">huge_pages</a> configuration
+        parameter.
+       </p></li></ul></div></div><div class="sect4" id="id-1.11.6.10.5.3.7"><div class="titlepage"><div><div><h5 class="title">E.6.3.1.6. Monitoring</h5></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Show memory usage in output from <a class="link" href="runtime-config-statistics.html#RUNTIME-CONFIG-STATISTICS-MONITOR" title="19.9.2. Statistics Monitoring"><code class="varname">log_statement_stats</code></a>,
+        <code class="varname">log_parser_stats</code>,
+        <code class="varname">log_planner_stats</code>, and
+        <code class="varname">log_executor_stats</code> (Justin Pryzby, Peter
+        Eisentraut)
+       </p></li><li class="listitem"><p>
+        Add column <a class="link" href="monitoring-stats.html#PG-STAT-ACTIVITY-VIEW" title="Table 28.3. pg_stat_activity View"><code class="structname">pg_stat_activity</code>.<code class="structfield">backend_type</code></a>
+        to show the type of a background worker (Peter Eisentraut)
+       </p><p>
+        The type is also visible in <span class="application">ps</span> output.
+       </p></li><li class="listitem"><p>
+        Make <a class="link" href="runtime-config-autovacuum.html#GUC-LOG-AUTOVACUUM-MIN-DURATION"><code class="varname">log_autovacuum_min_duration</code></a>
+        log skipped tables that are concurrently being dropped (Nathan
+        Bossart)
+       </p></li></ul></div><div class="sect5" id="id-1.11.6.10.5.3.7.3"><div class="titlepage"><div><div><h6 class="title">E.6.3.1.6.1. <a class="link" href="infoschema-tables.html" title="37.52. tables">Information Schema</a></h6></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Add <code class="literal">information_schema</code> columns related to table
+        constraints and triggers (Peter Eisentraut)
+       </p><p>
+        Specifically,
+        <code class="structname">triggers</code>.<code class="structfield">action_order</code>,
+        <code class="structname">triggers</code>.<code class="structfield">action_reference_old_table</code>,
+        and
+        <code class="structname">triggers</code>.<code class="structfield">action_reference_new_table</code>
+        are now populated, where before they were always null.  Also,
+        <code class="structname">table_constraints</code>.<code class="structfield">enforced</code>
+        now exists but is not yet usefully populated.
+       </p></li></ul></div></div></div><div class="sect4" id="id-1.11.6.10.5.3.8"><div class="titlepage"><div><div><h5 class="title">E.6.3.1.7. <acronym class="acronym">Authentication</acronym></h5></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Allow the server to specify more complex <a class="link" href="auth-ldap.html" title="20.10. LDAP Authentication"><acronym class="acronym">LDAP</acronym></a> specifications
+        in search+bind mode (Thomas Munro)
+       </p><p>
+        Specifically, <code class="literal">ldapsearchfilter</code> allows pattern matching using
+        combinations of <acronym class="acronym">LDAP</acronym> attributes.
+       </p></li><li class="listitem"><p>
+        Allow <acronym class="acronym">LDAP</acronym> authentication to use
+        encrypted <acronym class="acronym">LDAP</acronym> (Thomas Munro)
+       </p><p>
+        We already supported <acronym class="acronym">LDAP</acronym> over
+        <acronym class="acronym">TLS</acronym> by using <code class="literal">ldaptls=1</code>.
+        This new <acronym class="acronym">TLS</acronym> <acronym class="acronym">LDAP</acronym> method for
+        encrypted <acronym class="acronym">LDAP</acronym> is enabled
+        with <code class="literal">ldapscheme=ldaps</code>
+        or <code class="literal">ldapurl=ldaps://</code>.
+       </p></li><li class="listitem"><p>
+        Improve logging of <acronym class="acronym">LDAP</acronym> errors (Thomas Munro)
+       </p></li></ul></div></div><div class="sect4" id="id-1.11.6.10.5.3.9"><div class="titlepage"><div><div><h5 class="title">E.6.3.1.8. Permissions</h5></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Add <a class="link" href="default-roles.html#DEFAULT-ROLES-TABLE" title="Table 21.1. Default Roles">default roles</a> that
+        enable file system access (Stephen Frost)
+       </p><p>
+        Specifically, the new roles are:
+        <code class="literal">pg_read_server_files</code>,
+        <code class="literal">pg_write_server_files</code>, and
+        <code class="literal">pg_execute_server_program</code>.  These roles now also
+        control who can use server-side <code class="command">COPY</code> and the <a class="link" href="file-fdw.html" title="F.14. file_fdw"><code class="filename">file_fdw</code></a> extension.
+        Previously, only superusers could use these functions, and that
+        is still the default behavior.
+       </p></li><li class="listitem"><p>
+        Allow access to file system functions to be controlled by
+        <code class="command">GRANT</code>/<code class="command">REVOKE</code> permissions,
+        rather than superuser checks (Stephen Frost)
+       </p><p>
+        Specifically, these functions were modified: <a class="link" href="functions-admin.html#FUNCTIONS-ADMIN-GENFILE-TABLE" title="Table 9.88. Generic File Access Functions"><code class="function">pg_ls_dir()</code></a>,
+        <code class="function">pg_read_file()</code>,
+        <code class="function">pg_read_binary_file()</code>,
+        <code class="function">pg_stat_file()</code>.
+       </p></li><li class="listitem"><p>
+        Use <code class="command">GRANT</code>/<code class="command">REVOKE</code>
+        to control access to <a class="link" href="lo-interfaces.html#LO-IMPORT" title="35.3.2. Importing a Large Object"><code class="function">lo_import()</code></a>
+        and <code class="function">lo_export()</code> (Michael Paquier, Tom Lane)
+       </p><p>
+        Previously, only superusers were granted access to these functions.
+       </p><p>
+        The compile-time option <code class="literal">ALLOW_DANGEROUS_LO_FUNCTIONS</code>
+        has been removed.
+       </p></li><li class="listitem"><p>
+        Use view owner not session owner when
+        preventing non-password access to <a class="link" href="postgres-fdw.html" title="F.33. postgres_fdw"><code class="filename">postgres_fdw</code></a>
+        tables (Robert Haas)
+       </p><p>
+        <span class="productname">PostgreSQL</span> only allows superusers to
+        access <code class="filename">postgres_fdw</code> tables without
+        passwords, e.g. via <code class="literal">peer</code>.  Previously, the
+        session owner had to be a superuser to allow such access; now
+        the view owner is checked instead.
+       </p></li><li class="listitem"><p>
+        Fix invalid locking permission check in <code class="command">SELECT FOR
+        UPDATE</code> on views (Tom Lane)
+       </p></li></ul></div></div><div class="sect4" id="id-1.11.6.10.5.3.10"><div class="titlepage"><div><div><h5 class="title">E.6.3.1.9. Server Configuration</h5></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Add server setting <a class="link" href="runtime-config-connection.html#GUC-SSL-PASSPHRASE-COMMAND"><code class="varname">ssl_passphrase_command</code></a>
+        to allow supplying of the passphrase for <acronym class="acronym">SSL</acronym>
+        key files (Peter Eisentraut)
+       </p><p>
+        Also add <a class="link" href="runtime-config-connection.html#GUC-SSL-PASSPHRASE-COMMAND-SUPPORTS-RELOAD"><code class="varname">ssl_passphrase_command_supports_reload</code></a>
+        to specify whether the <acronym class="acronym">SSL</acronym> configuration
+        should be reloaded and <code class="varname">ssl_passphrase_command</code>
+        called during a server configuration reload.
+       </p></li><li class="listitem"><p>
+        Add storage parameter <a class="link" href="sql-createtable.html#SQL-CREATETABLE-STORAGE-PARAMETERS" title="Storage Parameters"><code class="varname">toast_tuple_target</code></a>
+        to control the minimum tuple length before <acronym class="acronym">TOAST</acronym>
+        storage will be considered (Simon Riggs)
+       </p><p>
+        The default <acronym class="acronym">TOAST</acronym> threshold has not been
+        changed.
+       </p></li><li class="listitem"><p>
+        Allow server options related to memory and file sizes to be
+        specified in units of bytes (Beena Emerson)
+       </p><p>
+        The new unit suffix is <span class="quote">“<span class="quote">B</span>”</span>.  This is in addition to the
+        existing units <span class="quote">“<span class="quote">kB</span>”</span>, <span class="quote">“<span class="quote">MB</span>”</span>, <span class="quote">“<span class="quote">GB</span>”</span>
+        and <span class="quote">“<span class="quote">TB</span>”</span>.
+       </p></li></ul></div></div><div class="sect4" id="id-1.11.6.10.5.3.11"><div class="titlepage"><div><div><h5 class="title">E.6.3.1.10. <a class="link" href="wal.html" title="Chapter 30. Reliability and the Write-Ahead Log">Write-Ahead Log</a> (<acronym class="acronym">WAL</acronym>)</h5></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Allow the <acronym class="acronym">WAL</acronym> file size to be set
+        during <span class="application">initdb</span> (Beena Emerson)
+       </p><p>
+        Previously, the 16MB default could only be changed at compile time.
+       </p></li><li class="listitem"><p>
+        Retain <acronym class="acronym">WAL</acronym> data for only a single checkpoint
+        (Simon Riggs)
+       </p><p>
+        Previously, <acronym class="acronym">WAL</acronym> was retained for two checkpoints.
+       </p></li><li class="listitem"><p>
+        Fill the unused portion of force-switched <acronym class="acronym">WAL</acronym>
+        segment files with zeros for improved compressibility (Chapman
+        Flack)
+       </p></li></ul></div></div></div><div class="sect3" id="id-1.11.6.10.5.4"><div class="titlepage"><div><div><h4 class="title">E.6.3.2. Base Backup and Streaming Replication</h4></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Replicate <code class="command">TRUNCATE</code> activity when using logical
+        replication (Simon Riggs, Marco Nenciarini, Peter Eisentraut)
+       </p></li><li class="listitem"><p>
+        Pass prepared transaction information to logical replication
+        subscribers (Nikhil Sontakke, Stas Kelvich)
+       </p></li><li class="listitem"><p>
+        Exclude unlogged tables, temporary tables, and
+        <code class="filename">pg_internal.init</code> files from streaming base
+        backups (David Steele)
+       </p><p>
+        There is no need to copy such files.
+       </p></li><li class="listitem"><p>
+        Allow checksums of heap pages to be verified during streaming base
+        backup (Michael Banck)
+       </p></li><li class="listitem"><p>
+        Allow replication slots to be advanced programmatically, rather
+        than be consumed by subscribers (Petr Jelinek)
+       </p><p>
+        This allows efficient advancement of replication slots when the
+        contents do not need to be consumed.  This is performed by
+        <code class="function">pg_replication_slot_advance()</code>.
+       </p></li><li class="listitem"><p>
+        Add timeline information to the <a class="link" href="continuous-archiving.html#BACKUP-LOWLEVEL-BASE-BACKUP" title="25.3.3. Making a Base Backup Using the Low Level API"><code class="filename">backup_label</code></a>
+        file (Michael Paquier)
+       </p><p>
+        Also add a check that the <acronym class="acronym">WAL</acronym> timeline matches
+        the <code class="filename">backup_label</code> file's timeline.
+       </p></li><li class="listitem"><p>
+        Add host and port connection information to the
+        <code class="structname">pg_stat_wal_receiver</code> system view
+        (Haribabu Kommi)
+       </p></li></ul></div></div><div class="sect3" id="id-1.11.6.10.5.5"><div class="titlepage"><div><div><h4 class="title">E.6.3.3. Utility Commands</h4></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Allow <code class="command">ALTER TABLE</code> to add a column with
+        a non-null default without doing a table rewrite (Andrew Dunstan,
+        Serge Rielau)
+       </p><p>
+        This is enabled when the default value is a constant.
+       </p></li><li class="listitem"><p>
+        Allow views to be locked by locking the underlying tables
+        (Yugo Nagata)
+       </p></li><li class="listitem"><p>
+        Allow <code class="command">ALTER INDEX</code> to set statistics-gathering
+        targets for expression indexes (Alexander Korotkov, Adrien Nayrat)
+       </p><p>
+        In <span class="application">psql</span>, <code class="literal">\d+</code> now shows
+        the statistics target for indexes.
+       </p></li><li class="listitem"><p>
+        Allow multiple tables to be specified in one
+        <code class="command">VACUUM</code> or <code class="command">ANALYZE</code> command
+        (Nathan Bossart)
+       </p><p>
+        Also, if any table mentioned in <code class="command">VACUUM</code> uses
+        a column list, then the <code class="command">ANALYZE</code> keyword must be
+        supplied; previously, <code class="command">ANALYZE</code> was implied in
+        such cases.
+       </p></li><li class="listitem"><p>
+        Add parenthesized options syntax to <code class="command">ANALYZE</code>
+        (Nathan Bossart)
+       </p><p>
+        This is similar to the syntax supported by
+        <code class="command">VACUUM</code>.
+       </p></li><li class="listitem"><p>
+        Add <code class="command">CREATE AGGREGATE</code> option to specify the
+        behavior of the aggregate's finalization function (Tom Lane)
+       </p><p>
+        This is helpful for allowing user-defined aggregate functions to be
+        optimized and to work as window functions.
+       </p></li></ul></div></div><div class="sect3" id="id-1.11.6.10.5.6"><div class="titlepage"><div><div><h4 class="title">E.6.3.4. Data Types</h4></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Allow the creation of arrays of domains (Tom Lane)
+       </p><p>
+        This also allows <code class="function">array_agg()</code> to be used
+        on domains.
+       </p></li><li class="listitem"><p>
+        Support domains over composite types (Tom Lane)
+       </p><p>
+        Also allow PL/Perl, PL/Python, and PL/Tcl to handle
+        composite-domain function arguments and results.  Also improve
+        PL/Python domain handling.
+       </p></li><li class="listitem"><p>
+        Add casts from <code class="type">JSONB</code> scalars to numeric and boolean data
+        types (Anastasia Lubennikova)
+       </p></li></ul></div></div><div class="sect3" id="id-1.11.6.10.5.7"><div class="titlepage"><div><div><h4 class="title">E.6.3.5. Functions</h4></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Add all <a class="link" href="sql-select.html#SQL-WINDOW" title="WINDOW Clause">window function</a> framing
+        options specified by SQL:2011 (Oliver Ford, Tom Lane)
+       </p><p>
+        Specifically, allow <code class="literal">RANGE</code> mode to use
+        <code class="literal">PRECEDING</code> and <code class="literal">FOLLOWING</code> to
+        select rows having grouping values within plus or minus the
+        specified offset.  Add <code class="literal">GROUPS</code> mode to include plus
+        or minus the number of peer groups.  Frame exclusion syntax was also
+        added.
+       </p></li><li class="listitem"><p>
+        Add <acronym class="acronym">SHA-2</acronym> family of hash functions (Peter
+        Eisentraut)
+       </p><p>
+        Specifically, <a class="link" href="functions-binarystring.html#FUNCTIONS-BINARYSTRING-OTHER" title="Table 9.12. Other Binary String Functions"><code class="function">sha224()</code></a>,
+        <code class="function">sha256()</code>, <code class="function">sha384()</code>,
+        <code class="function">sha512()</code> were added.
+       </p></li><li class="listitem"><p>
+        Add support for 64-bit non-cryptographic hash functions (Robert
+        Haas, Amul Sul)
+       </p></li><li class="listitem"><p>
+        Allow <code class="function">to_char()</code> and
+        <code class="function">to_timestamp()</code> to specify the time zone's
+        offset from <acronym class="acronym">UTC</acronym> in hours and minutes
+        (Nikita Glukhov, Andrew Dunstan)
+       </p><p>
+        This is done with format specifications <a class="link" href="functions-formatting.html#FUNCTIONS-FORMATTING-DATETIME-TABLE" title="Table 9.24. Template Patterns for Date/Time Formatting"><code class="literal">TZH</code></a>
+        and <code class="literal">TZM</code>.
+       </p></li><li class="listitem"><p>
+        Add text search function <a class="link" href="functions-textsearch.html#TEXTSEARCH-FUNCTIONS-TABLE" title="Table 9.41. Text Search Functions"><code class="function">websearch_to_tsquery()</code></a>
+        that supports a query syntax similar to that used by web search
+        engines (Victor Drobny, Dmitry Ivanov)
+       </p></li><li class="listitem"><p>
+        Add functions <a class="link" href="functions-textsearch.html#TEXTSEARCH-FUNCTIONS-TABLE" title="Table 9.41. Text Search Functions"><code class="function">json(b)_to_tsvector()</code></a>
+        to create a text search query for matching
+        <code class="type">JSON</code>/<code class="type">JSONB</code> values (Dmitry Dolgov)
+       </p></li></ul></div></div><div class="sect3" id="id-1.11.6.10.5.8"><div class="titlepage"><div><div><h4 class="title">E.6.3.6. Server-Side Languages</h4></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Add SQL-level procedures, which can start and commit their own
+        transactions (Peter Eisentraut)
+       </p><p>
+        They are created with the new <a class="link" href="sql-createprocedure.html" title="CREATE PROCEDURE"><code class="command">CREATE
+        PROCEDURE</code></a> command and invoked via <a class="link" href="sql-call.html" title="CALL"><code class="command">CALL</code></a>.
+       </p><p>
+        The new <code class="command">ALTER</code>/<code class="command">DROP ROUTINE</code>
+        commands allow altering/dropping of all routine-like objects,
+        including procedures, functions, and aggregates.
+       </p><p>
+        Also, writing <code class="literal">FUNCTION</code> is now preferred
+        over writing <code class="literal">PROCEDURE</code> in <code class="command">CREATE
+        OPERATOR</code> and <code class="command">CREATE TRIGGER</code>, because the
+        referenced object must be a function not a procedure.  However, the
+        old syntax is still accepted for compatibility.
+       </p></li><li class="listitem"><p>
+        Add transaction control to PL/pgSQL, PL/Perl, PL/Python, PL/Tcl,
+        and <acronym class="acronym">SPI</acronym> server-side languages (Peter Eisentraut)
+       </p><p>
+        Transaction control is only available within top-transaction-level
+        procedures and nested <code class="command">DO</code> and
+        <code class="command">CALL</code> blocks that only contain other
+        <code class="command">DO</code> and <code class="command">CALL</code> blocks.
+       </p></li><li class="listitem"><p>
+        Add the ability to define PL/pgSQL composite-type variables as not
+        null, constant, or with initial values (Tom Lane)
+       </p></li><li class="listitem"><p>
+        Allow PL/pgSQL to handle changes to composite types (e.g. record,
+        row) that happen between the first and later function executions
+        in the same session (Tom Lane)
+       </p><p>
+        Previously, such circumstances generated errors.
+       </p></li><li class="listitem"><p>
+        Add extension <code class="filename">jsonb_plpython</code> to
+        transform <code class="type">JSONB</code> to/from PL/Python types (Anthony
+        Bykov)
+       </p></li><li class="listitem"><p>
+        Add extension <code class="filename">jsonb_plperl</code> to transform
+        <code class="type">JSONB</code> to/from PL/Perl types (Anthony Bykov)
+       </p></li></ul></div></div><div class="sect3" id="id-1.11.6.10.5.9"><div class="titlepage"><div><div><h4 class="title">E.6.3.7. Client Interfaces</h4></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Change libpq to disable compression by default (Peter Eisentraut)
+       </p><p>
+        Compression is already disabled in modern OpenSSL versions, so that
+        the libpq setting had no effect with such libraries.
+       </p></li><li class="listitem"><p>
+        Add <code class="literal">DO CONTINUE</code> option
+        to <span class="application">ecpg</span>'s <code class="literal">WHENEVER</code>
+        statement (Vinayak Pokale)
+       </p><p>
+        This generates a C <code class="command">continue</code> statement, causing a
+        return to the top of the contained loop when the specified condition
+        occurs.
+       </p></li><li class="listitem"><p>
+        Add an <span class="application">ecpg</span> mode to enable Oracle
+        Pro*C-style handling of char arrays.
+       </p><p>
+        This mode is enabled with <code class="option">-C</code>.
+       </p></li></ul></div></div><div class="sect3" id="id-1.11.6.10.5.10"><div class="titlepage"><div><div><h4 class="title">E.6.3.8. Client Applications</h4></div></div></div><div class="sect4" id="id-1.11.6.10.5.10.2"><div class="titlepage"><div><div><h5 class="title">E.6.3.8.1. <a class="xref" href="app-psql.html" title="psql"><span class="refentrytitle"><span class="application">psql</span></span></a></h5></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Add <span class="application">psql</span> command <code class="literal">\gdesc</code>
+        to display the names and types of the columns in a query result
+        (Pavel Stehule)
+       </p></li><li class="listitem"><p>
+        Add <span class="application">psql</span> variables to report query
+        activity and errors (Fabien Coelho)
+       </p><p>
+        Specifically, the new variables are <code class="literal">ERROR</code>,
+        <code class="literal">SQLSTATE</code>, <code class="literal">ROW_COUNT</code>,
+        <code class="literal">LAST_ERROR_MESSAGE</code>, and
+        <code class="literal">LAST_ERROR_SQLSTATE</code>.
+       </p></li><li class="listitem"><p>
+        Allow <span class="application">psql</span> to test for the existence
+        of a variable (Fabien Coelho)
+       </p><p>
+        Specifically, the syntax <code class="literal">:{?variable_name}</code> allows
+        a variable's existence to be tested in an <code class="literal">\if</code>
+        statement.
+       </p></li><li class="listitem"><p>
+        Allow environment variable <code class="envar">PSQL_PAGER</code> to control
+        <span class="application">psql</span>'s pager (Pavel Stehule)
+       </p><p>
+        This allows <span class="application">psql</span>'s default pager to
+        be specified as a separate environment variable from the pager
+        for other applications.  <code class="envar">PAGER</code> is still honored
+        if <code class="envar">PSQL_PAGER</code> is not set.
+       </p></li><li class="listitem"><p>
+        Make psql's <code class="literal">\d+</code> command always show the table's
+        partitioning information (Amit Langote, Ashutosh Bapat)
+       </p><p>
+        Previously, partition information would not be displayed for a
+        partitioned table if it had no partitions.  Also indicate which
+        partitions are themselves partitioned.
+       </p></li><li class="listitem"><p>
+        Ensure that <span class="application">psql</span> reports the proper user
+        name when prompting for a password (Tom Lane)
+       </p><p>
+        Previously, combinations of <code class="option">-U</code> and a user name
+        embedded in a <acronym class="acronym">URI</acronym> caused incorrect reporting.
+        Also suppress the user name before the password prompt when
+        <code class="option">--password</code> is specified.
+       </p></li><li class="listitem"><p>
+        Allow <code class="command">quit</code> and <code class="command">exit</code> to
+        exit <span class="application">psql</span> when given with no prior input
+        (Bruce Momjian)
+       </p><p>
+        Also print hints about how to exit when <code class="command">quit</code> and
+        <code class="command">exit</code> are used alone on a line while the input
+        buffer is not empty.  Add a similar hint for <code class="command">help</code>.
+       </p></li><li class="listitem"><p>
+        Make <span class="application">psql</span> hint at using control-D
+        when <code class="command">\q</code> is entered alone on a line but ignored
+        (Bruce Momjian)
+       </p><p>
+        For example, <code class="command">\q</code> does not exit when supplied
+        in character strings.
+       </p></li><li class="listitem"><p>
+        Improve tab completion for <code class="command">ALTER INDEX
+        RESET</code>/<code class="command">SET</code> (Masahiko Sawada)
+       </p></li><li class="listitem"><p>
+        Add infrastructure to allow <span class="application">psql</span>
+        to adapt its tab completion queries based on the server version
+        (Tom Lane)
+       </p><p>
+        Previously, tab completion queries could fail against older servers.
+       </p></li></ul></div></div><div class="sect4" id="id-1.11.6.10.5.10.3"><div class="titlepage"><div><div><h5 class="title">E.6.3.8.2. <a class="link" href="pgbench.html" title="pgbench"><span class="application">pgbench</span></a></h5></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Add <span class="application">pgbench</span> expression support for
+        NULLs, booleans, and some functions and operators (Fabien Coelho)
+       </p></li><li class="listitem"><p>
+        Add <code class="literal">\if</code> conditional support to
+        <span class="application">pgbench</span> (Fabien Coelho)
+       </p></li><li class="listitem"><p>
+        Allow the use of non-<acronym class="acronym">ASCII</acronym> characters in
+        <span class="application">pgbench</span> variable names (Fabien Coelho)
+       </p></li><li class="listitem"><p>
+        Add <span class="application">pgbench</span> option
+        <code class="option">--init-steps</code> to control the initialization steps
+        performed (Masahiko Sawada)
+       </p></li><li class="listitem"><p>
+        Add an approximately Zipfian-distributed random generator to
+        <span class="application">pgbench</span> (Alik Khilazhev)
+       </p></li><li class="listitem"><p>
+        Allow the random seed to be set in
+        <span class="application">pgbench</span> (Fabien Coelho)
+       </p></li><li class="listitem"><p>
+        Allow <span class="application">pgbench</span> to do exponentiation
+        with <code class="function">pow()</code> and <code class="function">power()</code>
+        (Raúl Marín Rodríguez)
+       </p></li><li class="listitem"><p>
+        Add hashing functions to <span class="application">pgbench</span>
+        (Ildar Musin)
+       </p></li><li class="listitem"><p>
+        Make <span class="application">pgbench</span> statistics more
+        accurate when using <code class="option">--latency-limit</code> and
+        <code class="option">--rate</code> (Fabien Coelho)
+       </p></li></ul></div></div></div><div class="sect3" id="id-1.11.6.10.5.11"><div class="titlepage"><div><div><h4 class="title">E.6.3.9. Server Applications</h4></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Add an option to <a class="link" href="app-pgbasebackup.html" title="pg_basebackup"><span class="application">pg_basebackup</span></a>
+        that creates a named replication slot (Michael Banck)
+       </p><p>
+        The option <code class="option">--create-slot</code> creates
+        the named replication slot (<code class="option">--slot</code>)
+        when the <acronym class="acronym">WAL</acronym> streaming method
+        (<code class="option">--wal-method=stream</code>) is used.
+       </p></li><li class="listitem"><p>
+        Allow <a class="link" href="app-initdb.html" title="initdb"><span class="application">initdb</span></a>
+        to set group read access to the data directory (David Steele)
+       </p><p>
+        This is accomplished with the new initdb option
+        <code class="option">--allow-group-access</code>.  Administrators
+        can also set group permissions on the empty data
+        directory before running initdb.  Server variable <a class="link" href="runtime-config-file-locations.html#GUC-DATA-DIRECTORY"><code class="varname">data_directory_mode</code></a>
+        allows reading of data directory group permissions.
+       </p></li><li class="listitem"><p>
+        Add <a class="link" href="pgverifychecksums.html" title="pg_verify_checksums"><span class="application">pg_verify_checksums</span></a>
+        tool to verify database checksums while offline (Magnus Hagander)
+       </p></li><li class="listitem"><p>
+        Allow <a class="link" href="app-pgresetwal.html" title="pg_resetwal"><span class="application">pg_resetwal</span></a>
+        to change the <acronym class="acronym">WAL</acronym> segment size via
+        <code class="option">--wal-segsize</code> (Nathan Bossart)
+       </p></li><li class="listitem"><p>
+        Add long options to <span class="application">pg_resetwal</span>
+        and <span class="application">pg_controldata</span> (Nathan Bossart,
+        Peter Eisentraut)
+       </p></li><li class="listitem"><p>
+        Add <a class="link" href="app-pgreceivewal.html" title="pg_receivewal"><span class="application">pg_receivewal</span></a>
+        option <code class="option">--no-sync</code> to prevent synchronous
+        <acronym class="acronym">WAL</acronym> writes, for testing (Michael Paquier)
+       </p></li><li class="listitem"><p>
+        Add <span class="application">pg_receivewal</span> option
+        <code class="option">--endpos</code> to specify when <acronym class="acronym">WAL</acronym>
+        receiving should stop (Michael Paquier)
+       </p></li><li class="listitem"><p>
+        Allow <a class="link" href="app-pg-ctl.html" title="pg_ctl"><span class="application">pg_ctl</span></a>
+        to send the <code class="literal">SIGKILL</code> signal to processes
+        (Andres Freund)
+       </p><p>
+        This was previously unsupported due to concerns over possible misuse.
+       </p></li><li class="listitem"><p>
+        Reduce the number of files copied by <a class="link" href="app-pgrewind.html" title="pg_rewind"><span class="application">pg_rewind</span></a>
+        (Michael Paquier)
+       </p></li><li class="listitem"><p>
+        Prevent <span class="application">pg_rewind</span> from running as
+        <code class="literal">root</code> (Michael Paquier)
+       </p></li></ul></div><div class="sect4" id="id-1.11.6.10.5.11.3"><div class="titlepage"><div><div><h5 class="title">E.6.3.9.1. <a class="link" href="app-pgdump.html" title="pg_dump"><span class="application">pg_dump</span></a>,
+     <a class="link" href="app-pg-dumpall.html" title="pg_dumpall"><span class="application">pg_dumpall</span></a>,
+     <a class="link" href="app-pgrestore.html" title="pg_restore"><span class="application">pg_restore</span></a></h5></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Add <span class="application">pg_dumpall</span> option
+        <code class="option">--encoding</code> to control output encoding
+        (Michael Paquier)
+       </p><p>
+        <span class="application">pg_dump</span> already had this option.
+       </p></li><li class="listitem"><p>
+        Add <span class="application">pg_dump</span> option
+        <code class="option">--load-via-partition-root</code> to force loading of
+        data into the partition's root table, rather than the original
+        partition (Rushabh Lathia)
+       </p><p>
+        This is useful if the system to be loaded to has different collation
+        definitions or endianness, possibly requiring rows to be stored in
+        different partitions than previously.
+       </p></li><li class="listitem"><p>
+        Add an option to suppress dumping and restoring database object
+        comments (Robins Tharakan)
+       </p><p>
+        The new <span class="application">pg_dump</span>,
+        <span class="application">pg_dumpall</span>, and
+        <span class="application">pg_restore</span> option is
+        <code class="option">--no-comments</code>.
+       </p></li></ul></div></div></div><div class="sect3" id="id-1.11.6.10.5.12"><div class="titlepage"><div><div><h4 class="title">E.6.3.10. Source Code</h4></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Add <span class="application">PGXS</span> support for installing include
+        files (Andrew Gierth)
+       </p><p>
+        This supports creating extension modules that depend on other
+        modules.  Formerly there was no easy way for the dependent module to
+        find the referenced one's include files.  Several
+        existing <code class="filename">contrib</code> modules that define data types
+        have been adjusted to install relevant files.  Also, PL/Perl and
+        PL/Python now install their include files, to support creation of
+        transform modules for those languages.
+       </p></li><li class="listitem"><p>
+        Install <code class="filename">errcodes.txt</code> to allow extensions to access
+        the list of error codes known to <span class="productname">PostgreSQL</span>
+        (Thomas Munro)
+       </p></li><li class="listitem"><p>
+        Convert documentation to DocBook <acronym class="acronym">XML</acronym> (Peter
+        Eisentraut, Alexander Lakhin, Jürgen Purtz)
+       </p><p>
+        The file names still use an <code class="filename">sgml</code> extension
+        for compatibility with back branches.
+       </p></li><li class="listitem"><p>
+        Use <code class="filename">stdbool.h</code> to define type <code class="type">bool</code>
+        on platforms where it's suitable, which is most (Peter Eisentraut)
+       </p><p>
+        This eliminates a coding hazard for extension modules that need
+        to include <code class="filename">stdbool.h</code>.
+       </p></li><li class="listitem"><p>
+        Overhaul the way that initial system catalog contents are defined
+        (John Naylor)
+       </p><p>
+        The initial data is now represented in Perl data structures, making
+        it much easier to manipulate mechanically.
+       </p></li><li class="listitem"><p>
+        Prevent extensions from creating custom server parameters that
+        take a quoted list of values (Tom Lane)
+       </p><p>
+        This cannot be supported at present because knowledge of the
+        parameter's property would be required even before the extension is
+        loaded.
+       </p></li><li class="listitem"><p>
+        Add ability to use channel binding when using <a class="link" href="auth-password.html" title="20.5. Password Authentication"><acronym class="acronym">SCRAM</acronym></a>
+        authentication (Michael Paquier)
+       </p><p>
+        Channel binding is intended to prevent man-in-the-middle attacks, but
+        <acronym class="acronym">SCRAM</acronym> cannot prevent them unless it can be forced
+        to be active.  Unfortunately, there is no way to do that in libpq.
+        Support for it is expected in future versions of libpq and in
+        interfaces not built using libpq, e.g. JDBC.
+       </p></li><li class="listitem"><p>
+        Allow background workers to attach to databases that normally
+        disallow connections (Magnus Hagander)
+       </p></li><li class="listitem"><p>
+        Add support for hardware <acronym class="acronym">CRC</acronym> calculations
+        on <span class="productname">ARMv8</span> (Yuqi Gu, Heikki Linnakangas,
+        Thomas Munro)
+       </p></li><li class="listitem"><p>
+        Speed up lookups of built-in functions by OID (Andres Freund)
+       </p><p>
+        The previous binary search has been replaced by a lookup array.
+       </p></li><li class="listitem"><p>
+        Speed up construction of query results (Andres Freund)
+       </p></li><li class="listitem"><p>
+        Improve speed of access to system caches (Andres Freund)
+       </p></li><li class="listitem"><p>
+        Add a generational memory allocator which is optimized for serial
+        allocation/deallocation (Tomas Vondra)
+       </p><p>
+        This reduces memory usage for logical decoding.
+       </p></li><li class="listitem"><p>
+        Make the computation of
+        <code class="structname">pg_class</code>.<code class="structfield">reltuples</code>
+        by <code class="command">VACUUM</code> consistent with its computation
+        by <code class="command">ANALYZE</code> (Tomas Vondra)
+       </p></li><li class="listitem"><p>
+        Update to use <span class="application">perltidy</span> version
+        <code class="literal">20170521</code> (Tom Lane, Peter Eisentraut)
+       </p></li></ul></div></div><div class="sect3" id="id-1.11.6.10.5.13"><div class="titlepage"><div><div><h4 class="title">E.6.3.11. Additional Modules</h4></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+        Allow extension <a class="link" href="pgprewarm.html" title="F.27. pg_prewarm"><code class="filename">pg_prewarm</code></a>
+        to restore the previous shared buffer contents on startup (Mithun
+        Cy, Robert Haas)
+       </p><p>
+        This is accomplished by having <code class="filename">pg_prewarm</code> store
+        the shared buffers' relation and block number data to disk
+        occasionally during server operation, and at shutdown.
+       </p></li><li class="listitem"><p>
+        Add <a class="link" href="pgtrgm.html" title="F.31. pg_trgm"><code class="filename">pg_trgm</code></a>
+        function <code class="function">strict_word_similarity()</code> to compute
+        the similarity of whole words (Alexander Korotkov)
+       </p><p>
+        The function <code class="function">word_similarity()</code> already
+        existed for this purpose, but it was designed to find similar
+        parts of words, while <code class="function">strict_word_similarity()</code>
+        computes the similarity to whole words.
+       </p></li><li class="listitem"><p>
+        Allow creation of indexes that can be used by <code class="literal">LIKE</code>
+        comparisons
+        on <a class="link" href="citext.html" title="F.8. citext"><code class="filename">citext</code></a> columns
+        (Alexey Chernyshov)
+       </p><p>
+        To do this, the index must be created using the
+        <code class="literal">citext_pattern_ops</code> operator class.
+       </p></li><li class="listitem"><p>
+        Allow <a class="link" href="btree-gin.html" title="F.6. btree_gin"><code class="filename">btree_gin</code></a>
+        to index <code class="type">bool</code>, <code class="type">bpchar</code>, <code class="type">name</code>
+        and <code class="type">uuid</code> data types (Matheus Oliveira)
+       </p></li><li class="listitem"><p>
+        Allow <a class="link" href="cube.html" title="F.9. cube"><code class="filename">cube</code></a>
+        and <a class="link" href="seg.html" title="F.34. seg"><code class="filename">seg</code></a>
+        extensions to perform index-only scans using GiST indexes
+        (Andrey Borodin)
+       </p></li><li class="listitem"><p>
+        Allow retrieval of negative cube coordinates using
+        the <code class="literal">~&gt;</code> operator (Alexander Korotkov)
+       </p><p>
+        This is useful for KNN-GiST searches when looking for coordinates in
+        descending order.
+       </p></li><li class="listitem"><p>
+        Add Vietnamese letter handling to the <a class="link" href="unaccent.html" title="F.43. unaccent"><code class="filename">unaccent</code></a>
+        extension (Dang Minh Huong, Michael Paquier)
+       </p></li><li class="listitem"><p>
+        Enhance <a class="link" href="amcheck.html" title="F.2. amcheck"><code class="filename">amcheck</code></a>
+        to check that each heap tuple has an index entry (Peter Geoghegan)
+       </p></li><li class="listitem"><p>
+        Have <a class="link" href="adminpack.html" title="F.1. adminpack"><code class="filename">adminpack</code></a>
+        use the new default file system access roles (Stephen Frost)
+       </p><p>
+        Previously, only superusers could call <code class="filename">adminpack</code>
+        functions; now role permissions are checked.
+       </p></li><li class="listitem"><p>
+        Widen <code class="structname">pg_stat_statement</code>'s query ID
+        to 64 bits (Robert Haas)
+       </p><p>
+        This greatly reduces the chance of query ID hash collisions.
+        The query ID can now potentially display as a negative value.
+       </p></li><li class="listitem"><p>
+        Remove the <code class="filename">contrib/start-scripts/osx</code> scripts
+        since they are no longer recommended
+        (use <code class="filename">contrib/start-scripts/macos</code> instead)
+        (Tom Lane)
+       </p></li><li class="listitem"><p>
+        Remove the <code class="filename">chkpass</code> extension (Peter Eisentraut)
+       </p><p>
+        This extension is no longer considered to be a usable security tool
+        or example of how to write an extension.
+       </p></li></ul></div></div></div><div class="sect2" id="RELEASE-11-ACKNOWLEDGEMENTS"><div class="titlepage"><div><div><h3 class="title">E.6.4. Acknowledgments</h3></div></div></div><p>
+    The following individuals (in alphabetical order) have contributed to this
+    release as patch authors, committers, reviewers, testers, or reporters of
+    issues.
+   </p><table border="0" summary="Simple list" class="simplelist"><tr><td>Abhijit Menon-Sen</td></tr><tr><td>Adam Bielanski</td></tr><tr><td>Adam Brightwell</td></tr><tr><td>Adam Brusselback</td></tr><tr><td>Aditya Toshniwal</td></tr><tr><td>Adrián Escoms</td></tr><tr><td>Adrien Nayrat</td></tr><tr><td>Akos Vandra</td></tr><tr><td>Aleksander Alekseev</td></tr><tr><td>Aleksandr Parfenov</td></tr><tr><td>Alexander Korotkov</td></tr><tr><td>Alexander Kukushkin</td></tr><tr><td>Alexander Kuzmenkov</td></tr><tr><td>Alexander Lakhin</td></tr><tr><td>Alexandre Garcia</td></tr><tr><td>Alexey Bashtanov</td></tr><tr><td>Alexey Chernyshov</td></tr><tr><td>Alexey Kryuchkov</td></tr><tr><td>Alik Khilazhev</td></tr><tr><td>Álvaro Herrera</td></tr><tr><td>Amit Kapila</td></tr><tr><td>Amit Khandekar</td></tr><tr><td>Amit Langote</td></tr><tr><td>Amul Sul</td></tr><tr><td>Anastasia Lubennikova</td></tr><tr><td>Andreas Joseph Krogh</td></tr><tr><td>Andreas Karlsson</td></tr><tr><td>Andreas Seltenreich</td></tr><tr><td>André Hänsel</td></tr><tr><td>Andrei Gorita</td></tr><tr><td>Andres Freund</td></tr><tr><td>Andrew Dunstan</td></tr><tr><td>Andrew Fletcher</td></tr><tr><td>Andrew Gierth</td></tr><tr><td>Andrew Grossman</td></tr><tr><td>Andrew Krasichkov</td></tr><tr><td>Andrey Borodin</td></tr><tr><td>Andrey Lizenko</td></tr><tr><td>Andy Abelisto</td></tr><tr><td>Anthony Bykov</td></tr><tr><td>Antoine Scemama</td></tr><tr><td>Anton Dignös</td></tr><tr><td>Antonin Houska</td></tr><tr><td>Arseniy Sharoglazov</td></tr><tr><td>Arseny Sher</td></tr><tr><td>Arthur Zakirov</td></tr><tr><td>Ashutosh Bapat</td></tr><tr><td>Ashutosh Sharma</td></tr><tr><td>Ashwin Agrawal</td></tr><tr><td>Asim Praveen</td></tr><tr><td>Atsushi Torikoshi</td></tr><tr><td>Badrul Chowdhury</td></tr><tr><td>Balazs Szilfai</td></tr><tr><td>Basil Bourque</td></tr><tr><td>Beena Emerson</td></tr><tr><td>Ben Chobot</td></tr><tr><td>Benjamin Coutu</td></tr><tr><td>Bernd Helmle</td></tr><tr><td>Blaz Merela</td></tr><tr><td>Brad DeJong</td></tr><tr><td>Brent Dearth</td></tr><tr><td>Brian Cloutier</td></tr><tr><td>Bruce Momjian</td></tr><tr><td>Catalin Iacob</td></tr><tr><td>Chad Trabant</td></tr><tr><td>Chapman Flack</td></tr><tr><td>Christian Duta</td></tr><tr><td>Christian Ullrich</td></tr><tr><td>Christoph Berg</td></tr><tr><td>Christoph Dreis</td></tr><tr><td>Christophe Courtois</td></tr><tr><td>Christopher Jones</td></tr><tr><td>Claudio Freire</td></tr><tr><td>Clayton Salem</td></tr><tr><td>Craig Ringer</td></tr><tr><td>Dagfinn Ilmari Mannsåker</td></tr><tr><td>Dan Vianello</td></tr><tr><td>Dan Watson</td></tr><tr><td>Dang Minh Huong</td></tr><tr><td>Daniel Gustafsson</td></tr><tr><td>Daniel Vérité</td></tr><tr><td>Daniel Westermann</td></tr><tr><td>Daniel Wood</td></tr><tr><td>Darafei Praliaskouski</td></tr><tr><td>Dave Cramer</td></tr><tr><td>Dave Page</td></tr><tr><td>David Binderman</td></tr><tr><td>David Carlier</td></tr><tr><td>David Fetter</td></tr><tr><td>David G. Johnston</td></tr><tr><td>David Gould</td></tr><tr><td>David Hinkle</td></tr><tr><td>David Pereiro Lagares</td></tr><tr><td>David Rader</td></tr><tr><td>David Rowley</td></tr><tr><td>David Steele</td></tr><tr><td>Davy Machado</td></tr><tr><td>Dean Rasheed</td></tr><tr><td>Dian Fay</td></tr><tr><td>Dilip Kumar</td></tr><tr><td>Dmitriy Sarafannikov</td></tr><tr><td>Dmitry Dolgov</td></tr><tr><td>Dmitry Ivanov</td></tr><tr><td>Dmitry Shalashov</td></tr><tr><td>Don Seiler</td></tr><tr><td>Doug Doole</td></tr><tr><td>Doug Rady</td></tr><tr><td>Edmund Horner</td></tr><tr><td>Eiji Seki</td></tr><tr><td>Elvis Pranskevichus</td></tr><tr><td>Emre Hasegeli</td></tr><tr><td>Erik Rijkers</td></tr><tr><td>Erwin Brandstetter</td></tr><tr><td>Etsuro Fujita</td></tr><tr><td>Euler Taveira</td></tr><tr><td>Everaldo Canuto</td></tr><tr><td>Fabien Coelho</td></tr><tr><td>Fabrízio de Royes Mello</td></tr><tr><td>Feike Steenbergen</td></tr><tr><td>Frits Jalvingh</td></tr><tr><td>Fujii Masao</td></tr><tr><td>Gao Zengqi</td></tr><tr><td>Gianni Ciolli</td></tr><tr><td>Greg Stark</td></tr><tr><td>Gunnlaugur Thor Briem</td></tr><tr><td>Guo Xiang Tan</td></tr><tr><td>Hadi Moshayedi</td></tr><tr><td>Hailong Li</td></tr><tr><td>Haribabu Kommi</td></tr><tr><td>Heath Lord</td></tr><tr><td>Heikki Linnakangas</td></tr><tr><td>Hugo Mercier</td></tr><tr><td>Igor Korot</td></tr><tr><td>Igor Neyman</td></tr><tr><td>Ildar Musin</td></tr><tr><td>Ildus Kurbangaliev</td></tr><tr><td>Ioseph Kim</td></tr><tr><td>Jacob Champion</td></tr><tr><td>Jaime Casanova</td></tr><tr><td>Jakob Egger</td></tr><tr><td>Jean-Pierre Pelletier</td></tr><tr><td>Jeevan Chalke</td></tr><tr><td>Jeevan Ladhe</td></tr><tr><td>Jeff Davis</td></tr><tr><td>Jeff Janes</td></tr><tr><td>Jeremy Evans</td></tr><tr><td>Jeremy Finzel</td></tr><tr><td>Jeremy Schneider</td></tr><tr><td>Jesper Pedersen</td></tr><tr><td>Jim Nasby</td></tr><tr><td>Jimmy Yih</td></tr><tr><td>Jing Wang</td></tr><tr><td>Jobin Augustine</td></tr><tr><td>Joe Conway</td></tr><tr><td>John Gorman</td></tr><tr><td>John Naylor</td></tr><tr><td>Jon Nelson</td></tr><tr><td>Jon Wolski</td></tr><tr><td>Jonathan Allen</td></tr><tr><td>Jonathan S. Katz</td></tr><tr><td>Julien Rouhaud</td></tr><tr><td>Jürgen Purtz</td></tr><tr><td>Justin Pryzby</td></tr><tr><td>KaiGai Kohei</td></tr><tr><td>Kaiting Chen</td></tr><tr><td>Karl Lehenbauer</td></tr><tr><td>Keith Fiske</td></tr><tr><td>Kevin Bloch</td></tr><tr><td>Kha Nguyen</td></tr><tr><td>Kim Rose Carlsen</td></tr><tr><td>Konstantin Knizhnik</td></tr><tr><td>Kuntal Ghosh</td></tr><tr><td>Kyle Samson</td></tr><tr><td>Kyotaro Horiguchi</td></tr><tr><td>Lætitia Avrot</td></tr><tr><td>Lars Kanis</td></tr><tr><td>Laurenz Albe</td></tr><tr><td>Leonardo Cecchi</td></tr><tr><td>Liudmila Mantrova</td></tr><tr><td>Lixian Zou</td></tr><tr><td>Lloyd Albin</td></tr><tr><td>Luca Ferrari</td></tr><tr><td>Lucas Fairchild</td></tr><tr><td>Lukas Eder</td></tr><tr><td>Lukas Fittl</td></tr><tr><td>Magnus Hagander</td></tr><tr><td>Mai Peng</td></tr><tr><td>Maksim Milyutin</td></tr><tr><td>Maksym Boguk</td></tr><tr><td>Mansur Galiev</td></tr><tr><td>Marc Dilger</td></tr><tr><td>Marco Nenciarini</td></tr><tr><td>Marina Polyakova</td></tr><tr><td>Mario de Frutos Dieguez</td></tr><tr><td>Mark Cave-Ayland</td></tr><tr><td>Mark Dilger</td></tr><tr><td>Mark Wood</td></tr><tr><td>Marko Tiikkaja</td></tr><tr><td>Markus Winand</td></tr><tr><td>Martín Marqués</td></tr><tr><td>Masahiko Sawada</td></tr><tr><td>Matheus Oliveira</td></tr><tr><td>Matthew Stickney</td></tr><tr><td>Metin Doslu</td></tr><tr><td>Michael Banck</td></tr><tr><td>Michael Meskes</td></tr><tr><td>Michael Paquier</td></tr><tr><td>Michail Nikolaev</td></tr><tr><td>Mike Blackwell</td></tr><tr><td>Minh-Quan Tran</td></tr><tr><td>Mithun Cy</td></tr><tr><td>Morgan Owens</td></tr><tr><td>Nathan Bossart</td></tr><tr><td>Nathan Wagner</td></tr><tr><td>Neil Conway</td></tr><tr><td>Nick Barnes</td></tr><tr><td>Nicolas Thauvin</td></tr><tr><td>Nikhil Sontakke</td></tr><tr><td>Nikita Glukhov</td></tr><tr><td>Nikolay Shaplov</td></tr><tr><td>Noah Misch</td></tr><tr><td>Noriyoshi Shinoda</td></tr><tr><td>Oleg Bartunov</td></tr><tr><td>Oleg Samoilov</td></tr><tr><td>Oliver Ford</td></tr><tr><td>Pan Bian</td></tr><tr><td>Pascal Legrand</td></tr><tr><td>Patrick Hemmer</td></tr><tr><td>Patrick Krecker</td></tr><tr><td>Paul Bonaud</td></tr><tr><td>Paul Guo</td></tr><tr><td>Paul Ramsey</td></tr><tr><td>Pavan Deolasee</td></tr><tr><td>Pavan Maddamsetti</td></tr><tr><td>Pavel Golub</td></tr><tr><td>Pavel Stehule</td></tr><tr><td>Peter Eisentraut</td></tr><tr><td>Peter Geoghegan</td></tr><tr><td>Petr Jelínek</td></tr><tr><td>Petru-Florin Mihancea</td></tr><tr><td>Phil Florent</td></tr><tr><td>Philippe Beaudoin</td></tr><tr><td>Pierre Ducroquet</td></tr><tr><td>Piotr Stefaniak</td></tr><tr><td>Prabhat Sahu</td></tr><tr><td>Pu Qun</td></tr><tr><td>QL Zhuo</td></tr><tr><td>Rafia Sabih</td></tr><tr><td>Rahila Syed</td></tr><tr><td>Rainer Orth</td></tr><tr><td>Rajkumar Raghuwanshi</td></tr><tr><td>Raúl Marín Rodríguez</td></tr><tr><td>Regina Obe</td></tr><tr><td>Richard Yen</td></tr><tr><td>Robert Haas</td></tr><tr><td>Robins Tharakan</td></tr><tr><td>Rod Taylor</td></tr><tr><td>Rushabh Lathia</td></tr><tr><td>Ryan Murphy</td></tr><tr><td>Sahap Asci</td></tr><tr><td>Samuel Horwitz</td></tr><tr><td>Scott Ure</td></tr><tr><td>Sean Johnston</td></tr><tr><td>Shao Bret</td></tr><tr><td>Shay Rojansky</td></tr><tr><td>Shubham Barai</td></tr><tr><td>Simon Riggs</td></tr><tr><td>Simone Gotti</td></tr><tr><td>Sivasubramanian Ramasubramanian</td></tr><tr><td>Stas Kelvich</td></tr><tr><td>Stefan Kaltenbrunner</td></tr><tr><td>Stephen Froehlich</td></tr><tr><td>Stephen Frost</td></tr><tr><td>Steve Singer</td></tr><tr><td>Steven Winfield</td></tr><tr><td>Sven Kunze</td></tr><tr><td>Taiki Kondo</td></tr><tr><td>Takayuki Tsunakawa</td></tr><tr><td>Takeshi Ideriha</td></tr><tr><td>Tatsuo Ishii</td></tr><tr><td>Tatsuro Yamada</td></tr><tr><td>Teodor Sigaev</td></tr><tr><td>Thom Brown</td></tr><tr><td>Thomas Kellerer</td></tr><tr><td>Thomas Munro</td></tr><tr><td>Thomas Reiss</td></tr><tr><td>Tobias Bussmann</td></tr><tr><td>Todd A. Cook</td></tr><tr><td>Tom Kazimiers</td></tr><tr><td>Tom Lane</td></tr><tr><td>Tomas Vondra</td></tr><tr><td>Tomonari Katsumata</td></tr><tr><td>Torsten Grust</td></tr><tr><td>Tushar Ahuja</td></tr><tr><td>Vaishnavi Prabakaran</td></tr><tr><td>Vasundhar Boddapati</td></tr><tr><td>Victor Drobny</td></tr><tr><td>Victor Wagner</td></tr><tr><td>Victor Yegorov</td></tr><tr><td>Vik Fearing</td></tr><tr><td>Vinayak Pokale</td></tr><tr><td>Vincent Lachenal</td></tr><tr><td>Vitaliy Garnashevich</td></tr><tr><td>Vitaly Burovoy</td></tr><tr><td>Vladimir Baranoff</td></tr><tr><td>Xin Zhang</td></tr><tr><td>Yi Wen Wong</td></tr><tr><td>Yorick Peterse</td></tr><tr><td>Yugo Nagata</td></tr><tr><td>Yuqi Gu</td></tr><tr><td>Yura Sokolov</td></tr><tr><td>Yves Goergen</td></tr><tr><td>Zhou Digoal</td></tr></table></div></div><div class="navfooter"><hr /><table width="100%" summary="Navigation footer"><tr><td width="40%" align="left"><a accesskey="p" href="release-11-1.html">Prev</a> </td><td width="20%" align="center"><a accesskey="u" href="release.html">Up</a></td><td width="40%" align="right"> <a accesskey="n" href="release-prior.html">Next</a></td></tr><tr><td width="40%" align="left" valign="top">E.5. Release 11.1 </td><td width="20%" align="center"><a accesskey="h" href="index.html">Home</a></td><td width="40%" align="right" valign="top"> E.7. Prior Releases</td></tr></table></div></body></html>

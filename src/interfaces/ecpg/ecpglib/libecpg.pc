@@ -1,0 +1,9 @@
+Name: libecpg
+Description: PostgreSQL libecpg library
+Url: http://www.postgresql.org/
+Version: 11.5
+Requires: 
+Requires.private: libpq libpgtypes
+Cflags: -I/opt/postgresql-11.5/update-1-multijoin/include
+Libs: -L/opt/postgresql-11.5/update-1-multijoin/lib -lecpg
+Libs.private:  -lm

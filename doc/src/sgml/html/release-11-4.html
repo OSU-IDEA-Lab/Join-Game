@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" /><title>E.2. Release 11.4</title><link rel="stylesheet" type="text/css" href="stylesheet.css" /><link rev="made" href="pgsql-docs@lists.postgresql.org" /><meta name="generator" content="DocBook XSL Stylesheets V1.79.1" /><link rel="prev" href="release-11-5.html" title="E.1. Release 11.5" /><link rel="next" href="release-11-3.html" title="E.3. Release 11.3" /></head><body><div xmlns="http://www.w3.org/TR/xhtml1/transitional" class="navheader"><table width="100%" summary="Navigation header"><tr><th colspan="5" align="center">E.2. Release 11.4</th></tr><tr><td width="10%" align="left"><a accesskey="p" href="release-11-5.html" title="E.1. Release 11.5">Prev</a> </td><td width="10%" align="left"><a accesskey="u" href="release.html" title="Appendix E. Release Notes">Up</a></td><th width="60%" align="center">Appendix E. Release Notes</th><td width="10%" align="right"><a accesskey="h" href="index.html" title="PostgreSQL 11.5 Documentation">Home</a></td><td width="10%" align="right"> <a accesskey="n" href="release-11-3.html" title="E.3. Release 11.3">Next</a></td></tr></table><hr></hr></div><div class="sect1" id="RELEASE-11-4"><div class="titlepage"><div><div><h2 class="title" style="clear: both">E.2. Release 11.4</h2></div></div></div><div class="toc"><dl class="toc"><dt><span class="sect2"><a href="release-11-4.html#id-1.11.6.6.4">E.2.1. Migration to Version 11.4</a></span></dt><dt><span class="sect2"><a href="release-11-4.html#id-1.11.6.6.5">E.2.2. Changes</a></span></dt></dl></div><p><strong>Release date: </strong>2019-06-20</p><p>
+   This release contains a variety of fixes from 11.3.
+   For information about new features in major release 11, see
+   <a class="xref" href="release-11.html" title="E.6. Release 11">Section E.6</a>.
+  </p><div class="sect2" id="id-1.11.6.6.4"><div class="titlepage"><div><div><h3 class="title">E.2.1. Migration to Version 11.4</h3></div></div></div><p>
+    A dump/restore is not required for those running 11.X.
+   </p><p>
+    However, if you are upgrading from a version earlier than 11.1,
+    see <a class="xref" href="release-11-1.html" title="E.5. Release 11.1">Section E.5</a>.
+   </p></div><div class="sect2" id="id-1.11.6.6.5"><div class="titlepage"><div><div><h3 class="title">E.2.2. Changes</h3></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+      Fix buffer-overflow hazards in SCRAM verifier parsing
+      (Jonathan Katz, Heikki Linnakangas, Michael Paquier)
+     </p><p>
+      Any authenticated user could cause a stack-based buffer overflow by
+      changing their own password to a purpose-crafted value.  In addition
+      to the ability to crash the <span class="productname">PostgreSQL</span>
+      server, this could suffice for executing arbitrary code as
+      the <span class="productname">PostgreSQL</span> operating system account.
+     </p><p>
+      A similar overflow hazard existed
+      in <span class="application">libpq</span>, which could allow a rogue
+      server to crash a client or perhaps execute arbitrary code as the
+      client's operating system account.
+     </p><p>
+      The <span class="productname">PostgreSQL</span> Project thanks Alexander
+      Lakhin for reporting this problem.  (CVE-2019-10164)
+     </p></li><li class="listitem"><p>
+      Fix assorted errors in run-time partition pruning logic
+      (Tom Lane, Amit Langote, David Rowley)
+     </p><p>
+      These mistakes could lead to wrong answers in queries on partitioned
+      tables, if the comparison value used for pruning is dynamically
+      determined, or if multiple range-partitioned columns are involved in
+      pruning decisions, or if stable (not immutable) comparison operators
+      are involved.
+     </p></li><li class="listitem"><p>
+      Fix possible crash while trying to copy trigger definitions to a new
+      partition (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Fix failure of <code class="command">ALTER TABLE ... ALTER COLUMN TYPE</code>
+      when the table has a partial exclusion constraint (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Fix failure of <code class="command">COMMENT</code> command for comments on
+      domain constraints (Daniel Gustafsson, Michael Paquier)
+     </p></li><li class="listitem"><p>
+      Prevent possible memory clobber when there are duplicate columns in a
+      hash aggregate's hash key list (Andrew Gierth)
+     </p></li><li class="listitem"><p>
+      Fix incorrect argument null-ness checking during partial aggregation
+      of aggregates with zero or multiple arguments (David Rowley, Kyotaro
+      Horiguchi, Andres Freund)
+     </p></li><li class="listitem"><p>
+      Fix faulty generation of merge-append plans (Tom Lane)
+     </p><p>
+      This mistake could lead to <span class="quote">“<span class="quote">could not find pathkey item to
+      sort</span>”</span> errors.
+     </p></li><li class="listitem"><p>
+      Fix incorrect printing of queries with duplicate join names
+      (Philip Dubé)
+     </p><p>
+      This oversight caused a dump/restore failure for views containing
+      such queries.
+     </p></li><li class="listitem"><p>
+      Fix conversion of JSON string literals to JSON-type output columns
+      in <code class="function">json_to_record()</code>
+      and <code class="function">json_populate_record()</code> (Tom Lane)
+     </p><p>
+      Such cases should produce the literal as a standalone JSON value, but
+      the code misbehaved if the literal contained any characters requiring
+      escaping.
+     </p></li><li class="listitem"><p>
+      Fix misoptimization of <code class="literal">{1,1}</code> quantifiers in
+      regular expressions (Tom Lane)
+     </p><p>
+      Such quantifiers were treated as no-ops and optimized away;
+      but the documentation specifies that they impose greediness, or
+      non-greediness in the case of the non-greedy
+      variant <code class="literal">{1,1}?</code>, on the subexpression they're
+      attached to, and this did not happen.  The misbehavior occurred
+      only if the subexpression contained capturing parentheses or a
+      back-reference.
+     </p></li><li class="listitem"><p>
+      Avoid writing an invalid empty btree index page in the unlikely case
+      that a failure occurs while processing INCLUDEd columns during a page
+      split (Peter Geoghegan)
+     </p><p>
+      The invalid page would not affect normal index operations, but it
+      might cause failures in subsequent VACUUMs. If that has happened to
+      one of your indexes, recover by reindexing the index.
+     </p></li><li class="listitem"><p>
+      Avoid possible failures while initializing a new
+      process's <code class="structname">pg_stat_activity</code> data (Tom Lane)
+     </p><p>
+      Certain operations that could fail, such as converting strings
+      extracted from an SSL certificate into the database encoding, were
+      being performed inside a critical section.  Failure there would
+      result in database-wide lockup due to violating the access protocol
+      for shared <code class="structname">pg_stat_activity</code> data.
+     </p></li><li class="listitem"><p>
+      Fix race condition in check to see whether a pre-existing shared
+      memory segment is still in use by a conflicting postmaster (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Fix unsafe coding in walreceiver's signal handler (Tom Lane)
+     </p><p>
+      This avoids rare problems in which the walreceiver process would
+      crash or deadlock when commanded to shut down.
+     </p></li><li class="listitem"><p>
+      Avoid attempting to do database accesses for parameter checking in
+      processes that are not connected to a specific database (Vignesh C,
+      Andres Freund)
+     </p><p>
+      This error could result in failures like <span class="quote">“<span class="quote">cannot read pg_class
+      without having selected a database</span>”</span>.
+     </p></li><li class="listitem"><p>
+      Avoid possible hang in <span class="application">libpq</span> if using SSL
+      and OpenSSL's pending-data buffer contains an exact multiple of 256
+      bytes (David Binderman)
+     </p></li><li class="listitem"><p>
+      Improve <span class="application">initdb</span>'s handling of multiple
+      equivalent names for the system time zone (Tom Lane, Andrew Gierth)
+     </p><p>
+      Make <span class="application">initdb</span> examine
+      the <code class="filename">/etc/localtime</code> symbolic link, if that
+      exists, to break ties between equivalent names for the system time
+      zone.  This makes <span class="application">initdb</span> more likely to
+      select the time zone name that the user would expect when multiple
+      identical time zones exist.  It will not change the behavior
+      if <code class="filename">/etc/localtime</code> is not a symlink to a zone
+      data file, nor if the time zone is determined from
+      the <code class="envar">TZ</code> environment variable.
+     </p><p>
+      Separately, prefer <code class="literal">UTC</code> over other spellings of
+      that time zone, when neither <code class="envar">TZ</code>
+      nor <code class="filename">/etc/localtime</code> provide a hint.  This fixes
+      an annoyance introduced by <span class="application">tzdata</span> 2019a's
+      change to make the <code class="literal">UCT</code> and <code class="literal">UTC</code>
+      zone names equivalent: <span class="application">initdb</span> was then
+      preferring <code class="literal">UCT</code>, which almost nobody wants.
+     </p></li><li class="listitem"><p>
+      Fix ordering of <code class="command">GRANT</code> commands emitted
+      by <span class="application">pg_dump</span>
+      and <span class="application">pg_dumpall</span> for databases and
+      tablespaces (Nathan Bossart, Michael Paquier)
+     </p><p>
+      If cascading grants had been issued, restore might fail due to
+      the <code class="command">GRANT</code> commands being given in an order that
+      didn't respect their interdependencies.
+     </p></li><li class="listitem"><p>
+      Make <span class="application">pg_dump</span> recreate table partitions
+      using <code class="command">CREATE TABLE</code> then <code class="command">ATTACH
+      PARTITION</code>, rather than including <code class="literal">PARTITION
+      OF</code> in the creation command (Álvaro Herrera, David
+      Rowley)
+     </p><p>
+      This avoids problems with the partition's column order possibly being
+      changed to match the parent's.  Also, a partition is now restorable
+      from the dump (as a standalone table) even if its parent table isn't
+      restored; the <code class="command">ATTACH</code> will fail, but that can just
+      be ignored.
+     </p></li><li class="listitem"><p>
+      Fix misleading error reports
+      from <span class="application">reindexdb</span> (Julien Rouhaud)
+     </p></li><li class="listitem"><p>
+      Ensure that <span class="application">vacuumdb</span> returns correct
+      status if an error occurs while using parallel jobs
+      (Julien Rouhaud)
+     </p></li><li class="listitem"><p>
+      Fix <code class="filename">contrib/auto_explain</code> to not cause problems
+      in parallel queries (Tom Lane)
+     </p><p>
+      Previously, a parallel worker might try to log its query even if the
+      parent query were not being logged
+      by <code class="filename">auto_explain</code>.  This would work sometimes, but
+      it's confusing, and in some cases it resulted in failures
+      like <span class="quote">“<span class="quote">could not find key N in shm TOC</span>”</span>.
+     </p><p>
+      Also, fix an off-by-one error that resulted in not necessarily
+      logging every query even when the sampling rate is set to 1.0.
+     </p></li><li class="listitem"><p>
+      In <code class="filename">contrib/postgres_fdw</code>, account for possible
+      data modifications by local <code class="literal">BEFORE ROW UPDATE</code>
+      triggers (Shohei Mochizuki)
+     </p><p>
+      If a trigger modified a column that was otherwise not changed by the
+      <code class="command">UPDATE</code>, the new value was not transmitted to the
+      remote server.
+     </p></li><li class="listitem"><p>
+      On Windows, avoid failure when the database encoding is set to
+      SQL_ASCII and we attempt to log a non-ASCII string (Noah Misch)
+     </p><p>
+      The code had been assuming that such strings must be in UTF-8, and
+      would throw an error if they didn't appear to be validly encoded.
+      Now, just transmit the untranslated bytes to the log.
+     </p></li><li class="listitem"><p>
+      Make <span class="application">PL/pgSQL</span>'s header files C++-safe
+      (George Tarasov)
+     </p></li></ul></div></div></div><div class="navfooter"><hr /><table width="100%" summary="Navigation footer"><tr><td width="40%" align="left"><a accesskey="p" href="release-11-5.html">Prev</a> </td><td width="20%" align="center"><a accesskey="u" href="release.html">Up</a></td><td width="40%" align="right"> <a accesskey="n" href="release-11-3.html">Next</a></td></tr><tr><td width="40%" align="left" valign="top">E.1. Release 11.5 </td><td width="20%" align="center"><a accesskey="h" href="index.html">Home</a></td><td width="40%" align="right" valign="top"> E.3. Release 11.3</td></tr></table></div></body></html>

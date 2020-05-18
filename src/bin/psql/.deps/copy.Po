@@ -1,0 +1,54 @@
+copy.o: copy.c ../../../src/include/postgres_fe.h \
+ ../../../src/include/c.h ../../../src/include/postgres_ext.h \
+ ../../../src/include/pg_config_ext.h ../../../src/include/pg_config.h \
+ ../../../src/include/pg_config_manual.h \
+ ../../../src/include/pg_config_os.h ../../../src/include/port.h \
+ ../../../src/include/common/fe_memutils.h copy.h \
+ ../../../src/interfaces/libpq/libpq-fe.h \
+ ../../../src/include/postgres_ext.h \
+ ../../../src/interfaces/libpq/pqexpbuffer.h settings.h variables.h \
+ ../../../src/include/fe_utils/print.h common.h \
+ ../../../src/include/fe_utils/psqlscan.h prompt.h \
+ ../../../src/include/fe_utils/conditional.h stringutils.h
+
+../../../src/include/postgres_fe.h:
+
+../../../src/include/c.h:
+
+../../../src/include/postgres_ext.h:
+
+../../../src/include/pg_config_ext.h:
+
+../../../src/include/pg_config.h:
+
+../../../src/include/pg_config_manual.h:
+
+../../../src/include/pg_config_os.h:
+
+../../../src/include/port.h:
+
+../../../src/include/common/fe_memutils.h:
+
+copy.h:
+
+../../../src/interfaces/libpq/libpq-fe.h:
+
+../../../src/include/postgres_ext.h:
+
+../../../src/interfaces/libpq/pqexpbuffer.h:
+
+settings.h:
+
+variables.h:
+
+../../../src/include/fe_utils/print.h:
+
+common.h:
+
+../../../src/include/fe_utils/psqlscan.h:
+
+prompt.h:
+
+../../../src/include/fe_utils/conditional.h:
+
+stringutils.h:
