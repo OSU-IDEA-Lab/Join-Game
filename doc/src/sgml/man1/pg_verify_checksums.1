@@ -1,0 +1,89 @@
+'\" t
+.\"     Title: pg_verify_checksums
+.\"    Author: The PostgreSQL Global Development Group
+.\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
+.\"      Date: 2019
+.\"    Manual: PostgreSQL 11.5 Documentation
+.\"    Source: PostgreSQL 11.5
+.\"  Language: English
+.\"
+.TH "PG_VERIFY_CHECKSUMS" "1" "2019" "PostgreSQL 11.5" "PostgreSQL 11.5 Documentation"
+.\" -----------------------------------------------------------------
+.\" * Define some portability stuff
+.\" -----------------------------------------------------------------
+.\" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.\" http://bugs.debian.org/507673
+.\" http://lists.gnu.org/archive/html/groff/2009-02/msg00013.html
+.\" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.ie \n(.g .ds Aq \(aq
+.el       .ds Aq '
+.\" -----------------------------------------------------------------
+.\" * set default formatting
+.\" -----------------------------------------------------------------
+.\" disable hyphenation
+.nh
+.\" disable justification (adjust text to left margin only)
+.ad l
+.\" -----------------------------------------------------------------
+.\" * MAIN CONTENT STARTS HERE *
+.\" -----------------------------------------------------------------
+.SH "NAME"
+pg_verify_checksums \- verify data checksums in a PostgreSQL database cluster
+.SH "SYNOPSIS"
+.HP \w'\fBpg_verify_checksums\fR\ 'u
+\fBpg_verify_checksums\fR [\fIoption\fR...] [[\fB\-D\fR | \fB\-\-pgdata\fR]\fI datadir\fR]
+.SH "DESCRIPTION"
+.PP
+\fBpg_verify_checksums\fR
+verifies data checksums in a
+PostgreSQL
+cluster\&. The server must be shut down cleanly before running
+pg_verify_checksums\&. The exit status is zero if there are no checksum errors, otherwise nonzero\&.
+.SH "OPTIONS"
+.PP
+The following command\-line options are available:
+.PP
+\fB\-D \fR\fB\fIdirectory\fR\fR
+.br
+\fB\-\-pgdata=\fR\fB\fIdirectory\fR\fR
+.RS 4
+Specifies the directory where the database cluster is stored\&.
+.RE
+.PP
+\fB\-v\fR
+.br
+\fB\-\-verbose\fR
+.RS 4
+Enable verbose output\&. Lists all checked files\&.
+.RE
+.PP
+\fB\-r \fR\fB\fIrelfilenode\fR\fR
+.RS 4
+Only validate checksums in the relation with specified relfilenode\&.
+.RE
+.PP
+\fB\-V\fR
+.br
+\fB\-\-version\fR
+.RS 4
+Print the
+pg_verify_checksums
+version and exit\&.
+.RE
+.PP
+\fB\-?\fR
+.br
+\fB\-\-help\fR
+.RS 4
+Show help about
+pg_verify_checksums
+command line arguments, and exit\&.
+.RE
+.SH "ENVIRONMENT"
+.PP
+\fBPGDATA\fR
+.RS 4
+Specifies the directory where the database cluster is stored; can be overridden using the
+\fB\-D\fR
+option\&.
+.RE
