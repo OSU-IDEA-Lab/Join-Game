@@ -538,6 +538,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 					//push the current explored page
 					node->xids[node->activeRelationPages] = node->pageIndex;
 					node->rewards[node->activeRelationPages] = node->reward;
+					node->reward = 0;
 					node->activeRelationPages++;
 					node->needOuterPage = true;
 				} else if (!node->isExploring && node->exploitStepCounter < node->innerPageNumber) { 
