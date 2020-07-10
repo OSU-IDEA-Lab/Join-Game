@@ -923,7 +923,7 @@ static struct config_bool ConfigureNamesBool[] =
 			NULL
 		},
 		&enable_fastjoin,
-		true,
+		off,
 		NULL, NULL, NULL
 	},
 	{
