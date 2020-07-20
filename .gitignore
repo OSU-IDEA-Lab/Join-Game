@@ -47,3 +47,8 @@ lib*.pc
 *.out
 *.swp
 src/tags
+.cproject
+.project
+.settings
+DemoDir/
+logfile
