@@ -23,7 +23,6 @@ static inline void *
 pg_malloc_internal(size_t size, int flags)
 {
 	void	   *tmp;
-
 	/* Avoid unportable behavior of malloc(0) */
 	if (size == 0)
 		size = 1;

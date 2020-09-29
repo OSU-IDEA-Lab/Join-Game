@@ -22,12 +22,17 @@
 #include "postgres.h"
 
 #include <math.h>
+//#include "executor/heap.h"
 
 #include "executor/execdebug.h"
 #include "executor/nodeNestloop.h"
 #include "miscadmin.h"
 #include "utils/memutils.h"
 #include "utils/guc.h"
+#include "storage/bufmgr.h"
+#include "storage/itemptr.h"
+
+
 
 
 /* ----------------------------------------------------------------
@@ -61,6 +66,10 @@
  */
 
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
+#include "postgres.h"
+
+#include <math.h>
+
 
 static RelationPage* CreateRelationPage() {
 	int i;
@@ -91,6 +100,7 @@ static void RemoveRelationPage(RelationPage** relationPageAdr) {
 }
 
 
+
 static int LoadNextPage(PlanState* planState, RelationPage* relationPage) {
 	int i;
 	if (relationPage == NULL){
@@ -119,54 +129,52 @@ static int LoadNextPage(PlanState* planState, RelationPage* relationPage) {
 	return relationPage->tupleCount;
 }
 
-//static int LoadNextOuterPage(PlanState* outerPlan, RelationPage* relationPage, ScanKey xidScanKey, int fromPageIndex) {
-//	int i;
-//	TupleTableSlot* tts;
-//	int fromXid;
-//	fromXid = fromPageIndex * PAGE_SIZE + 1;
-//	if (relationPage == NULL){
-//		elog(ERROR, "LoadNextOuterPage: null page");
-//	}
-//	relationPage->index = 0;
-//	relationPage->tupleCount = 0;
-//	// Remove the old stored tuples
-//	for (i = 0; i < PAGE_SIZE; i++) {
-//		if (!TupIsNull(relationPage->tuples[i])) {
-//			ExecDropSingleTupleTableSlot(relationPage->tuples[i]);
-//			relationPage->tuples[i] = NULL;
-//		}
-//	}
-//	for (i = 0; i < PAGE_SIZE; i++) {
-//		ScanKeyEntryInitialize(xidScanKey, //TODO is it fine to init ScanKey once?
-//				0, // flags
-//				1, /* attribute number to scan */
-//				3, /* op's strategy */
-//				23, /* strategy subtype */
-//				0, // ((OpExpr *) clause)->inputcollid,	/* collation */
-//				65, /* reg proc to use */
-//				fromXid + i); /* constant */
-//		if (IsA(outerPlan, IndexScanState)) {
-//			((IndexScanState*)outerPlan)->iss_NumScanKeys = 1;
-//			((IndexScanState*)outerPlan)->iss_ScanKeys = xidScanKey;
-//		} else if (IsA(outerPlan, IndexOnlyScanState)) {
-//			((IndexOnlyScanState*)outerPlan)->ioss_NumScanKeys = 1;
-//			((IndexOnlyScanState*)outerPlan)->ioss_ScanKeys = xidScanKey;
-//		} else {
-//			elog(ERROR, "Outer plan type is not index scan");
-//		}
-//		ExecReScan(outerPlan);
-//	 	tts = ExecProcNode(outerPlan);
-//		if (TupIsNull(tts)){
-//			relationPage->tuples[i] = NULL;
-//			break;
-//		} else {
-//			relationPage->tuples[i] = MakeSingleTupleTableSlot(tts->tts_tupleDescriptor);
-//			ExecCopySlot(relationPage->tuples[i], tts);
-//			relationPage->tupleCount++;
-//		}
-//	}
-//	return relationPage->tupleCount;
-//}
+void storeTIDs(RelationPage* relationPage, struct tupleRewards* tids, int index, int reward) {
+	tids[index].reward = reward;
+	for(int i = 0; i < relationPage->tupleCount; i++) {
+		tids[index].tuples[i] = *relationPage->tuples[i]->tts_tuple;
+	}
+}
+
+void LoadPageWithTIDs(PlanState* outerPlan, struct tupleRewards* tids, RelationPage* relationPage, int index, Relation heapRelation, TupleTableSlot* tup) {
+	Buffer tempBuf = InvalidBuffer;
+	int i,j=0;
+	TupleTableSlot* tts = tup;
+	if (relationPage == NULL){
+		elog(ERROR, "LoadNextOuterPage: null page");
+	}
+	relationPage->index = 0;
+	relationPage->tupleCount = 0;
+	int size = PAGE_SIZE;
+	// Remove the old stored tuples
+	for (i = 0; i < size; i++) {
+		if (!TupIsNull(relationPage->tuples[i])) {
+			ExecDropSingleTupleTableSlot(relationPage->tuples[i]);
+				relationPage->tuples[i] = NULL;
+		}
+	}
+
+	for (i = 0; i < size; i++) {
+		while(true) {
+			if(heap_fetch(heapRelation, outerPlan->state->es_snapshot, &tids[index].tuples[i], &tempBuf, false, NULL)) {
+				ExecStoreTuple(&tids[index].tuples[i],	/* tuple to store */
+						tts,	/* slot to store in */
+						tempBuf,	/* buffer associated with tuple  */
+						false);	/* don't pfree */;
+				if (TupIsNull(tts)){
+					ReleaseBuffer(tempBuf);
+					continue;
+				} else {
+					relationPage->tuples[i] = MakeSingleTupleTableSlot(tts->tts_tupleDescriptor);
+					ExecCopySlot(relationPage->tuples[i], tts);
+					relationPage->tupleCount++;
+					ReleaseBuffer(tempBuf);
+				}
+				break;
+			}
+		}
+	}
+}
 
 static int LoadNextOuterPage(PlanState* outerPlan, RelationPage* relationPage, ScanKey xidScanKey, int fromIndex) {
 	int i,j=0;
@@ -231,19 +239,19 @@ static int popBestPageXid(NestLoopState *node) {
 	int i;
 	int bestPageIndex;
 	int bestXid;
-	
+
+
 	bestPageIndex = 0;
 	for (i = 0; i < node->activeRelationPages; i++) {
-		if (node->rewards[i] > node->rewards[bestPageIndex]){
+		if (node->tidRewards[i].reward > node->tidRewards[bestPageIndex].reward){
 			bestPageIndex = i;
 		}
 	}
-	bestXid = node->xids[bestPageIndex];
-	node->xids[bestPageIndex] = node->xids[node->activeRelationPages - 1];
-	node->rewards[bestPageIndex] = node->rewards[node->activeRelationPages - 1];
-	node->activeRelationPages--;
-	return bestXid;
+	node->tidRewards[bestPageIndex].reward = -1;
+	return bestPageIndex;
 }
+
+
 
 static void PrintNodeCounters(NestLoopState *node){
 	elog(INFO, "Read outer pages: %d", node->outerPageCounter);
@@ -487,7 +495,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 	outerPlan = outerPlanState(node);
 	innerPlan = innerPlanState(node);
 	econtext = node->js.ps.ps_ExprContext;
-
+	node->ss = (ScanState*)outerPlan;
 	/*
 	 * Reset per-tuple memory context to free any expression evaluation
 	 * storage allocated in the previous tuple cycle.
@@ -512,11 +520,8 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 				// explore
 				node->isExploring = true;
 				node->outerPageCounter++;
-//				node->pageIndex = MAX(node->pageIndex, node->lastPageIndex);
-				node->startKeyValue = node->endKeyValue;
-				node->endKeyValue += LoadNextOuterPage(outerPlan, node->outerPage, node->xidScanKey, node->endKeyValue);
+				LoadNextPage(outerPlan, node->outerPage);
 				if (node->outerPageCounter >= node->outerPageNumber) {
-					elog(INFO, "Reached end of outer");
 					node->reachedEndOfOuter = true;
 					if (node->outerPage->tupleCount == 0) continue;
 				}
@@ -529,12 +534,10 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 				node->outerPage->index = 0;
 				node->isExploring = false;
 				node->exploitStepCounter = 0;
-//				node->lastPageIndex = MAX(node->pageIndex, node->lastPageIndex);
-//				node->pageIndex = popBestPageXid(node);
-				LoadNextOuterPage(outerPlan, node->outerPage, node->xidScanKey, popBestPageXid(node));
+				node->pageIndex = popBestPageXid(node);
+				LoadPageWithTIDs(outerPlan, node->tidRewards, node->outerPage, node->pageIndex, node->ss->ss_currentRelation, node->ss->ss_ScanTupleSlot);
 			} else {
 				// join is done
-				elog(INFO, "Join finished normally");
 				return NULL;
 
 			}
@@ -595,10 +598,9 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 					node->needOuterPage = true;
 				} else if (node->isExploring && node->lastReward == 0) {
 					//push the current explored page
-					node->xids[node->activeRelationPages] = node->startKeyValue;;
-					node->rewards[node->activeRelationPages] = node->reward;
+					storeTIDs(node->outerPage, node->tidRewards, node->activeRelationPages, node->reward); //testing tid
 					node->reward = 0;
-					node->activeRelationPages++;
+					node->activeRelationPages++; //testing tid
 					node->needOuterPage = true;
 				} else if (!node->isExploring && node->exploitStepCounter < node->innerPageNumber) { 
 					node->outerPage->index = 0;
@@ -631,7 +633,6 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 			}
 			return NULL;
 		}
-
 		ENL1_printf("testing qualification");
 		if (ExecQual(joinqual, econtext))
 		{
@@ -1367,8 +1368,15 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	// elog(INFO, "Inner page number: %ld", nlstate->innerPageNumber);
 
 	nlstate->sqrtOfInnerPages = (int)sqrt(nlstate->innerPageNumber);
-	nlstate->xids = palloc(nlstate->sqrtOfInnerPages * sizeof(int));
-	nlstate->rewards = palloc(nlstate->sqrtOfInnerPages * sizeof(int));
+	//nlstate->xidHeap = palloc(nlstate->sqrtOfInnerPages * sizeof(struct xidRewards));
+	nlstate->tidRewards = palloc(nlstate->sqrtOfInnerPages * sizeof(struct tupleRewards));
+	/*for(int i = 0; i < nlstate->sqrtOfInnerPages; i++) {
+		for(int j = 0; j < 32; j++) {
+			nlstate->tidRewards[i].tuples[j] = palloc(sizeof(HeapTuple));
+		}
+	}*/
+	//nlstate->xids = palloc(nlstate->sqrtOfInnerPages * sizeof(int));
+	//nlstate->rewards = palloc(nlstate->sqrtOfInnerPages * sizeof(int));
 	nlstate->pageIndex = -1;
 	nlstate->lastPageIndex = 0;
 	nlstate->xidScanKey = (ScanKey) palloc(sizeof(ScanKeyData));
@@ -1434,9 +1442,9 @@ ExecEndNestLoop(NestLoopState *node)
 	/*
 	 * close down subplans
 	 */
+
 	ExecEndNode(outerPlanState(node));
 	ExecEndNode(innerPlanState(node));
-
 	NL1_printf("ExecEndNestLoop: %s\n",
 			   "node processing ended");
 
@@ -1450,10 +1458,23 @@ ExecEndNestLoop(NestLoopState *node)
 //	}
 	RemoveRelationPage(&(node->outerPage));
 	RemoveRelationPage(&(node->innerPage));
-	pfree(node->xids);
-	pfree(node->rewards);
+
+	//pfree(node->xids);
+	//pfree(node->rewards);
+
+	/*for(int i = 0; i < node->sqrtOfInnerPages; i++) {
+		for(int j = 0; j < 32; j++) {
+			pfree(node->tidRewards[i].tuples[j]);
+			//node->tidRewards[i].allocated[j] = false;
+		}
+	}*/
+	elog(INFO, "HERE");
+	pfree(node->tidRewards);
+	//pfree(node->xidHeap);
 	pfree(node->xidScanKey);
 	//pfree(node->pageIdJoinIdLists);//TODO remove each entry?
+
+
 }
 
 /* ----------------------------------------------------------------

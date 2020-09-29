@@ -361,17 +361,19 @@ ExecStoreTuple(HeapTuple tuple,
 	/*
 	 * sanity checks
 	 */
+
 	Assert(tuple != NULL);
 	Assert(slot != NULL);
 	Assert(slot->tts_tupleDescriptor != NULL);
 	/* passing shouldFree=true for a tuple on a disk page is not sane */
 	Assert(BufferIsValid(buffer) ? (!shouldFree) : true);
-
 	/*
 	 * Free any old physical tuple belonging to the slot.
 	 */
+
 	if (slot->tts_shouldFree)
 		heap_freetuple(slot->tts_tuple);
+
 	if (slot->tts_shouldFreeMin)
 		heap_free_minimal_tuple(slot->tts_mintuple);
 

@@ -17,6 +17,7 @@
 #include "access/genam.h"
 #include "access/heapam.h"
 #include "access/tupconvert.h"
+#include "access/htup.h"
 #include "executor/instrument.h"
 #include "lib/pairingheap.h"
 #include "nodes/params.h"
@@ -1716,12 +1717,23 @@ typedef struct RelationPage {
 	int tupleCount;
 } RelationPage;
 
+struct xidRewards {
+	int reward;
+	int xid;
+};
+
+struct tupleRewards {
+	int reward;
+	HeapTupleData tuples[32];
+};
+
 typedef struct NestLoopState
 {
 	JoinState	js;				/* its first field is NodeTag */
 	bool		nl_NeedNewOuter;
 	bool		nl_MatchedOuter;
 	TupleTableSlot *nl_NullInnerTupleSlot;
+	ScanState*	ss;
 
 
 	int activeRelationPages;
@@ -1750,6 +1762,8 @@ typedef struct NestLoopState
 	int generatedJoins;
 	int rescanCount;
 
+	struct xidRewards* xidHeap; // defines an array of structs to hold rewards and xids in a heap
+	struct tupleRewards* tidRewards;
 	int* xids; //TODO these could be heaps to improve time
 	int* rewards;
 	int startKeyValue;
