@@ -83,7 +83,7 @@ RelationPage* popBestPage(NestLoopState *node) {
 	int i;
 	int size;
 	RelationPage* tmp;
-	size = node->activeRelationPages;
+	size = node->activeOuterRelnPages;
 	for (i = 1; i < size; i++) {
 		if (node->relationPages[i]->reward > node->relationPages[bestPageIndex]->reward) {
 			bestPageIndex = i;
@@ -92,7 +92,7 @@ RelationPage* popBestPage(NestLoopState *node) {
 	tmp = node->relationPages[size - 1];
 	node->relationPages[size - 1] = node->relationPages[bestPageIndex];
 	node->relationPages[bestPageIndex] = tmp;
-	node->activeRelationPages--;
+	node->activeOuterRelnPages--;
 
 	// elog(INFO, "finding best active page..");
 	// elog(INFO, "  pop best reward: %d", node->relationPages[size-1]->reward);
@@ -476,7 +476,7 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 
 	/* Extra inits for our method */
 	// TODO set m based on relation size
-	nlstate->activeRelationPages = 0;
+	nlstate->activeOuterRelnPages = 0;
 	nlstate->isExploring = true;
 	nlstate->lastReward = 0;
 	nlstate->needOuterPage = true;

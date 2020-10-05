@@ -1974,6 +1974,12 @@ heap_fetch(Relation relation,
 	tuple->t_len = ItemIdGetLength(lp);
 	tuple->t_tableOid = RelationGetRelid(relation);
 
+	//elog(INFO, "heap_fetch with TID; heapam.c");
+	//elog(INFO, "HeapTuple->ItemPointerData.BlockIdData.bi_hi: %d", tuple->t_self.ip_blkid.bi_hi);
+	//elog(INFO, "HeapTuple->ItemPointerData.BlockIdData.bi_lo: %d", tuple->t_self.ip_blkid.bi_lo);
+	//elog(INFO, "HeapTuple->ItemPointerData.OffsetNumber: %d", tuple->t_self.ip_posid);
+
+
 	/*
 	 * check time qualification of tuple, then release lock
 	 */
@@ -1997,7 +2003,6 @@ heap_fetch(Relation relation,
 		/* Count the successful fetch against appropriate rel, if any */
 		if (stats_relation != NULL)
 			pgstat_count_heap_fetch(stats_relation);
-
 		return true;
 	}
 

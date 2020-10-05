@@ -1649,14 +1649,19 @@ typedef struct RelationPage {
 	int tupleCount;
 } RelationPage;
 
+typedef struct RewardTuples {
+	int reward;
+	HeapTupleData htds[PAGE_SIZE];
+} RewardTuples;
+
 typedef struct NestLoopState {
 	JoinState js; /* its first field is NodeTag */
 	bool nl_NeedNewOuter;
 	bool nl_MatchedOuter;
 	TupleTableSlot *nl_NullInnerTupleSlot;
 
-	int activeOuterRelationPages;
-	int activeInnerRelationPages;
+	int activeOuterRelnPages;
+	int activeInnerRelnPages;
 	RelationPage *outerPage;
 	RelationPage *innerPage;
 
@@ -1688,19 +1693,17 @@ typedef struct NestLoopState {
 	int generatedJoins;
 	int rescanCount;
 
-	int *xidsOuter; //TODO these could be heaps to improve time
-	int *rewardsOuter;
-	int *xidsInner; //TODO these could be heaps to improve time
-	int *rewardsInner;
+	int *xids; //TODO these could be heaps to improve time
+	int *rewards;
+
+	RewardTuples *innerRewardTuples;
+	RewardTuples *outerRewardTuples;
 
 	int outerStartKeyValue;
 	int outerEndKeyValue;
-	int innerStartKeyValue;
-	int innerEndKeyValue;
 	int pageIndex;
 	int lastPageIndex;
-	ScanKey xidScanKeyOuter;
-	ScanKey xidScanKeyInner;
+	ScanKey xidScanKey;
 
 //List** pageIdJoinIdLists;
 

@@ -105,9 +105,9 @@ static void RemoveRelationPage(RelationPage** relationPageAdr) {
 }
 
 static void RemoveAllRelationPages(NestLoopState* node) {
-	while (node->activeRelationPages > 0){
-		RemoveRelationPage(&(node->relationPages[node->activeRelationPages - 1]));
-		node->activeRelationPages--;
+	while (node->activeOuterRelnPages > 0){
+		RemoveRelationPage(&(node->relationPages[node->activeOuterRelnPages - 1]));
+		node->activeOuterRelnPages--;
 	}
 }
 
@@ -183,16 +183,16 @@ static RelationPage* PopBestPage(NestLoopState *node) {
 	RelationPage* tmp;
 	bestPageIndex = 0;
 	dummyFileRead();
-	for (i = 1; i < node->activeRelationPages; i++) {
+	for (i = 1; i < node->activeOuterRelnPages; i++) {
 		if (node->relationPages[i]->reward > node->relationPages[bestPageIndex]->reward) {
 			bestPageIndex = i;
 		}
 	}
-	tmp = node->relationPages[node->activeRelationPages - 1];
-	node->relationPages[node->activeRelationPages - 1] = node->relationPages[bestPageIndex];
+	tmp = node->relationPages[node->activeOuterRelnPages - 1];
+	node->relationPages[node->activeOuterRelnPages - 1] = node->relationPages[bestPageIndex];
 	node->relationPages[bestPageIndex] = tmp;
-	node->activeRelationPages--;
-	return node->relationPages[node->activeRelationPages];
+	node->activeOuterRelnPages--;
+	return node->relationPages[node->activeOuterRelnPages];
 }
 
 static void PrintNodeCounters(NestLoopState *node){
@@ -251,7 +251,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 	{
 		if (node->needOuterPage) {
 			if (!node->reachedEndOfOuter){
-				if (node->activeRelationPages < node->sqrtOfInnerPages) { 
+				if (node->activeOuterRelnPages < node->sqrtOfInnerPages) { 
 					if (node->outerPageCounter % 1000 == 0)
 						elog(INFO, "Read pages: %d", node->outerPageCounter);
 					node->isExploring = true;
@@ -271,7 +271,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 					node->exploitStepCounter = 0;
 				}  
 			} else {
-				if (node->activeRelationPages > 0) { // still has pages in stack
+				if (node->activeOuterRelnPages > 0) { // still has pages in stack
 					node->outerPage = PopBestPage(node);
 					node->outerPage->index = 0;
 					node->isExploring = false;
@@ -332,7 +332,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 					node->lastReward = 0;
 				} else if (node->isExploring && node->lastReward == 0) {
 					//push the current explored page
-					node->relationPages[node->activeRelationPages++] = node->outerPage;
+					node->relationPages[node->activeOuterRelnPages++] = node->outerPage;
 					dummyFileWrite();
 					node->needOuterPage = true;
 				} else if (!node->isExploring && node->exploitStepCounter < node->innerPageNumber) { 
@@ -362,7 +362,7 @@ static TupleTableSlot* ExecFastNestLoop(PlanState *pstate)
 		if (TupIsNull(outerTupleSlot)){
 			elog(WARNING, "outer tuple is null");
 			elog(INFO, "Read outer pages: %d", node->outerPageCounter);
-			if (node->activeRelationPages > 0) { // still has pages in stack
+			if (node->activeOuterRelnPages > 0) { // still has pages in stack
 				continue;
 			}
 			return NULL;
@@ -699,7 +699,7 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->nl_MatchedOuter = false;
 
 	/* Extra inits for our method */
-	nlstate->activeRelationPages = 0;
+	nlstate->activeOuterRelnPages = 0;
 	nlstate->isExploring = true;
 	nlstate->lastReward = 0;
 	nlstate->needOuterPage = true;
