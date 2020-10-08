@@ -783,9 +783,9 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 			add_paths_to_joinrel(root, joinrel, rel1, rel2,
 								 JOIN_INNER, sjinfo,
 								 restrictlist);
-			add_paths_to_joinrel(root, joinrel, rel2, rel1,
+			/*add_paths_to_joinrel(root, joinrel, rel2, rel1,
 								 JOIN_INNER, sjinfo,
-								 restrictlist);
+								 restrictlist);*/
 			break;
 		case JOIN_LEFT:
 			if (is_dummy_rel(rel1) ||
