@@ -806,6 +806,11 @@ static TupleTableSlot* ExecBlockNestedLoop(PlanState *pstate)
 	if (nl->join.inner_unique)
 		elog(WARNING, "inner relation is detected as unique");
 
+	if (node->innerTupleCounter == 0){
+		ExecReScan(outerPlan);
+		ExecReScan(innerPlan);
+	}
+
 	for (;;) {
 		if (node->needOuterPage) {
 			if (node->reachedEndOfOuter){
@@ -813,54 +818,75 @@ static TupleTableSlot* ExecBlockNestedLoop(PlanState *pstate)
 				elog(INFO, "Join Done");
 				return NULL; 
 			}
-			node->outerPage = CreateRelationPage(); 
+//			node->outerPage = CreateRelationPage();
 			LoadNextPage(outerPlan, node->outerPage);
 			node->outerTupleCounter += node->outerPage->tupleCount;
 			node->outerPageCounter++;
 			node->needOuterPage = false;
-			if (node->outerPage->tupleCount < PAGE_SIZE){ 
+			node->needInnerPage = true;
+			if (node->outerPageCounter == node->outerPageNumber){
 				node->reachedEndOfOuter = true;
 				if (node->outerPage->tupleCount == 0) continue;
 			}
 		}
 		if (node->needInnerPage) {
-			LoadNextPage(innerPlan, node->innerPage);
-			node->innerTupleCounter += node->innerPage->tupleCount;
-			node->innerPageCounter++;
-			node->innerPageCounterTotal++;
-			node->needInnerPage = false;
-			if (node->innerPage->tupleCount < PAGE_SIZE){ // done with one outer page, move to next
-				foreach(lc, nl->nestParams)
-				{
-					NestLoopParam *nlp = (NestLoopParam *) lfirst(lc);
-					int			paramno = nlp->paramno;
-					ParamExecData *prm;
-
-					prm = &(econtext->ecxt_param_exec_vals[paramno]);
-					/* Param value should be an OUTER_VAR var */
-					Assert(IsA(nlp->paramval, Var));
-					Assert(nlp->paramval->varno == OUTER_VAR);
-					Assert(nlp->paramval->varattno > 0);
-					prm->value = slot_getattr(node->outerPage->tuples[node->outerPage->index],
-							nlp->paramval->varattno,
-							&(prm->isnull));
-					/* Flag parameter value as changed */
-					innerPlan->chgParam = bms_add_member(innerPlan->chgParam,
-							paramno);
+			if (node->innerPageCounter >= node->innerPageNumber){
+					ENL1_printf("rescanning inner plan");
+						ExecReScan(innerPlan);
+					node->innerPageCounter = 0;
+					node->rescanCount++;
+					node->needOuterPage = true;
+					if (node->innerPage->tupleCount == 0){
+						node->needInnerPage = true;
+						continue;
+					}
+					// node->needInnerPage = true;
+					// RemoveRelationPage(&(node->outerPage));
+					// node->needOuterPage = true;
+					// continue;
 				}
-				ENL1_printf("rescanning inner plan");
-				ExecReScan(innerPlan);
-				node->rescanCount++;
-				node->needOuterPage = true;
-				if (node->innerPage->tupleCount == 0){
-					node->needInnerPage = true;
-					continue;
-				}
-				// node->needInnerPage = true;
-				// RemoveRelationPage(&(node->outerPage));
-				// node->needOuterPage = true;
-				// continue;
-			}
+				LoadNextPage(innerPlan, node->innerPage);
+				node->innerTupleCounter += node->innerPage->tupleCount;
+				node->innerPageCounter++;
+				node->innerPageCounterTotal++;
+				node->needInnerPage = false;
+//			LoadNextPage(innerPlan, node->innerPage);
+//			node->innerTupleCounter += node->innerPage->tupleCount;
+//			node->innerPageCounter++;
+//			node->innerPageCounterTotal++;
+//			node->needInnerPage = false;
+//			if (node->innerPage->tupleCount < PAGE_SIZE){ // done with one outer page, move to next
+//				foreach(lc, nl->nestParams)
+//				{
+//					NestLoopParam *nlp = (NestLoopParam *) lfirst(lc);
+//					int			paramno = nlp->paramno;
+//					ParamExecData *prm;
+//
+//					prm = &(econtext->ecxt_param_exec_vals[paramno]);
+//					/* Param value should be an OUTER_VAR var */
+//					Assert(IsA(nlp->paramval, Var));
+//					Assert(nlp->paramval->varno == OUTER_VAR);
+//					Assert(nlp->paramval->varattno > 0);
+//					prm->value = slot_getattr(node->outerPage->tuples[node->outerPage->index],
+//							nlp->paramval->varattno,
+//							&(prm->isnull));
+//					/* Flag parameter value as changed */
+//					innerPlan->chgParam = bms_add_member(innerPlan->chgParam,
+//							paramno);
+//				}
+//				ENL1_printf("rescanning inner plan");
+//				ExecReScan(innerPlan);
+//				node->rescanCount++;
+//				node->needOuterPage = true;
+//				if (node->innerPage->tupleCount == 0){
+//					node->needInnerPage = true;
+//					continue;
+//				}
+//				// node->needInnerPage = true;
+//				// RemoveRelationPage(&(node->outerPage));
+//				// node->needOuterPage = true;
+//				// continue;
+//			}
 		} 
 		if (node->innerPage->index == node->innerPage->tupleCount) {
 			if (node->outerPage->index < node->outerPage->tupleCount - 1){
@@ -1481,12 +1507,12 @@ ExecReScanNestLoop(NestLoopState *node)
 	 * outer Vars are used as run-time keys...
 	 */
 
-	if (strcmp(fliporder, "on") == 0) {
-		RemoveRelationPage(&(node->outerPage));
-		RemoveRelationPage(&(node->innerPage));
-		node->outerPage = CreateRelationPage();
-		node->innerPage = CreateRelationPage();
-		ExecReScan(innerPlan);
-		node->innerTupleCounter = 0;
-	}
+//	if (strcmp(fliporder, "on") == 0) {
+	RemoveRelationPage(&(node->outerPage));
+	RemoveRelationPage(&(node->innerPage));
+	node->outerPage = CreateRelationPage();
+	node->innerPage = CreateRelationPage();
+	ExecReScan(innerPlan);
+	node->innerTupleCounter = 0;
+//	}
 }
