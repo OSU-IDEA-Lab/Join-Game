@@ -384,11 +384,11 @@ static TupleTableSlot* ExecRightBanditJoin(PlanState *pstate)
 					return NULL;
 				}
 				//TODO do this check earlier in the algorithm
-				if (list_member_int(node->pageIdJoinIdLists[node->pageIndex], node->innerPageCounter)) {
-					continue;
-				}
-				// Add current xid-innerPageCounter to result sets
-				lcons_int(node->innerPageCounter, node->pageIdJoinIdLists[node->pageIndex]);  
+//				if (list_member_int(node->pageIdJoinIdLists[node->pageIndex], node->innerPageCounter)) {	//mx
+//					continue;
+//				}
+//				// Add current xid-innerPageCounter to result sets
+//				lcons_int(node->innerPageCounter, node->pageIdJoinIdLists[node->pageIndex]);
 				return ExecProject(node->js.ps.ps_ProjInfo);
 			}
 			else
@@ -538,6 +538,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 					//push the current explored page
 					node->xids[node->activeRelationPages] = node->pageIndex;
 					node->rewards[node->activeRelationPages] = node->reward;
+					node->reward = 0;	//mx
 					node->activeRelationPages++;
 					node->needOuterPage = true;
 				} else if (!node->isExploring && node->exploitStepCounter < node->innerPageNumber) { 
@@ -586,11 +587,11 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 					return NULL;
 				}
 				//TODO do this check earlier in the algorithm
-				if (list_member_int(node->pageIdJoinIdLists[node->pageIndex], node->innerPageCounter)) {
-					continue;
-				}
-				// Add current xid-innerPageCounter to result sets
-				lcons_int(node->innerPageCounter, node->pageIdJoinIdLists[node->pageIndex]);  
+//				if (list_member_int(node->pageIdJoinIdLists[node->pageIndex], node->innerPageCounter)) {	//mx
+//					continue;
+//				}
+//				// Add current xid-innerPageCounter to result sets
+//				lcons_int(node->innerPageCounter, node->pageIdJoinIdLists[node->pageIndex]);
 				return ExecProject(node->js.ps.ps_ProjInfo);
 			}
 			else
@@ -753,7 +754,7 @@ static TupleTableSlot* ExecBlockNestedLoop(PlanState *pstate)
 				elog(INFO, "Join Done");
 				return NULL; 
 			}
-			node->outerPage = CreateRelationPage(); 
+//			node->outerPage = CreateRelationPage();
 			LoadNextPage(outerPlan, node->outerPage);
 			node->outerTupleCounter += node->outerPage->tupleCount;
 			node->outerPageCounter++;
@@ -1310,12 +1311,12 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->pageIndex = -1;
 	nlstate->lastPageIndex = 0;
 	nlstate->xidScanKey = (ScanKey) palloc(sizeof(ScanKeyData));
-	nlstate->pageIdJoinIdLists = palloc(nlstate->outerPageNumber * sizeof(List*));
+//	nlstate->pageIdJoinIdLists = palloc(nlstate->outerPageNumber * sizeof(List*)); //mx
 	i = 0;
-	while (i < nlstate->outerPageNumber){
-		nlstate->pageIdJoinIdLists[i] = NIL;
-		i++;
-	}
+//	while (i < nlstate->outerPageNumber){	//mx
+//		nlstate->pageIdJoinIdLists[i] = NIL;
+//		i++;
+//	}
 
 	nlstate->outerPage = CreateRelationPage();  
 	nlstate->innerPage = CreateRelationPage();
@@ -1381,17 +1382,17 @@ ExecEndNestLoop(NestLoopState *node)
 	// Releasing memory 
 	//list_free
 	i = 0;
-	while (i < node->outerPageNumber){
-		list_free(node->pageIdJoinIdLists[i]);
-		node->pageIdJoinIdLists[i] = NULL;
-		i++;
-	}
+//	while (i < node->outerPageNumber){	//mx
+//		list_free(node->pageIdJoinIdLists[i]);
+//		node->pageIdJoinIdLists[i] = NULL;
+//		i++;
+//	}
 	RemoveRelationPage(&(node->outerPage));
 	RemoveRelationPage(&(node->innerPage));
 	pfree(node->xids);
 	pfree(node->rewards);
 	pfree(node->xidScanKey);
-	pfree(node->pageIdJoinIdLists);//TODO remove each entry?
+//	pfree(node->pageIdJoinIdLists);//TODO remove each entry?	//mx
 }
 
 /* ----------------------------------------------------------------

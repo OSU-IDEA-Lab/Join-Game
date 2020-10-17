@@ -1756,8 +1756,7 @@ typedef struct NestLoopState
 	int lastPageIndex;
 	ScanKey xidScanKey;
 
-	List** pageIdJoinIdLists;
-
+//	List** pageIdJoinIdLists;	//mx
 } NestLoopState;
 
 /* ----------------
