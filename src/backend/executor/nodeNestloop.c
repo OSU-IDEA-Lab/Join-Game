@@ -754,7 +754,7 @@ static TupleTableSlot* ExecBlockNestedLoop(PlanState *pstate)
 				elog(INFO, "Join Done");
 				return NULL; 
 			}
-//			node->outerPage = CreateRelationPage();
+//			node->outerPage = CreateRelationPage();	//mx
 			LoadNextPage(outerPlan, node->outerPage);
 			node->outerTupleCounter += node->outerPage->tupleCount;
 			node->outerPageCounter++;
