@@ -177,7 +177,7 @@ void LoadPageWithTIDs(PlanState* outerPlan, struct tupleRewards* tids, RelationP
     }
     relationPage->index = 0;
     relationPage->tupleCount = 0;
-    int size = PAGE_SIZE;
+    int size = tids[index].size;
     // Remove the old stored tuples
     for (i = 0; i < size; i++) {
         if (!TupIsNull(relationPage->tuples[i])) {
@@ -245,6 +245,7 @@ static int popBestPage(NestLoopState *node) {
 void storeTIDs(RelationPage* relationPage, struct tupleRewards* tids, int index, int reward) {
     int i = 0;
     tids[index].reward = reward;
+    tids[index].size = relationPage->tupleCount;
     for(i = 0; i < relationPage->tupleCount; i++) {
         tids[index].tuples[i] = *relationPage->tuples[i]->tts_tuple;
     }

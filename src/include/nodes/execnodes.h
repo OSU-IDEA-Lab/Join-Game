@@ -1718,6 +1718,7 @@ typedef struct RelationPage {
 
 struct tupleRewards {
     int reward;
+    int size;
     HeapTupleData tuples[32];
 };
 
