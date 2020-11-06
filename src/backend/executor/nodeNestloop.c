@@ -179,6 +179,7 @@ static void LoadPageWithTids(ScanState *ss, PlanState *ps, RelationPage *relatio
 	Buffer tempBuf = InvalidBuffer;
 	bool isNull;
 	TupleTableSlot *slot;
+	int size = tuples[pageIndex].htCount;
 
 	if (relationPage == NULL)
 		elog(ERROR, "LoadPageWithTids: null page");
@@ -186,7 +187,7 @@ static void LoadPageWithTids(ScanState *ss, PlanState *ps, RelationPage *relatio
 	relationPage->index = 0;
 	relationPage->tupleCount = 0;
 	// Remove the old stored tuples
-	for (i = 0; i < PAGE_SIZE; i++) {
+	for (i = 0; i < size; i++) {
 		if (!TupIsNull(relationPage->tuples[i])) {
 			ExecDropSingleTupleTableSlot(relationPage->tuples[i]);
 			relationPage->tuples[i] = NULL;
@@ -197,10 +198,10 @@ static void LoadPageWithTids(ScanState *ss, PlanState *ps, RelationPage *relatio
 
 	//elog(INFO, "pos id: %d", tuples[pageIndex].htds[5].t_self.ip_posid);
 
-	for (i = 0; i < PAGE_SIZE; i++) {
+	for (i = 0; i < size; i++) {
 
 		if (heap_fetch(ss->ss_currentRelation, ps->state->es_snapshot, &tuples[pageIndex].htds[i], &tempBuf, false,
-				NULL)) {
+		NULL)) {
 			//elog(INFO, "heap_fetch with TID done");
 			/*
 			 * store the scanned tuple in the scan tuple slot of the scan
@@ -224,7 +225,6 @@ static void LoadPageWithTids(ScanState *ss, PlanState *ps, RelationPage *relatio
 			//elog(INFO, "l_partkey: attr2 %d", DatumGetInt32(slot_getattr(slot, 2, &isNull)));
 			//elog(INFO, "l_suppkey: attr3 %s", DatumGetInt32(slot_getattr(slot, 3, &isNull)));
 			//elog(INFO, "l_linenumber: attr4 %f", DatumGetInt32(slot_getattr(slot, 4, &isNull)));
-
 
 			if (!TupIsNull(slot)) {
 				relationPage->tuples[i] = MakeSingleTupleTableSlot(slot->tts_tupleDescriptor);
@@ -295,6 +295,7 @@ static void storeTidsWithReward(RelationPage *relationPage, RewardTuples *reward
 		//elog(INFO, "hi =%d", rewardTuples[pageNo].htds[i].t_self.ip_blkid.bi_hi);
 		//elog(INFO, "pos =%d", rewardTuples[pageNo].htds[i].t_self.ip_posid);
 	}
+	rewardTuples[pageNo].htCount = relationPage->tupleCount;
 }
 
 static int popBestPageXid(NestLoopState *node) {
@@ -1022,7 +1023,7 @@ static TupleTableSlot* ExecBlockNestedLoop(PlanState *pstate) {
 				elog(INFO, "Join Done");
 				return NULL;
 			}
-			node->outerPage = CreateRelationPage();
+			// node->outerPage = CreateRelationPage();
 			LoadNextPage(outerPlan, node->outerPage);
 			node->outerTupleCounter += node->outerPage->tupleCount;
 			node->outerPageCounter++;

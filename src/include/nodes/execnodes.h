@@ -1652,6 +1652,7 @@ typedef struct RelationPage {
 typedef struct RewardTuples {
 	int reward;
 	HeapTupleData htds[PAGE_SIZE];
+	int htCount;
 } RewardTuples;
 
 typedef struct NestLoopState {
