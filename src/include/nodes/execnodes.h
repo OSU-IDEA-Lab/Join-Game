@@ -1694,9 +1694,6 @@ typedef struct NestLoopState {
 	int generatedJoins;
 	int rescanCount;
 
-	int *xids; //TODO these could be heaps to improve time
-	int *rewards;
-
 	RewardTuples *innerRewardTuples;
 	RewardTuples *outerRewardTuples;
 
@@ -1704,7 +1701,6 @@ typedef struct NestLoopState {
 	int outerEndKeyValue;
 	int pageIndex;
 	int lastPageIndex;
-	ScanKey xidScanKey;
 
 //List** pageIdJoinIdLists;
 

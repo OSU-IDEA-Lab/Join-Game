@@ -918,11 +918,20 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 	{
-		{"enable_fastjoin", PGC_USERSET, QUERY_TUNING_METHOD,
+		{"enable_banditjoin", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of bandit join plans."),
 			NULL
 		},
-		&enable_fastjoin,
+		&enable_banditjoin,
+		false,
+		NULL, NULL, NULL
+	},
+	{
+		{"enable_gamejoin", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Enables the planner's use of game join plans."),
+			NULL
+		},
+		&enable_gamejoin,
 		false,
 		NULL, NULL, NULL
 	},
