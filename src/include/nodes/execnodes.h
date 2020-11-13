@@ -1701,6 +1701,7 @@ typedef struct NestLoopState {
 	int outerEndKeyValue;
 	int pageIndex;
 	int lastPageIndex;
+	int highestReward;
 
 //List** pageIdJoinIdLists;
 

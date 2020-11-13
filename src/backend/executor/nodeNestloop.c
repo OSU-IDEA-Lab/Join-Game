@@ -253,6 +253,7 @@ static void PrintNodeCounters(NestLoopState *node) {
 	elog(INFO, "Active Outer Relations: %d", node->activeOuterRelnPages);
 	elog(INFO, "Active Inner Relations: %d", node->activeInnerRelnPages);
 	elog(INFO, "Total page reads: %d", (node->outerPageCounter + node->innerPageCounterTotal));
+	elog(INFO, "Highest Reward: %d", node->highestReward);
 }
 
 static TupleTableSlot* ExecBanditJoin(PlanState *pstate) {
@@ -672,6 +673,8 @@ static TupleTableSlot* ExecGameJoin(PlanState *pstate) {
 						&& node->exploreOuterStepCounter < node->innerPageNumber) { //stay with current
 					node->outerPage->index = 0;
 					node->reward += node->lastReward;
+					if (node->reward > node->highestReward)
+						node->highestReward = node->reward;
 					// elog(INFO, "Reward: %d", node->reward);
 					node->lastReward = 0;
 					node->exploreOuterStepCounter++;
@@ -714,6 +717,8 @@ static TupleTableSlot* ExecGameJoin(PlanState *pstate) {
 					node->innerPage->index = 0;
 					node->reward += node->lastReward;
 					// elog(INFO, "Reward: %d", node->reward);
+					if (node->reward > node->highestReward)
+						node->highestReward = node->reward;
 					node->lastReward = 0;
 					node->exploreInnerStepCounter++;
 					node->needOuterPage = true;
@@ -1452,6 +1457,7 @@ NestLoopState* ExecInitNestLoop(NestLoop *node, EState *estate, int eflags) {
 	nlstate->outerTupleCounter = 0;
 	nlstate->generatedJoins = 0;
 	nlstate->rescanCount = 0;
+	nlstate->highestReward = 0;
 
 	if (strcmp(fliporder, "on") == 0) {
 		nlstate->outerPageNumber = innerPlan(node)->plan_rows / PAGE_SIZE + 1;
