@@ -1709,7 +1709,7 @@ typedef struct JoinState
  * ----------------
  */
 
-#define PAGE_SIZE 64
+#define PAGE_SIZE 16
 #define N_FAILURE 10
 #define GREEDY true
 
@@ -1721,6 +1721,7 @@ typedef struct RelationPage {
 
 struct tupleRewards {
     int reward;
+    int size;
     HeapTupleData tuples[PAGE_SIZE];
 };
 
