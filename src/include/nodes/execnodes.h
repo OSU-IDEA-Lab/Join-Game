@@ -1709,7 +1709,7 @@ typedef struct JoinState
  * ----------------
  */
 
-#define PAGE_SIZE 32
+#define PAGE_SIZE 16
 typedef struct RelationPage {
 	TupleTableSlot* tuples[PAGE_SIZE];
 	int index;
@@ -1719,7 +1719,7 @@ typedef struct RelationPage {
 struct tupleRewards {
     int reward;
     int size;
-    HeapTupleData tuples[32];
+    HeapTupleData tuples[PAGE_SIZE];
 };
 
 typedef struct NestLoopState
