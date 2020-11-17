@@ -1709,7 +1709,10 @@ typedef struct JoinState
  * ----------------
  */
 
-#define PAGE_SIZE 32
+#define PAGE_SIZE 64
+#define N_FAILURE 10
+#define GREEDY true
+
 typedef struct RelationPage {
 	TupleTableSlot* tuples[PAGE_SIZE];
 	int index;
@@ -1718,7 +1721,7 @@ typedef struct RelationPage {
 
 struct tupleRewards {
     int reward;
-    HeapTupleData tuples[32];
+    HeapTupleData tuples[PAGE_SIZE];
 };
 
 typedef struct NestLoopState
@@ -1752,6 +1755,8 @@ typedef struct NestLoopState
 	unsigned long innerTupleCounter;
 	unsigned long outerTupleCounter;
 	int nestloopInstance;
+	int prevGeneratedJoins;
+	bool greedyExploit;
 	int generatedJoins;
 	int rescanCount;
 
@@ -1761,6 +1766,8 @@ typedef struct NestLoopState
 	int pageIndex;
 	int lastPageIndex;
 	ScanKey xidScanKey;
+
+	int nFailure;
 
 //	List** pageIdJoinIdLists;	//mx
 } NestLoopState;
