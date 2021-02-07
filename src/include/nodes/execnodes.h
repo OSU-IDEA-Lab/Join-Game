@@ -1692,6 +1692,7 @@ typedef struct NestLoopState {
 	int nestloopInstance;
 	int generatedJoins;
 	int rescanCount;
+	bool greedyExploit;
 
 	int *xids; //TODO these could be heaps to improve time
 	int *rewards;

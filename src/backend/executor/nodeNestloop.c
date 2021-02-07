@@ -22,6 +22,7 @@
 #include "postgres.h"
 
 #include <math.h>
+#include <stdlib.h>
 
 #include "executor/execdebug.h"
 #include "executor/nodeNestloop.h"
@@ -261,8 +262,35 @@ static int popBestTidPageIndex(NestLoopState *node) {
 			bestInnerPageIdx = i;
 		}
 	}
-	if (node->activeInnerRelnPages != 0
+
+	if (node->innerRewardTuples[bestInnerPageIdx].reward == 0 && node->outerRewardTuples[bestOuterPageIdx].reward == 0){
+		if (rand() % 2 == 0){
+			elog(INFO,"pick best inner while reward = 0 !!!!!");
+			bestPageIndex = bestInnerPageIdx;
+			node->isBestPageOuter = false;
+			node->innerRewardTuples[bestInnerPageIdx].reward =
+					node->innerRewardTuples[node->activeInnerRelnPages - 1].reward;
+			copyHeapTuples(node->innerRewardTuples[bestOuterPageIdx].htds,
+					node->innerRewardTuples[node->activeInnerRelnPages - 1].htds);
+			node->activeInnerRelnPages--;
+		}else{
+			elog(INFO,"pick best ountter while reward = 0 #####");
+			bestPageIndex = bestOuterPageIdx;
+			node->isBestPageOuter = true;
+			node->outerRewardTuples[bestOuterPageIdx].reward =
+					node->outerRewardTuples[node->activeOuterRelnPages - 1].reward;
+			copyHeapTuples(node->outerRewardTuples[bestOuterPageIdx].htds,
+					node->outerRewardTuples[node->activeOuterRelnPages - 1].htds);
+			node->activeOuterRelnPages--;
+		}
+		return bestPageIndex;
+	}
+
+
+	if (node->activeInnerRelnPages != 0 && node->activeOuterRelnPages != 0
 			&& node->innerRewardTuples[bestInnerPageIdx].reward > node->outerRewardTuples[bestOuterPageIdx].reward) {
+		if (node->innerRewardTuples[bestInnerPageIdx].reward > 0)
+			elog(INFO,"best is inner and reward is %d",node->innerRewardTuples[bestInnerPageIdx].reward);
 		bestPageIndex = bestInnerPageIdx;
 		node->isBestPageOuter = false;
 		node->innerRewardTuples[bestInnerPageIdx].reward =
@@ -271,6 +299,8 @@ static int popBestTidPageIndex(NestLoopState *node) {
 				node->innerRewardTuples[node->activeInnerRelnPages - 1].htds);
 		node->activeInnerRelnPages--;
 	} else {
+			if (node->outerRewardTuples[bestOuterPageIdx].reward > 0)
+				elog(INFO,"best is outter and reward is %d",node->outerRewardTuples[bestOuterPageIdx].reward);
 		bestPageIndex = bestOuterPageIdx;
 		node->isBestPageOuter = true;
 		node->outerRewardTuples[bestOuterPageIdx].reward =
@@ -279,6 +309,7 @@ static int popBestTidPageIndex(NestLoopState *node) {
 				node->outerRewardTuples[node->activeOuterRelnPages - 1].htds);
 		node->activeOuterRelnPages--;
 	}
+
 
 	//elog(INFO, "bestPageIdx: %d", bestPageIndex);
 	return bestPageIndex;
@@ -317,7 +348,7 @@ static int popBestPageXid(NestLoopState *node) {
 
 static void PrintNodeCounters(NestLoopState *node) {
 	elog(INFO, "Read outer pages: %d", node->outerPageCounter);
-	elog(INFO, "Read inner pages: %d", node->innerPageCounterTotal);
+	elog(INFO, "Read inner pages: %d", node->innerPageCounter);
 	elog(INFO, "Read outer tuples: %ld", node->outerTupleCounter);
 	elog(INFO, "Read inner tuples: %ld", node->innerTupleCounter);
 	elog(INFO, "Generated joins: %d", node->generatedJoins);
@@ -574,7 +605,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate) {
 		if (node->needOuterPage) {
 			if (node->outerTurn) {
 				//elog(INFO, "NeedOuter: OuterTurn");
-				if (!node->reachedEndOfOuter && node->activeOuterRelnPages < node->sqrtOfInnerPages) {
+				if (!node->greedyExploit && !node->reachedEndOfOuter && node->activeOuterRelnPages < node->sqrtOfInnerPages) {
 					// explore
 					node->isExploringOuter = true;
 					node->outerPageCounter++;
@@ -590,9 +621,10 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate) {
 					node->exploreOuterStepCounter = 1;
 					node->needOuterPage = false;
 					node->needInnerPage = true;
-				} else if ((!node->reachedEndOfOuter && node->activeOuterRelnPages == node->sqrtOfInnerPages)
+				} else if (node->greedyExploit || (!node->reachedEndOfOuter && node->activeOuterRelnPages == node->sqrtOfInnerPages)
 						|| (node->reachedEndOfOuter && node->activeOuterRelnPages > 0)) {
 					// exploit
+					node->greedyExploit = false;
 					node->outerPage->index = 0;
 					node->isExploringOuter = false;
 					node->exploitOuterStepCounter = 0;
@@ -689,7 +721,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate) {
 				node->needInnerPage = false;
 			} else {
 				//elog(INFO, "NeedInner: InnerTurn");
-				if (!node->reachedEndOfInner && node->activeInnerRelnPages < node->sqrtOfOuterPages) {
+				if (!node->greedyExploit && !node->reachedEndOfInner && node->activeInnerRelnPages < node->sqrtOfOuterPages) {
 					// explore
 					node->isExploringInner = true;
 					node->innerPageCounter++;
@@ -706,9 +738,10 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate) {
 					node->exploreInnerStepCounter = 1;
 					node->needInnerPage = false;
 					node->needOuterPage = true;
-				} else if ((!node->reachedEndOfInner && node->activeInnerRelnPages == node->sqrtOfOuterPages)
+				} else if (node->greedyExploit || (!node->reachedEndOfInner && node->activeInnerRelnPages == node->sqrtOfOuterPages)
 						|| (node->reachedEndOfInner && node->activeInnerRelnPages > 0)) {
 					// exploit
+					node->greedyExploit = false;
 					node->innerPage->index = 0;
 					node->isExploringInner = false;
 					node->exploitInnerStepCounter = 0;
@@ -743,6 +776,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate) {
 					node->lastReward = 0;
 					node->exploreOuterStepCounter++;
 					node->needInnerPage = true;
+					//elog(INFO, " outter reward > 0");
 				} else if (node->isExploringOuter && node->exploreOuterStepCounter == node->innerPageNumber) {
 					// we have generated all possible joins for the current output page
 					// while exploring, no need to store it
@@ -752,6 +786,11 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate) {
 					//elog(INFO, "Outer Page: %d, Reward: %d", node->activeOuterRelnPages, node->reward);
 					storeTidsWithReward(node->outerPage, node->outerRewardTuples, node->activeOuterRelnPages,
 							node->reward);
+					if(node->reward > 0){
+						//elog(INFO, "greedy outter");
+						node->greedyExploit = true;
+						node->needOuterPage = true;
+					}
 					node->reward = 0;
 					node->activeOuterRelnPages++;
 					node->outerTurn = false;
@@ -783,6 +822,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate) {
 					node->lastReward = 0;
 					node->exploreInnerStepCounter++;
 					node->needOuterPage = true;
+					//elog(INFO, " inner reward > 0");
 				} else if (node->isExploringInner && node->exploreInnerStepCounter == node->outerPageNumber) {
 					// we have generated all possible joins for the current output page
 					// while exploring, no need to store it
@@ -792,6 +832,11 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate) {
 					//elog(INFO, "Inner Page: %d, Reward: %d", node->activeInnerRelnPages, node->reward);
 					storeTidsWithReward(node->innerPage, node->innerRewardTuples, node->activeInnerRelnPages,
 							node->reward);
+					if(node->reward > 0){
+						//elog(INFO, "greedy innner");
+						node->greedyExploit = true;
+						node->needInnerPage = true;
+					}
 					node->reward = 0;
 					node->activeInnerRelnPages++;
 					node->outerTurn = true;
@@ -1022,7 +1067,7 @@ static TupleTableSlot* ExecBlockNestedLoop(PlanState *pstate) {
 				elog(INFO, "Join Done");
 				return NULL;
 			}
-			node->outerPage = CreateRelationPage();
+			//node->outerPage = CreateRelationPage(); //xm
 			LoadNextPage(outerPlan, node->outerPage);
 			node->outerTupleCounter += node->outerPage->tupleCount;
 			node->outerPageCounter++;
@@ -1528,20 +1573,44 @@ NestLoopState* ExecInitNestLoop(NestLoop *node, EState *estate, int eflags) {
 	nlstate->rescanCount = 0;
 	nlstate->outerStartKeyValue = 1;
 	nlstate->outerEndKeyValue = nlstate->outerStartKeyValue;
+	nlstate->greedyExploit = false;
 
 	if (strcmp(fliporder, "on") == 0) {
 		nlstate->outerPageNumber = innerPlan(node)->plan_rows / PAGE_SIZE + 1;
 		nlstate->innerPageNumber = outerPlan(node)->plan_rows / PAGE_SIZE + 1;
 	} else {
-		nlstate->outerPageNumber = outerPlan(node)->plan_rows / PAGE_SIZE;
-		nlstate->innerPageNumber = innerPlan(node)->plan_rows / PAGE_SIZE;
+		nlstate->outerPageNumber = outerPlan(node)->plan_rows / PAGE_SIZE + 1;
+		nlstate->innerPageNumber = innerPlan(node)->plan_rows / PAGE_SIZE + 1;
 	}
 	//TODO sometimes the inner plan_rows does not match the exact row numbers
-	//elog(INFO, "Outer page number: %ld", nlstate->outerPageNumber);
-	//elog(INFO, "Inner page number: %ld", nlstate->innerPageNumber);
+	elog(INFO, "Outer page number: %ld", nlstate->outerPageNumber);
+	elog(INFO, "Inner page number: %ld", nlstate->innerPageNumber);
 
-	nlstate->sqrtOfOuterPages = (int) sqrt(nlstate->outerPageNumber);
-	nlstate->sqrtOfInnerPages = (int) sqrt(nlstate->innerPageNumber);
+//	nlstate->sqrtOfOuterPages = (int) sqrt(nlstate->outerPageNumber);
+//	nlstate->sqrtOfInnerPages = (int) sqrt(nlstate->innerPageNumber);
+
+//	nlstate->sqrtOfOuterPages = (int) (sqrt(nlstate->outerPageNumber)/2);
+//	nlstate->sqrtOfInnerPages = (int) (sqrt(nlstate->innerPageNumber)/2);
+
+//	nlstate->sqrtOfOuterPages = (int) (sqrt(nlstate->outerPageNumber)/5);
+//	nlstate->sqrtOfInnerPages = (int) (sqrt(nlstate->innerPageNumber)/5);
+
+//	nlstate->sqrtOfOuterPages = (int) (sqrt(nlstate->outerPageNumber)/10);
+//	nlstate->sqrtOfInnerPages = (int) (sqrt(nlstate->innerPageNumber)/10);
+
+
+
+
+
+
+
+//	int tmp;
+//	if (nlstate->outerPageNumber < nlstate->innerPageNumber) tmp = nlstate->outerPageNumber;
+//	else tmp = nlstate->innerPageNumber;
+//	nlstate->sqrtOfOuterPages = (int) (nlstate->outerPageNumber);
+//	nlstate->sqrtOfInnerPages = (int) (nlstate->outerPageNumber);
+	elog(INFO, "Outer sqrt page number: %ld", nlstate->sqrtOfOuterPages);
+	elog(INFO, "Inner sqrt page number: %ld", nlstate->sqrtOfInnerPages);
 
 	//elog(INFO, "sqrtOfOuterPages: %d", nlstate->sqrtOfOuterPages);
 	//elog(INFO, "sqrtOfInnerPages: %d", nlstate->sqrtOfInnerPages);
