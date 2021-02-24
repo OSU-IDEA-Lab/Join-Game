@@ -849,7 +849,6 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate) {
 					//		node->reward);
 					storeTIDs(node->outerPage, node->outerRewardTuples, node->activeOuterRelnPages, node->reward);
 					node->nFailure = 0;
-					node->reward = 0;
 					node->activeOuterRelnPages++;
 					if(GREEDY && node->reward > 0){
 						//elog(INFO, "greedy outter");
@@ -860,6 +859,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate) {
 						node->outerPage->index = 0;
 						node->needInnerPage = true;
 					}
+					node->reward = 0;
 				} else if (!node->isExploringOuter && node->exploitOuterStepCounter < node->innerPageNumber) {
 					node->outerPage->index = 0;
 					node->needInnerPage = true;
@@ -899,7 +899,6 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate) {
 					//		node->reward);
 					storeTIDs(node->innerPage, node->innerRewardTuples, node->activeInnerRelnPages, node->reward);
 					node->nFailure = 0;
-					node->reward = 0;
 					node->activeInnerRelnPages++;
 					if(GREEDY && node->reward > 0){
 						//elog(INFO, "greedy innner");
@@ -910,6 +909,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate) {
 						node->needOuterPage = true;
 						node->innerPage->index = 0;
 					}
+					node->reward = 0;
 				} else if (!node->isExploringInner && node->exploitInnerStepCounter < node->outerPageNumber) {
 					node->innerPage->index = 0;
 					node->needOuterPage = true;
