@@ -168,6 +168,8 @@ static int LoadNextOuterPage(PlanState* outerPlan, RelationPage* relationPage, S
 	return relationPage->tupleCount;
 }
 
+void ReleaseBuffer(Buffer buffer); 
+
 void LoadPageWithTIDs(PlanState* outerPlan, struct tupleRewards* tids, RelationPage* relationPage, int index, Relation heapRelation, TupleTableSlot* tup) {
     Buffer tempBuf = InvalidBuffer;
     int i,j = 0;
@@ -236,8 +238,9 @@ static int popBestPage(NestLoopState *node) {
         if (node->tidRewards[i].reward > node->tidRewards[bestPageIndex].reward) {
             bestPageIndex = i;
         }
+		// elog(INFO, "%dth (of %d) member of rewards: %d", i, node->activeRelationPages, node->tidRewards[i].reward);
     }
-    elog(INFO, "reward of best block: %d", node->tidRewards[bestPageIndex].reward);
+    elog(INFO, "reward of best block (of %d blocks): %d", node->activeRelationPages, node->tidRewards[bestPageIndex].reward);
     node->tidRewards[bestPageIndex].reward = -1;
     return bestPageIndex;
 }
@@ -531,7 +534,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 				node->outerPageCounter++;
 				node->lastReward = 0;
 				node->exploreStepCounter = 1;
-			} else if (node->greedyExploit || (!node->reachedEndOfOuter && node->activeRelationPages == node->sqrtOfInnerPages) ||
+			} else if ((!node->reachedEndOfOuter && node->activeRelationPages == node->sqrtOfInnerPages) ||
 					(node->reachedEndOfOuter && node->activeRelationPages > 0)){
 				// exploit
 				node->greedyExploit = false;
@@ -604,9 +607,13 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 				node->innerPage->index = 0;
 			} else {
 				node->needInnerPage = true;
-				if (node->isExploring &&
-						((node->lastReward > 0 && node->exploreStepCounter < node->innerPageNumber)
-						|| (node->lastReward == 0 && (++node->nFailure) < N_FAILURE))) { //stay with current
+
+				if (node->isExploring){
+					// elog(INFO, "Explored %d inner blocks for this (%dth) outer block so far.", node->nArms, node->outerPageCounter);
+					node->nArms++;
+				}
+					
+				if (node->isExploring && node->exploreStepCounter < node->innerPageNumber && node->nArms < MAX_ARMS) { //stay with current
 					node->outerPage->index = 0;
 					node->reward += node->lastReward;
 					node->lastReward = 0;
@@ -614,17 +621,21 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 				} else if (node->isExploring && node->exploreStepCounter == node->innerPageNumber) {
 					// we have generated all possible joins for the current output page
 					// while exploring, no need to store it
+					// Should never reach here for exploration first join
+					elog(ERROR, "While exploring, exploreStepCounter == innerPageNumber! Should have reset when nArms == MAX_ARMS");
 					node->needOuterPage = true;
-				} else if (node->isExploring && node->lastReward == 0 && (++node->nFailure) >= N_FAILURE) {
+				} else if (node->isExploring && node->nArms >= MAX_ARMS) {
 					//push the current explored page
 					//node->xids[node->activeRelationPages] = node->pageIndex;
 					//node->rewards[node->activeRelationPages] = node->reward;
+					elog(INFO, "nArms > MAX_ARMS; done exploring %dth: moving on to a new outer block", node->nArms);
 					storeTIDs(node->outerPage, node->tidRewards, node->activeRelationPages, node->reward);
-					if(GREEDY && node->reward > 0){
-						node->greedyExploit = true;
-					}
+					// if(GREEDY && node->reward > 0){
+					// 	node->greedyExploit = true;
+					// }
                     node->reward = 0;	//mx
                     node->nFailure = 0;
+					node->nArms = 0;
 					node->activeRelationPages++;
 					node->needOuterPage = true;
 				} else if (!node->isExploring && node->exploitStepCounter < node->innerPageNumber) {
@@ -1385,6 +1396,10 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->nFailure = 0;
 	nlstate->greedyExploit = false;
 	nlstate->prevGeneratedJoins = 0;
+
+	/* Extra inits for exploration-first join */
+	nlstate->nArms = 0;
+
 	if (strcmp(fliporder, "on") == 0) {
 		nlstate->outerPageNumber = innerPlan(node)->plan_rows / PAGE_SIZE + 1;
 		nlstate->innerPageNumber = outerPlan(node)->plan_rows / PAGE_SIZE + 1;
@@ -1398,10 +1413,10 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 
 	if (GREEDY){
 //		nlstate->sqrtOfInnerPages = nlstate->innerPageNumber-1; //temp!!!!!!!!!!!!!!!!!!!!!!!!!!!
-		nlstate->sqrtOfInnerPages = (int)sqrt(nlstate->innerPageNumber);
+		nlstate->sqrtOfInnerPages = nlstate->outerPageNumber;
 	}
 	else{
-		nlstate->sqrtOfInnerPages = (int)sqrt(nlstate->innerPageNumber);
+		nlstate->sqrtOfInnerPages = nlstate->outerPageNumber;
 	}
 	nlstate->xids = palloc(nlstate->sqrtOfInnerPages * sizeof(int));
 	nlstate->rewards = palloc(nlstate->sqrtOfInnerPages * sizeof(int));

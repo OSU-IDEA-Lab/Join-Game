@@ -1712,6 +1712,7 @@ typedef struct JoinState
 #define PAGE_SIZE 16
 #define N_FAILURE 10
 #define GREEDY true
+#define MAX_ARMS 50
 
 typedef struct RelationPage {
 	TupleTableSlot* tuples[PAGE_SIZE];
@@ -1769,6 +1770,7 @@ typedef struct NestLoopState
 	ScanKey xidScanKey;
 
 	int nFailure;
+	int nArms;
 
 //	List** pageIdJoinIdLists;	//mx
 } NestLoopState;
