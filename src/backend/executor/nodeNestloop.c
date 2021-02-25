@@ -622,7 +622,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 					// we have generated all possible joins for the current output page
 					// while exploring, no need to store it
 					// Should never reach here for exploration first join
-					elog(ERROR, "While exploring, exploreStepCounter == innerPageNumber! Should have reset when nArms == MAX_ARMS");
+					// elog(ERROR, "While exploring, exploreStepCounter == innerPageNumber! Should have reset when nArms == MAX_ARMS");
 					node->needOuterPage = true;
 				} else if (node->isExploring && node->nArms >= MAX_ARMS) {
 					//push the current explored page
