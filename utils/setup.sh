@@ -1,45 +1,69 @@
 #!/bin/bash
 
+# Global variables
+ROOT_DIR="/Users/dsp/code/school/db-group/Join-Game"
+SRC_DIR="${ROOT_DIR}/exe"
+DB_DIR="${ROOT_DIR}/data"
+
+DB_USER="dsp"
+DB_NAME="tpch"
+DB_HOST="localhost"
+
 ### Join-Game experimentation pipeline
 
 ## Install PSQL
 # Configure
-./configure --prefix=/Users/dsp/code/school/db-group/Join-Game/exe --enable-depend --enable-cassert --enable-debug
+./configure --prefix=$SRC_DIR --enable-depend --enable-cassert --enable-debug
 
 # Build & install
 make
 make install
 
 # Make sure all binaries are accessible from root
-export PATH=./exe/bin:$PATH
+export PATH="${SRC_DIR}/bin":$PATH
 
 ## Generate data
-# Clone Skewed data generator & run `make` to install
-# Rename `@` to `dbgen`
-./dbgen -s 0.01 -z 0
+# Clone Skewed data generator
+cd $ROOT_DIR
+git clone https://github.com/gunaprsd/SkewedDataGenerator.git
 
-# Remove trailing | using sed
-sed 's/.$//' order.tbl > order_cl.tbl
-sed 's/.$//' customer.tbl > customer_cl.tbl
+# Install
+cd SkewedDataGenerator
+make
+
+# Rename `@` to `dbgen`
+mv @ dbgen
+
+# Generate data with size(s) & skew(z)
+"${ROOT_DIR}/SkewedDataGenerator/dbgen" -s 0.01 -z 0
+
+# Remove trailing `|` so the data can be loaded into DB
+sed 's/.$//' order.tbl > "${ROOT_DIR}/order.tbl"
+sed 's/.$//' customer.tbl > "${ROOT_DIR}/customer.tbl"
+
+cd $ROOT_DIR
 
 ## Setup database
 # Create a database cluster directory
-initdb -D ./data
+initdb -D $DB_DIR
 
 # Start/ stop server 
-exe/bin/pg_ctl -D ./data start
-exe/bin/pg_ctl -D ./data stop
+pg_ctl -D $DB_DIR start
+pg_ctl -D $DB_DIR stop
 
 # Load data into DB
-python data_loading/load_data.py  # Verify tbl paths
+python "${ROOT_DIR}/utils/load_data_to_db.py" --cust "${ROOT_DIR}/customer.tbl" \
+                                      --order "${ROOT_DIR}/order.tbl" \
+                                      --db_host $DB_HOST \
+                                      --db_user $DB_USER \
+                                      --db_name $DB_NAME
 
 ## Verify DB & run queries
 # Open PostgreSQL client (psql)
-pg_ctl -D ./data start  # This dir has tables loaded
+pg_ctl -D $DB_DIR start  # This dir has tables loaded
 
 # Start psql client 
 psql tpch  # Connects to tpch db
 \dt  # see all tables
-
 
 ## Experiments
