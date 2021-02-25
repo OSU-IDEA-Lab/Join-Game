@@ -65,7 +65,10 @@ python "${ROOT_DIR}/utils/load_data_to_db.py" --cust "${ROOT_DIR}/customer.tbl" 
 pg_ctl -D $DB_DIR start  # This dir has tables loaded
 
 # Start psql client 
-psql tpch  # Connects to tpch db
-\dt  # see all tables
+psql -p $DB_PORT -d template1  # Default DB
+# CREATE DATABASE tpch; Run SQL Command
+
+psql -p $DB_PORT -d tpch  # Connects to tpch db
+# \dt  # SQL command to see all tables
 
 ## Experiments
