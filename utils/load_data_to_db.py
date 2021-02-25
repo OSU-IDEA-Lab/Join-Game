@@ -15,13 +15,14 @@ parser = argparse.ArgumentParser(description="Data loader")
 parser.add_argument("--cust", help="Customer table path")
 parser.add_argument("--order", help="Order table path")
 parser.add_argument("--db_host", default="localhost", help="DB host addr")
+parser.add_argument("--db_port", default="5009", help="DB port number")
 parser.add_argument("--db_name", default="tpch", help="DB name")
 parser.add_argument("--db_user", default="dsp", help="DB username")
 
 cfg = parser.parse_args()
 
-connection_str = "host={host} dbname={dbname} user={uname}".format(
-    host=cfg.db_host, dbname=cfg.db_name, uname=cfg.db_user
+connection_str = "host={host} port={port} dbname={dbname} user={uname}".format(
+    host=cfg.db_host, port=cfg.db_port, dbname=cfg.db_name, uname=cfg.db_user
 )
 conn = psycopg2.connect(connection_str)
 cur = conn.cursor()

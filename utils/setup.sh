@@ -8,6 +8,7 @@ DB_DIR="${ROOT_DIR}/data"
 DB_USER="dsp"
 DB_NAME="tpch"
 DB_HOST="localhost"
+DB_PORT="5009"
 
 ### Join-Game experimentation pipeline
 
@@ -48,13 +49,14 @@ cd $ROOT_DIR
 initdb -D $DB_DIR
 
 # Start/ stop server 
-pg_ctl -D $DB_DIR start
-pg_ctl -D $DB_DIR stop
+pg_ctl -D $DB_DIR -o "-p ${DB_PORT}" start
+pg_ctl -D $DB_DIR -o "-p ${DB_PORT}" stop
 
 # Load data into DB
 python "${ROOT_DIR}/utils/load_data_to_db.py" --cust "${ROOT_DIR}/customer.tbl" \
                                       --order "${ROOT_DIR}/order.tbl" \
                                       --db_host $DB_HOST \
+                                      --db_port $DB_PORT \
                                       --db_user $DB_USER \
                                       --db_name $DB_NAME
 
