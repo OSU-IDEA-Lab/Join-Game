@@ -1709,7 +1709,7 @@ typedef struct JoinState
  * ----------------
  */
 
-#define PAGE_SIZE 16
+#define PAGE_SIZE 32
 #define N_FAILURE 10
 #define GREEDY false
 
