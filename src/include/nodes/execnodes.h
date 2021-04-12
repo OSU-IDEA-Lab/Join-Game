@@ -1711,7 +1711,7 @@ typedef struct JoinState
 
 #define PAGE_SIZE 16
 #define N_FAILURE 10
-#define GREEDY true
+#define GREEDY false
 
 typedef struct RelationPage {
 	TupleTableSlot* tuples[PAGE_SIZE];

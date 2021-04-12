@@ -552,7 +552,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 //				elog(INFO,"2 after, %d,%d",node->tidRewards[node->pageIndex].reward,node->tidRewards[node->pageIndex].tuples[0].t_self.ip_posid);
 //				elog(INFO,"3 after, %d,%d",node->tidRewards[node->activeRelationPages - 1].reward,node->tidRewards[node->activeRelationPages - 1].tuples[0].t_self.ip_posid);
 				node->activeRelationPages--;
-				elog(INFO,"Entry into exploit and active page is %d right now!!!",node->activeRelationPages);
+				elog(INFO,"Entry into exploit and active page is %d right now!!!",node->pageIndex);
 			} else {
 				// join is done
 				elog(INFO, "Join finished normally");
@@ -632,7 +632,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 					node->exploitStepCounter++;
 				} else if (!node->isExploring && node->exploitStepCounter == node->innerPageNumber) {
 					// Done with this outer page forever
-					elog(INFO, "total matching tuples of best block: %d", node->generatedJoins - node->prevGeneratedJoins);
+					elog(INFO, "total matching tuples of best block: %d - %d ", node->generatedJoins,node->prevGeneratedJoins);
 					node->needOuterPage = true;
 				} else {
 					elog(INFO,"nFailure is %d, explore is %d, explorestep is %d",node->nFailure,node->isExploring,node->exploreStepCounter);
@@ -1396,13 +1396,11 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	// elog(INFO, "Outer page number: %ld", nlstate->outerPageNumber);
 	// elog(INFO, "Inner page number: %ld", nlstate->innerPageNumber);
 
-	if (GREEDY){
-//		nlstate->sqrtOfInnerPages = nlstate->innerPageNumber-1; //temp!!!!!!!!!!!!!!!!!!!!!!!!!!!
-		nlstate->sqrtOfInnerPages = (int)sqrt(nlstate->innerPageNumber);
-	}
-	else{
-		nlstate->sqrtOfInnerPages = (int)sqrt(nlstate->innerPageNumber);
-	}
+
+	nlstate->sqrtOfInnerPages = (int)sqrt(nlstate->innerPageNumber);
+//	nlstate->sqrtOfInnerPages = (int) (sqrt(nlstate->innerPageNumber)/20);
+//	nlstate->sqrtOfInnerPages = (int) nlstate->innerPageNumber + 1;
+
 	nlstate->xids = palloc(nlstate->sqrtOfInnerPages * sizeof(int));
 	nlstate->rewards = palloc(nlstate->sqrtOfInnerPages * sizeof(int));
 	nlstate->tidRewards = palloc(nlstate->sqrtOfInnerPages * sizeof(struct tupleRewards));
