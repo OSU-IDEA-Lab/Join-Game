@@ -28,6 +28,10 @@
 #include "miscadmin.h"
 #include "utils/memutils.h"
 #include "utils/guc.h"
+#include <time.h>
+#include <stdlib.h>
+#include <stdio.h>
+
 
 
 /* ----------------------------------------------------------------
@@ -482,13 +486,16 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 	ExprState  *otherqual;
 	ExprContext *econtext;
 	ListCell   *lc;
-
+	FILE* logf;
+	FILE* logf2;
+	logf = fopen("/postgres/dspr-psql/Join-Game/logfile", "a");
 	CHECK_FOR_INTERRUPTS();
 
 	/*
 	 * get information from the node
 	 */
 	ENL1_printf("getting info from node");
+	fprintf(logf, "%s\n", "getting info from node");
 
 	nl = (NestLoop *) node->js.ps.plan;
 	joinqual = node->js.joinqual;
@@ -509,9 +516,11 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 	 * qualifying join tuple.
 	 */
 	ENL1_printf("entering main loop");
-
-
-	// if (nl->join.inner_unique)
+	fprintf(logf, "%s\n", "entering main loop");
+	// int max_arms = (int) (0.1 * node->innerPageNumber);
+	int max_arms = 50;
+	// elog(INFO, "MAX_ARMS = %d, #innerPages = %d", max_arms, node->innerPageNumber);
+	// if (nl->join.inner_unique )
 		// elog(WARNING, "inner relation is detected as unique");
 
 
@@ -527,13 +536,14 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 				LoadNextPage(outerPlan, node->outerPage);
                 if (node->outerPage->tupleCount < PAGE_SIZE) {
 					elog(INFO, "Reached end of outer");
+					fprintf(logf, "%s\n", "Reached end of outer");
 					node->reachedEndOfOuter = true;
 					if (node->outerPage->tupleCount == 0) continue;
 				}
 				node->outerTupleCounter += node->outerPage->tupleCount;
 				node->outerPageCounter++;
 				node->lastReward = 0;
-				node->exploreStepCounter = 1;
+				node->exploreStepCounter = 0;
 			} else if ((!node->reachedEndOfOuter && node->activeRelationPages == node->sqrtOfInnerPages) ||
 					(node->reachedEndOfOuter && node->activeRelationPages > 0)){
 				// exploit
@@ -556,9 +566,20 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 //				elog(INFO,"3 after, %d,%d",node->tidRewards[node->activeRelationPages - 1].reward,node->tidRewards[node->activeRelationPages - 1].tuples[0].t_self.ip_posid);
 				node->activeRelationPages--;
 				elog(INFO,"Entry into exploit and active page is %d right now!!!",node->activeRelationPages);
+				fprintf(logf, "%s %d %s\n", "Entry into exploit and active page is", node->activeRelationPages, "right now!!!");
 			} else {
 				// join is done
 				elog(INFO, "Join finished normally");
+				fprintf(logf, "%s\n", "Join finished normally");
+				elog(INFO, "************* logfile saved! *************");
+				time_t current_time;
+				FILE* file;
+				current_time = time(NULL);
+				file = fopen("/postgres/dspr-psql/Join-Game/bandit_join_finished.txt", "w+");
+				fprintf(file, "%s", ctime(&current_time));
+				fclose(file);
+
+				fclose(logf);
 				return NULL;
 
 			}
@@ -613,7 +634,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 					node->nArms++;
 				}
 					
-				if (node->isExploring && node->exploreStepCounter < node->innerPageNumber && node->nArms < MAX_ARMS) { //stay with current
+				if (node->isExploring && node->exploreStepCounter < node->innerPageNumber && node->nArms < max_arms) { //stay with current
 					node->outerPage->index = 0;
 					node->reward += node->lastReward;
 					node->lastReward = 0;
@@ -624,11 +645,16 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 					// Should never reach here for exploration first join
 					// elog(ERROR, "While exploring, exploreStepCounter == innerPageNumber! Should have reset when nArms == MAX_ARMS");
 					node->needOuterPage = true;
-				} else if (node->isExploring && node->nArms >= MAX_ARMS) {
+				} else if (node->isExploring && node->nArms >= max_arms) {
 					//push the current explored page
 					//node->xids[node->activeRelationPages] = node->pageIndex;
 					//node->rewards[node->activeRelationPages] = node->reward;
 					elog(INFO, "nArms > MAX_ARMS; done exploring %dth: moving on to a new outer block", node->nArms);
+					// logf = fopen("/postgres/dspr-psql/Join-Game/logfile", "a");
+					fprintf(logf, "%s %d%s\n", "nArms > MAX_ARMS; done exploring", node->nArms, "th: moving on to a new outer block");
+					logf2 = fopen("/postgres/dspr-psql/Join-Game/logfile_expl", "a");
+					fprintf(logf2, "%s %d%s\n", "nArms > MAX_ARMS; done exploring", node->nArms, "th: moving on to a new outer block");
+					fclose(logf2);
 					storeTIDs(node->outerPage, node->tidRewards, node->activeRelationPages, node->reward);
 					// if(GREEDY && node->reward > 0){
 					// 	node->greedyExploit = true;
@@ -644,9 +670,11 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 				} else if (!node->isExploring && node->exploitStepCounter == node->innerPageNumber) {
 					// Done with this outer page forever
 					elog(INFO, "total matching tuples of best block: %d", node->generatedJoins - node->prevGeneratedJoins);
+					fprintf(logf, "%s %d\n", "total matching tuples of best block:", node->generatedJoins - node->prevGeneratedJoins);
 					node->needOuterPage = true;
 				} else {
 					elog(INFO,"nFailure is %d, explore is %d, explorestep is %d",node->nFailure,node->isExploring,node->exploreStepCounter);
+					fprintf(logf, "%s %d %s %d %s %d\n", "nFailure is", node->nFailure, "explore is", node->isExploring, "explorestep is", node->exploreStepCounter);
 					elog(ERROR, "Khiarlikh...");
 				}
 				continue;
@@ -660,15 +688,19 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 		node->innerPage->index++;
 		if (TupIsNull(innerTupleSlot)){
 			elog(WARNING, "inner tuple is null");
+			fprintf(logf, "%s\n", "inner tuple is null");
+			fclose(logf);
 			return NULL;
 		}
 		if (TupIsNull(outerTupleSlot)){
 			if (node->activeRelationPages > 0) { // still has pages in stack
 				// elog(WARNING, "Finishing join while there are active pages");
 				elog(INFO, "Null outer detected");
+				fprintf(logf, "%s\n", "Null outer detected");
 				node->needOuterPage = true;
 				continue;
 			}
+			fclose(logf);
 			return NULL;
 		}
 
@@ -683,6 +715,8 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 				node->generatedJoins++;
 				if (node->pageIndex >= node->outerPageNumber){
 					elog(WARNING, "pageIndex > outerPageNumber!?");
+					fprintf(logf, "%s\n", "pageIndex > outerPageNumber!?");
+					fclose(logf);
 					return NULL;
 				}
 				//TODO do this check earlier in the algorithm
@@ -691,7 +725,11 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 //				}
 //				// Add current xid-innerPageCounter to result sets
 //				lcons_int(node->innerPageCounter, node->pageIdJoinIdLists[node->pageIndex]);
-				return ExecProject(node->js.ps.ps_ProjInfo);
+				if (node->isExploring)
+					continue;
+				else 
+					fclose(logf);
+					return ExecProject(node->js.ps.ps_ProjInfo);
 			}
 			else
 				InstrCountFiltered2(node, 1);
@@ -851,6 +889,14 @@ static TupleTableSlot* ExecBlockNestedLoop(PlanState *pstate)
 			if (node->reachedEndOfOuter){
 				RemoveRelationPage(&(node->outerPage));
 				elog(INFO, "Join Done");
+
+				time_t current_time;
+				FILE* file;
+				current_time = time(NULL);
+				file = fopen("/postgres/dspr-psql/Join-Game/block_join_finished.txt", "w+");
+				fprintf(file, "%s", ctime(&current_time));
+				fclose(file);
+
 				return NULL;
 			}
 //			node->outerPage = CreateRelationPage();	//mx
