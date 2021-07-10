@@ -552,7 +552,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 //				elog(INFO,"2 after, %d,%d",node->tidRewards[node->pageIndex].reward,node->tidRewards[node->pageIndex].tuples[0].t_self.ip_posid);
 //				elog(INFO,"3 after, %d,%d",node->tidRewards[node->activeRelationPages - 1].reward,node->tidRewards[node->activeRelationPages - 1].tuples[0].t_self.ip_posid);
 				node->activeRelationPages--;
-				elog(INFO,"Entry into exploit and active page is %d right now!!!",node->activeRelationPages);
+//				elog(INFO,"Entry into exploit and active page is %d right now!!!",node->activeRelationPages);
 			} else {
 				// join is done
 				elog(INFO, "Join finished normally");
@@ -632,7 +632,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 					node->exploitStepCounter++;
 				} else if (!node->isExploring && node->exploitStepCounter == node->innerPageNumber) {
 					// Done with this outer page forever
-					elog(INFO, "total matching tuples of best block: %d - %d ", node->generatedJoins,node->prevGeneratedJoins);
+//					elog(INFO, "total matching tuples of best block: %d - %d ", node->generatedJoins,node->prevGeneratedJoins);
 					node->needOuterPage = true;
 				} else {
 					elog(INFO,"nFailure is %d, explore is %d, explorestep is %d",node->nFailure,node->isExploring,node->exploreStepCounter);
@@ -846,11 +846,11 @@ static TupleTableSlot* ExecBlockNestedLoop(PlanState *pstate)
 			LoadNextPage(outerPlan, node->outerPage);
 			node->outerTupleCounter += node->outerPage->tupleCount;
 			node->outerPageCounter++;
-			node->needOuterPage = false;
 			if (node->outerPage->tupleCount < PAGE_SIZE){
 				node->reachedEndOfOuter = true;
 				if (node->outerPage->tupleCount == 0) continue;
 			}
+			node->needOuterPage = false;
 		}
 		if (node->needInnerPage) {
 			LoadNextPage(innerPlan, node->innerPage);
@@ -1399,9 +1399,9 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 
 //	nlstate->sqrtOfInnerPages = 2*(int)sqrt(nlstate->innerPageNumber);
 //	nlstate->sqrtOfInnerPages = 4*(int)sqrt(nlstate->innerPageNumber);
-//	nlstate->sqrtOfInnerPages = 20*(int)sqrt(nlstate->innerPageNumber);
+	nlstate->sqrtOfInnerPages = 20*(int)sqrt(nlstate->innerPageNumber);
 //	nlstate->sqrtOfInnerPages = 50*(int)sqrt(nlstate->innerPageNumber);
-	nlstate->sqrtOfInnerPages = (int)(nlstate->outerPageNumber - 1);
+//	nlstate->sqrtOfInnerPages = (int)(nlstate->outerPageNumber - 1);
 
 //	nlstate->sqrtOfInnerPages = (int)sqrt(nlstate->innerPageNumber);
 //	nlstate->sqrtOfInnerPages = (int) (sqrt(nlstate->innerPageNumber)/10);

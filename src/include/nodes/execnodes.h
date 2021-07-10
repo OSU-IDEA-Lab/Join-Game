@@ -1710,7 +1710,7 @@ typedef struct JoinState
  */
 
 #define PAGE_SIZE 32
-#define N_FAILURE 100
+#define N_FAILURE 10
 #define GREEDY false
 
 typedef struct RelationPage {
