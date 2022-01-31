@@ -1709,9 +1709,13 @@ typedef struct JoinState
  * ----------------
  */
 
-#define PAGE_SIZE 32
-#define N_FAILURE 10
+#define PAGE_SIZE 1
+#define N_FAILURE 320
 #define GREEDY false
+#define BASE_PROB 0.001	//added on all arms to get rid of zero probability
+#define CONVERGE_LIMIT 0.001
+#define R_VALUE 50 //# of MCMC SAMPLE for one arm
+//#define GUMBEL_NOISE true
 
 typedef struct RelationPage {
 	TupleTableSlot* tuples[PAGE_SIZE];
@@ -1719,10 +1723,27 @@ typedef struct RelationPage {
 	int tupleCount;
 } RelationPage;
 
+
+typedef struct rndProb{	//probability calculated in each exploring round
+	double prob;
+	struct rndProb *next;
+}rndProb;
+
+typedef struct ProbArr{
+	int tolRnds;	//tol rounds of exploring
+	rndProb *rnd;	//point to the latest round with corresponding probability
+}ProbArr;
+
 struct tupleRewards {
     int reward;
+    int nFail;
     int size;
     HeapTupleData tuples[PAGE_SIZE];
+//    struct ProbArr prob;
+    double pSucc;
+    double pFail;
+    double pChoose;
+
 };
 
 typedef struct NestLoopState
@@ -1769,6 +1790,7 @@ typedef struct NestLoopState
 	ScanKey xidScanKey;
 
 	int nFailure;
+	double pChoose;
 
 //	List** pageIdJoinIdLists;	//mx
 } NestLoopState;
