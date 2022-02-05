@@ -73,14 +73,14 @@ static RelationPage* CreateRelationPage() {
 	return relationPage;
 }
 
-static void RemoveRelationPage(RelationPage** relationPageAdr) {
+static void RemoveRelationPage(RelationPage** relationPageAdr, int pageSize) {
 	int i;
 	RelationPage* relationPage;
 	relationPage  = *relationPageAdr;
 	if (relationPage == NULL) {
 		return;
 	}
-	for (i = 0; i < PAGE_SIZE; i++){
+	for (i = 0; i < pageSize; i++){
 		if (!TupIsNull(relationPage->tuples[i])) {
 			ExecDropSingleTupleTableSlot(relationPage->tuples[i]);
 			relationPage->tuples[i] = NULL;
@@ -91,7 +91,7 @@ static void RemoveRelationPage(RelationPage** relationPageAdr) {
 }
 
 
-static int LoadNextPage(PlanState* planState, RelationPage* relationPage) {
+static int LoadNextPage(PlanState* planState, RelationPage* relationPage, int pageSize) {
 	int i;
 	if (relationPage == NULL){
 		elog(ERROR, "LoadNextPage: null page");
@@ -99,13 +99,13 @@ static int LoadNextPage(PlanState* planState, RelationPage* relationPage) {
 	relationPage->index = 0;
 	relationPage->tupleCount = 0;
 	// Remove the old stored tuples
-	for (i = 0; i < PAGE_SIZE; i++) {
+	for (i = 0; i < pageSize; i++) {
 		if (!TupIsNull(relationPage->tuples[i])) {
 			ExecDropSingleTupleTableSlot(relationPage->tuples[i]);
 			relationPage->tuples[i] = NULL;
 		}
 	}
-	for (i = 0; i < PAGE_SIZE; i++) {
+	for (i = 0; i < pageSize; i++) {
 	 	TupleTableSlot* tts = ExecProcNode(planState);
 		if (TupIsNull(tts)){
 			relationPage->tuples[i] = NULL;
@@ -237,7 +237,7 @@ static int popBestPage(NestLoopState *node) {
             bestPageIndex = i;
         }
     }
-    elog(INFO, "reward of best block: %d", node->tidRewards[bestPageIndex].reward);
+//    elog(INFO, "reward of best block: %d", node->tidRewards[bestPageIndex].reward);
     node->tidRewards[bestPageIndex].reward = -1;
     return bestPageIndex;
 }
@@ -253,6 +253,12 @@ void storeTIDs(RelationPage* relationPage, struct tupleRewards* tids, int index,
     tids[index].pSucc = reward * 1.0 / (reward + nFail) + BASE_PROB;
     tids[index].pFail = 1 - tids[index].pSucc;
     tids[index].pChoose = pChoose;
+    tids[index].updated = false;
+//    tids[index].mcmcSuc = reward;
+//    tids[index].mcmcFail = nFail;
+	tids[index].mcmcSuc = 1;
+	tids[index].mcmcFail = 0;
+    elog(INFO, "store tids with rewards %d,fail %d, psuc %f, pchoose %f", reward, nFail, tids[index].pSucc, pChoose);
 }
 
 double gaussrand_NORMAL() {
@@ -307,54 +313,105 @@ double gaussrand(double mean, double stdc){
 //
 //}
 
-bool MCMCSample(){
-	srand(time(NULL));
-	if ((double) rand() / RAND_MAX > 0.5){
-		return true;
-	}else{
-		return false;
+double calPC(double psuc, double explored, double scala){
+	return exp((psuc + N_FAILURE/explored)/scala) / (exp((psuc + N_FAILURE/explored)/scala) + exp(1/scala));
+}
+
+bool MCMCSample(int prevSuc, int prevFail, double pSuc, double explored){
+	//elog(INFO, "mcmc sample aug is %d, %d, %f, %f", prevSuc, prevFail, pSuc, log(pSuc));
+	double acceptRatio;
+	bool loop = true;
+	int suc, fail;
+	bool res;
+	struct timeval seed;
+
+
+	while(loop){
+		nanosleep((const struct timespec[]){{0, 1017L}}, NULL);
+		gettimeofday( &seed, NULL);
+		srand((unsigned int)(seed.tv_usec));
+		//suc = rand() % (prevSuc + prevFail);
+		//fail = prevSuc + prevFail - suc;
+		//acceptRatio = (pow(suc,2)*log(pSuc)+pow(fail,2)*log(1-pSuc)+log(pChoose)) / (pow(prevSuc,2)*log(pSuc)+pow(prevFail,2)*log(1-pSuc)+log(pChoose));
+		//elog(INFO, "suc %d, fail %d, accept ratio %f", suc, fail, acceptRatio);
+		if (rand() % 100 / 100.0 > 0.5){
+			res = true;
+			//acceptRatio =  (log(pSuc) + log(pChoose)) / (prevSuc*log(pSuc) + prevFail*log(1-pSuc)+ log(pChoose));
+//			acceptRatio =  (log(pSuc)) / (prevSuc*log(pSuc) + prevFail*log(1-pSuc));
+			//acceptRatio = pSuc * calPC(pSuc, explored, P_SCALA)/(pow(pSuc, prevSuc) * pow((1-pSuc), prevFail) * calPC(pSuc, explored, P_SCALA));
+			acceptRatio = pSuc /(pow(pSuc, prevSuc) * pow((1-pSuc), prevFail));
+			//acceptRatio =  (log(pSuc)) / (prevSuc*log(pSuc) + prevFail*log(1-pSuc) + log(pChoose));
+			//elog(INFO, "true sample with acceptRatio %f with suc %f",  acceptRatio, pSuc);
+		}else{
+			res = false;
+			//acceptRatio = (log(1 - pSuc) + log(pChoose)) / (prevSuc*log(pSuc) + prevFail*log(1-pSuc)+ log(pChoose));
+			//acceptRatio = (1 - pSuc)* calPC(pSuc, explored, P_SCALA) / (pow(pSuc, prevSuc) * pow((1-pSuc), prevFail) * calPC(pSuc, explored, P_SCALA));
+			acceptRatio = (1 - pSuc) / (pow(pSuc, prevSuc) * pow((1-pSuc), prevFail) );
+			//acceptRatio = (log(1 - pSuc)) / (prevSuc*log(pSuc) + prevFail*log(1-pSuc) + log(pChoose));
+			//elog(INFO, "false sample with acceptRatio %f with suc %f", acceptRatio, pSuc);
+		}
+		nanosleep((const struct timespec[]){{0, 1601L}}, NULL);
+		gettimeofday( &seed, NULL);
+		srand((unsigned int)(seed.tv_usec));
+		double ram = rand() % 100000 / 100000.0;
+		//elog(INFO, "random 0- 1 is %f and accept is %f with pSuc is %f log is %f", ram, abs(accept), pSuc, log(pSuc));
+		if(acceptRatio < 0) acceptRatio = -acceptRatio;
+		if(ram < acceptRatio){
+			//elog(INFO, "res is %d with acceptRaio %f and ram %f", res, acceptRatio, ram);
+			loop = false;
+		}
 	}
+
+	return res;
 }
 
 void updateProb(NestLoopState *node){
-	double step = 0.005;
 	bool loop = true;
 	int i, j, k = 0;
-	double  suc, nfail, nextDiff, dev;
+	double  suc, nfail, psuc, nextDiff, dev, tmp;
 
 	while (loop){
 		k++;
-		if(k % 1000 == 0)
-			elog(INFO, "%d times:", k);
+		elog(INFO, "%d times:", k);
 		loop = false;
 	    for(i = 0; i < node->activeRelationPages; i++) {
+	    	if(node->tidRewards[i].updated) continue;
+
 	    	suc = node->tidRewards[i].reward * 1.0;
 	    	nfail = node->tidRewards[i].nFail * 1.0;
+	    	tmp = N_FAILURE/(suc + nfail);
+	    	psuc = node->tidRewards[i].pSucc;
 	    	dev = 0.0;
 	    	for(j = 0; j < R_VALUE; j++){
-	    		bool samp = MCMCSample();
+	    		bool samp = MCMCSample(node->tidRewards[i].mcmcSuc, node->tidRewards[i].mcmcFail, node->tidRewards[i].pSucc, suc + nfail);
+	    		//dev += (double)pow(sampSuc, 2)/node->tidRewards[i].pSucc - (double)pow(suc+nfail-sampSuc,2)/(1-node->tidRewards[i].pSucc);
+//update
+//    			node->tidRewards[i].mcmcSuc = 1;
+//    			node->tidRewards[i].mcmcFail = 0;
 	    		if(samp){
-	    			dev += 1 / node->tidRewards[i].pSucc;
+	    			dev += 1 / psuc + 1.0 + tmp - exp(1+tmp)/(exp(1+tmp) + exp(1));
+	    			node->tidRewards[i].mcmcSuc = 1;
+	    			node->tidRewards[i].mcmcFail = 0;
 	    		}else{
-	    			dev -= 1 / (1 - node->tidRewards[i].pSucc);
+	    			dev -= 1 / (1 - psuc) + tmp - exp(tmp)/(exp(tmp) + exp(1));
+	    			node->tidRewards[i].mcmcSuc = 0;
+	    			node->tidRewards[i].mcmcFail = 1;
 	    		}
-	    		/*
-					s = suc, f = fail
-					I()' = (s*logp_k + f*log(1-p_k))'
-					= s/(s/(s+f)) - f/(1-s/(s+f))*(s/(s+f))
-					= s+f-f/(f/(s+f))*(s/(s+f))
-					= s+f-s = f
-	    		 */
 	    	}
 	    	dev = dev / R_VALUE;
-	    	nextDiff = step * (suc/node->tidRewards[i].pSucc - nfail*node->tidRewards[i].pSucc/node->tidRewards[i].pFail - dev);
-	    	if(abs(nextDiff) > CONVERGE_LIMIT) loop = true;
+	    	nextDiff = STEP_VAL * (suc/psuc - nfail/(1-psuc) + psuc + tmp - exp(psuc + tmp)/(exp(psuc + tmp) + exp(1)) - dev);
 	    	node->tidRewards[i].pSucc += nextDiff;
+	    	if(node->tidRewards[i].pSucc <= 0 || node->tidRewards[i].pSucc >= 1) node->tidRewards[i].pSucc = BASE_PROB;
 	    	node->tidRewards[i].pFail = 1 - node->tidRewards[i].pSucc;
-			if(k % 1000 == 0 && i == 1)
-				elog(INFO, "the %d tuple has pSucc as %f", i, node->tidRewards[i].pSucc);
+			elog(INFO, "the %d tuple has pSucc as %f with update is %f, dev is %f, suc is %f, fail is %f",
+						i, node->tidRewards[i].pSucc, nextDiff, dev, suc, nfail);
+			if(nextDiff < 0) nextDiff = -nextDiff;
+			if(nextDiff > CONVERGE_LIMIT) loop = true;
 	    }
 	}
+    for(i = 0; i < node->activeRelationPages; i++)
+    	node->tidRewards[i].updated = true;
+
 	elog(INFO, "successfully converge");
 	return;
 }
@@ -362,8 +419,17 @@ void updateProb(NestLoopState *node){
 
 
 double gumbelNoise(){
-	double rdm = (double)rand() / (double)RAND_MAX ;
-	return -log(-log(rdm));
+	struct timeval seed;
+
+	nanosleep((const struct timespec[]){{0, 1073L}}, NULL);
+
+	gettimeofday( &seed, NULL);
+	srand((unsigned int)(seed.tv_usec));
+
+	double rdm = rand() % 100000 / 100000.0;
+
+
+	return -log(-log(rdm / P_SCALA));
 }
 
 double calculateUk(NestLoopState *node){
@@ -371,7 +437,12 @@ double calculateUk(NestLoopState *node){
 }
 
 bool isKeepExplore(NestLoopState *node){
-	return calculateUk(node) + gumbelNoise() > 1 + gumbelNoise();
+	bool res = true;
+	double gumN1 = gumbelNoise();
+	double gumN2 = gumbelNoise();
+	if (calculateUk(node) + gumN1 < 1 + gumN2) res = false;
+	//elog(INFO, "gumN1 %f, gumN2 %f", gumN1, gumN2);
+	return res;
 }
 
 double calculateProb(NestLoopState *node, int scala){
@@ -379,7 +450,8 @@ double calculateProb(NestLoopState *node, int scala){
 }
 
 void calProbChoose(NestLoopState *node){
-	node->pChoose *= calculateProb(node, 1);
+	node->pChoose *= calculateProb(node, P_SCALA);
+	//elog(INFO, "pchoose is %f, prob is %f with reward is %d, explore is %d", node->pChoose, calculateProb(node, 1), node->reward, node->exploreStepCounter);
 	return;
 }
 
@@ -459,7 +531,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 				node->pageIndex++;
 				node->pageIndex = MAX(node->pageIndex, node->lastPageIndex);
 				//LoadNextOuterPage(outerPlan, node->outerPage, node->xidScanKey, node->pageIndex);
-				LoadNextPage(outerPlan, node->outerPage);
+				LoadNextPage(outerPlan, node->outerPage, PAGE_SIZE);
                 if (node->outerPage->tupleCount < PAGE_SIZE) {
 					elog(INFO, "Reached end of outer");
 					node->reachedEndOfOuter = true;
@@ -472,6 +544,10 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 			} else if (node->greedyExploit || (!node->reachedEndOfOuter && node->activeRelationPages == node->sqrtOfInnerPages) ||
 					(node->reachedEndOfOuter && node->activeRelationPages > 0)){
 				// exploit
+				/***************************************************/
+				node->reachedEndOfOuter = true; // only for test to get full join results of stored arms;
+				// while checking the results, please take a look at popBestPage() to map the full join results with the corresponding arm.
+				/***************************************************/
 				updateProb(node);
 				node->greedyExploit = false;
 				node->prevGeneratedJoins = node->generatedJoins;
@@ -527,8 +603,8 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 				node->rescanCount++;
 				node->reachedEndOfInner = false;
 			}
-			LoadNextPage(innerPlan, node->innerPage);
-			if (node->innerPage->tupleCount < PAGE_SIZE) {
+			LoadNextPage(innerPlan, node->innerPage, PAGE2_SIZE);
+			if (node->innerPage->tupleCount < PAGE2_SIZE) {
 				node->reachedEndOfInner = true;
 				if (node->innerPage->tupleCount == 0) continue;
 			}
@@ -562,6 +638,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 							storeTIDs(node->outerPage, node->tidRewards, node->activeRelationPages, node->reward, node->nFailure, node->pChoose);
 							node->reward = 0;	//mx
 							node->nFailure = 0;
+							node->pChoose = 1.0;
 							node->activeRelationPages++;
 							node->needOuterPage = true;
 						}
@@ -596,7 +673,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 					node->exploitStepCounter++;
 				} else if (!node->isExploring && node->exploitStepCounter == node->innerPageNumber) {
 					// Done with this outer page forever
-//					elog(INFO, "total matching tuples of best block: %d - %d ", node->generatedJoins,node->prevGeneratedJoins);
+					elog(INFO, "total matching tuples of best block: %d by %d - %d ", node->generatedJoins - node->prevGeneratedJoins, node->generatedJoins,node->prevGeneratedJoins);
 					node->needOuterPage = true;
 				} else {
 					elog(INFO,"nFailure is %d, explore is %d, explorestep is %d",node->nFailure,node->isExploring,node->exploreStepCounter);
@@ -690,12 +767,12 @@ static TupleTableSlot* ExecBlockNestedLoop(PlanState *pstate)
 	for (;;) {
 		if (node->needOuterPage) {
 			if (node->reachedEndOfOuter){
-				RemoveRelationPage(&(node->outerPage));
+				RemoveRelationPage(&(node->outerPage), PAGE_SIZE);
 				elog(INFO, "Join Done");
 				return NULL;
 			}
 //			node->outerPage = CreateRelationPage();	//mx
-			LoadNextPage(outerPlan, node->outerPage);
+			LoadNextPage(outerPlan, node->outerPage, PAGE_SIZE);
 			node->outerTupleCounter += node->outerPage->tupleCount;
 			node->outerPageCounter++;
 			if (node->outerPage->tupleCount < PAGE_SIZE){
@@ -705,12 +782,12 @@ static TupleTableSlot* ExecBlockNestedLoop(PlanState *pstate)
 			node->needOuterPage = false;
 		}
 		if (node->needInnerPage) {
-			LoadNextPage(innerPlan, node->innerPage);
+			LoadNextPage(innerPlan, node->innerPage, PAGE2_SIZE);
 			node->innerTupleCounter += node->innerPage->tupleCount;
 			node->innerPageCounter++;
 			node->innerPageCounterTotal++;
 			node->needInnerPage = false;
-			if (node->innerPage->tupleCount < PAGE_SIZE){ // done with one outer page, move to next
+			if (node->innerPage->tupleCount < PAGE2_SIZE){ // done with one outer page, move to next
 				foreach(lc, nl->nestParams)
 				{
 					NestLoopParam *nlp = (NestLoopParam *) lfirst(lc);
@@ -1119,13 +1196,14 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->outerTupleCounter = 0;
 	nlstate->generatedJoins = 0;
 	nlstate->rescanCount = 0;
+	nlstate->reward = 0;
 	nlstate->nFailure = 0;
-	nlstate->pChoose = 1;
+	nlstate->pChoose = 1.0;
 	nlstate->greedyExploit = false;
 	nlstate->prevGeneratedJoins = 0;
 
 	nlstate->outerPageNumber = outerPlan(node)->plan_rows / PAGE_SIZE;
-	nlstate->innerPageNumber = innerPlan(node)->plan_rows / PAGE_SIZE;
+	nlstate->innerPageNumber = innerPlan(node)->plan_rows / PAGE2_SIZE;
 
 	//TODO sometimes the inner plan_rows does not match the exact row numbers
 	// elog(INFO, "Outer page number: %ld", nlstate->outerPageNumber);
@@ -1140,7 +1218,9 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 
 //	nlstate->sqrtOfInnerPages = (int)sqrt(nlstate->innerPageNumber);
 //	nlstate->sqrtOfInnerPages = (int) (sqrt(nlstate->innerPageNumber)/10);
-	nlstate->sqrtOfInnerPages = (int) (sqrt(nlstate->innerPageNumber)/20);
+	//nlstate->sqrtOfInnerPages = (int) (sqrt(nlstate->innerPageNumber)/20);
+	nlstate->sqrtOfInnerPages = 10;
+	elog(INFO, "sqrtOfInnerPages: %ld", nlstate->sqrtOfInnerPages);
 //	nlstate->sqrtOfInnerPages = (int) nlstate->innerPageNumber + 1;
 
 	nlstate->xids = palloc(nlstate->sqrtOfInnerPages * sizeof(int));
@@ -1150,9 +1230,11 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
     nlstate->pageIndex = -1;
 	nlstate->lastPageIndex = 0;
 	nlstate->xidScanKey = (ScanKey) palloc(sizeof(ScanKeyData));
-    for(i = 0; i < nlstate->sqrtOfInnerPages; i++) {
-        nlstate->tidRewards[i].reward = 0;
-    }
+//    for(i = 0; i < nlstate->sqrtOfInnerPages; i++) {
+//        nlstate->tidRewards[i].reward = 0;
+//        nlstate->tidRewards[i].updated = false;
+//        nlstate->tidRewards[i].nFail = 0;
+//    }
 //	nlstate->pageIdJoinIdLists = palloc(nlstate->outerPageNumber * sizeof(List*)); //mx
 	i = 0;
 //	while (i < nlstate->outerPageNumber){	//mx
@@ -1227,8 +1309,8 @@ ExecEndNestLoop(NestLoopState *node)
 //		node->pageIdJoinIdLists[i] = NULL;
 //		i++;
 //	}
-	RemoveRelationPage(&(node->outerPage));
-	RemoveRelationPage(&(node->innerPage));
+	RemoveRelationPage(&(node->outerPage), PAGE_SIZE);
+	RemoveRelationPage(&(node->innerPage), PAGE2_SIZE);
 	pfree(node->xids);
 	pfree(node->rewards);
 	pfree(node->xidScanKey);

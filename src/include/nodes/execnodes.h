@@ -1709,12 +1709,15 @@ typedef struct JoinState
  * ----------------
  */
 
-#define PAGE_SIZE 1
+#define PAGE_SIZE 32
+#define PAGE2_SIZE 1
 #define N_FAILURE 320
 #define GREEDY false
 #define BASE_PROB 0.001	//added on all arms to get rid of zero probability
 #define CONVERGE_LIMIT 0.001
-#define R_VALUE 50 //# of MCMC SAMPLE for one arm
+#define STEP_VAL 0.000001
+#define R_VALUE 5 //# of MCMC SAMPLE for one arm
+#define P_SCALA 100
 //#define GUMBEL_NOISE true
 
 typedef struct RelationPage {
@@ -1743,6 +1746,9 @@ struct tupleRewards {
     double pSucc;
     double pFail;
     double pChoose;
+    bool updated;
+    int mcmcSuc;
+    int mcmcFail;
 
 };
 
