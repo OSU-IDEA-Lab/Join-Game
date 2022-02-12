@@ -261,57 +261,37 @@ void storeTIDs(RelationPage* relationPage, struct tupleRewards* tids, int index,
     elog(INFO, "store tids with rewards %d,fail %d, psuc %f, pchoose %f", reward, nFail, tids[index].pSucc, pChoose);
 }
 
-double gaussrand_NORMAL() {
-	static double V1, V2, S;
-	static int phase = 0;
-	double X;
-
-	if (phase == 0){
-		do{
-			srand((unsigned)time(NULL));
-			double U1 = (double) rand() / RAND_MAX;
-			srand((unsigned)time(NULL));
-			double U2 = (double) rand() / RAND_MAX;
-
-			V1 = 2 * U1 - 1;
-			V2 = 2 * U2 - 1;
-
-			S = V1 * V1 + V2 * V2;
-		}while (S >= 1 || S == 0);
-
-		X = V1 * sqrt(-2.0 * log(S) / S);
-	}
-	else
-	{
-		X = V2 * sqrt(-2.0 * log(S) / S);
-	}
-
-	phase = 1 - phase;
-
-	return X;
-}
-
-double gaussrand(double mean, double stdc){
-	return mean + gaussrand_NORMAL() * stdc;
-}
-
-//double MCMCSampe(double mean, double seed){
-//	double stdc, gaus;
+//double gaussrand_NORMAL() {
+//	static double V1, V2, S;
+//	static int phase = 0;
+//	double X;
 //
-//	srand(seed);
-//	stdc = (double) rand() / RAND_MAX;
-//	do{
-//		gaus = gaussrand(mean, stdc);
-//	} while(gaus < mean);
+//	if (phase == 0){
+//		do{
+//			srand((unsigned)time(NULL));
+//			double U1 = (double) rand() / RAND_MAX;
+//			srand((unsigned)time(NULL));
+//			double U2 = (double) rand() / RAND_MAX;
 //
-//	// double ratio;
+//			V1 = 2 * U1 - 1;
+//			V2 = 2 * U2 - 1;
 //
-////	srand(seed);
-////	double random = (double) rand() / RAND_MAX;
-////	if(random < ratio) reject
-////	else accept
+//			S = V1 * V1 + V2 * V2;
+//		}while (S >= 1 || S == 0);
 //
+//		X = V1 * sqrt(-2.0 * log(S) / S);
+//	}
+//	else
+//	{
+//		X = V2 * sqrt(-2.0 * log(S) / S);
+//	}
+//
+//	phase = 1 - phase;
+//
+//	return X;
 //}
+
+
 
 double calPC(double psuc, double explored, double scala){
 	return exp((psuc + N_FAILURE/explored)/scala) / (exp((psuc + N_FAILURE/explored)/scala) + exp(1/scala));
@@ -330,31 +310,21 @@ bool MCMCSample(int prevSuc, int prevFail, double pSuc, double explored){
 		nanosleep((const struct timespec[]){{0, 1017L}}, NULL);
 		gettimeofday( &seed, NULL);
 		srand((unsigned int)(seed.tv_usec));
-		//suc = rand() % (prevSuc + prevFail);
-		//fail = prevSuc + prevFail - suc;
-		//acceptRatio = (pow(suc,2)*log(pSuc)+pow(fail,2)*log(1-pSuc)+log(pChoose)) / (pow(prevSuc,2)*log(pSuc)+pow(prevFail,2)*log(1-pSuc)+log(pChoose));
-		//elog(INFO, "suc %d, fail %d, accept ratio %f", suc, fail, acceptRatio);
+
 		if (rand() % 100 / 100.0 > 0.5){
 			res = true;
-			//acceptRatio =  (log(pSuc) + log(pChoose)) / (prevSuc*log(pSuc) + prevFail*log(1-pSuc)+ log(pChoose));
-//			acceptRatio =  (log(pSuc)) / (prevSuc*log(pSuc) + prevFail*log(1-pSuc));
-			//acceptRatio = pSuc * calPC(pSuc, explored, P_SCALA)/(pow(pSuc, prevSuc) * pow((1-pSuc), prevFail) * calPC(pSuc, explored, P_SCALA));
 			acceptRatio = pSuc /(pow(pSuc, prevSuc) * pow((1-pSuc), prevFail));
-			//acceptRatio =  (log(pSuc)) / (prevSuc*log(pSuc) + prevFail*log(1-pSuc) + log(pChoose));
 			//elog(INFO, "true sample with acceptRatio %f with suc %f",  acceptRatio, pSuc);
 		}else{
 			res = false;
-			//acceptRatio = (log(1 - pSuc) + log(pChoose)) / (prevSuc*log(pSuc) + prevFail*log(1-pSuc)+ log(pChoose));
-			//acceptRatio = (1 - pSuc)* calPC(pSuc, explored, P_SCALA) / (pow(pSuc, prevSuc) * pow((1-pSuc), prevFail) * calPC(pSuc, explored, P_SCALA));
 			acceptRatio = (1 - pSuc) / (pow(pSuc, prevSuc) * pow((1-pSuc), prevFail) );
-			//acceptRatio = (log(1 - pSuc)) / (prevSuc*log(pSuc) + prevFail*log(1-pSuc) + log(pChoose));
 			//elog(INFO, "false sample with acceptRatio %f with suc %f", acceptRatio, pSuc);
 		}
 		nanosleep((const struct timespec[]){{0, 1601L}}, NULL);
 		gettimeofday( &seed, NULL);
 		srand((unsigned int)(seed.tv_usec));
 		double ram = rand() % 100000 / 100000.0;
-		//elog(INFO, "random 0- 1 is %f and accept is %f with pSuc is %f log is %f", ram, abs(accept), pSuc, log(pSuc));
+
 		if(acceptRatio < 0) acceptRatio = -acceptRatio;
 		if(ram < acceptRatio){
 			//elog(INFO, "res is %d with acceptRaio %f and ram %f", res, acceptRatio, ram);
@@ -384,10 +354,7 @@ void updateProb(NestLoopState *node){
 	    	dev = 0.0;
 	    	for(j = 0; j < R_VALUE; j++){
 	    		bool samp = MCMCSample(node->tidRewards[i].mcmcSuc, node->tidRewards[i].mcmcFail, node->tidRewards[i].pSucc, suc + nfail);
-	    		//dev += (double)pow(sampSuc, 2)/node->tidRewards[i].pSucc - (double)pow(suc+nfail-sampSuc,2)/(1-node->tidRewards[i].pSucc);
-//update
-//    			node->tidRewards[i].mcmcSuc = 1;
-//    			node->tidRewards[i].mcmcFail = 0;
+
 	    		if(samp){
 	    			dev += 1 / psuc + 1.0 + tmp - exp(1+tmp)/(exp(1+tmp) + exp(1));
 	    			node->tidRewards[i].mcmcSuc = 1;
@@ -546,7 +513,7 @@ static TupleTableSlot* ExecBanditJoin(PlanState *pstate)
 				// exploit
 				/***************************************************/
 				node->reachedEndOfOuter = true; // only for test to get full join results of stored arms;
-				// while checking the results, please take a look at popBestPage() to map the full join results with the corresponding arm.
+				// while checking the results, please take a look at popBestPage() and then switch the current exploited arm with the last one to map the full join results with the corresponding arm.
 				/***************************************************/
 				updateProb(node);
 				node->greedyExploit = false;

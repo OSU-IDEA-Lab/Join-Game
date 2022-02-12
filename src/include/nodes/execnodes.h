@@ -1727,15 +1727,15 @@ typedef struct RelationPage {
 } RelationPage;
 
 
-typedef struct rndProb{	//probability calculated in each exploring round
-	double prob;
-	struct rndProb *next;
-}rndProb;
-
-typedef struct ProbArr{
-	int tolRnds;	//tol rounds of exploring
-	rndProb *rnd;	//point to the latest round with corresponding probability
-}ProbArr;
+//typedef struct rndProb{	//probability calculated in each exploring round
+//	double prob;
+//	struct rndProb *next;
+//}rndProb;
+//
+//typedef struct ProbArr{
+//	int tolRnds;	//tol rounds of exploring
+//	rndProb *rnd;	//point to the latest round with corresponding probability
+//}ProbArr;
 
 struct tupleRewards {
     int reward;
