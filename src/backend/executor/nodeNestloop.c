@@ -76,16 +76,16 @@ ExecNestLoop(PlanState *pstate)
 	ListCell   *lc;
 	
 	//bha-add
-	elog(INFO, "pstate->matchCounte: %d", pstate->matchCount);
-	elog(INFO, "pstate->flag1: %u", pstate->flag1);
-	//elog(INFO, "pstate->flag1 != 11: %d", pstate->flag1 != 11);
-	//pstate->matchCount
+	// elog(INFO, "pstate->matchCounte: %d", pstate->matchCount);
+	// elog(INFO, "pstate->flag1: %u", pstate->flag1);
+	// //elog(INFO, "pstate->flag1 != 11: %d", pstate->flag1 != 11);
+	// //pstate->matchCount
 	
-	if (pstate->flag1 != 1234)
-	{
-		pstate->flag1=1234;
-		pstate->matchCount=0;
-	}
+	// if (pstate->flag1 != 1234)
+	// {
+	// 	pstate->flag1=1234;
+	// 	pstate->matchCount=0;
+	// }
 	
 	//bha-end
 
@@ -134,7 +134,7 @@ ExecNestLoop(PlanState *pstate)
 			outerTupleSlot = ExecProcNode(outerPlan);
 			
 			//bha-add
-			pstate->matchCount=0;
+			// pstate->matchCount=0;
 			//bha-end
 			
 			/*
@@ -219,12 +219,12 @@ ExecNestLoop(PlanState *pstate)
 					 */
 					ENL1_printf("qualification succeeded, projecting tuple");
 					//bha-add
-					
+					//
 					//pstate->matchCount++;
 					//if (outerPlan->matchCount > 10){
 					//	node->nl_NeedNewOuter = true;
 					//}
-					
+					//
 					//bha-end
 					return ExecProject(node->js.ps.ps_ProjInfo);
 				}
@@ -247,21 +247,6 @@ ExecNestLoop(PlanState *pstate)
 		 * must pass to actually return the tuple.
 		 */
 		ENL1_printf("testing qualification");
-
-		//bha
-		/*
-		bool outerIsNull, innerIsNull;
-		Datum outerAttrValue = slot_getattr(outerTupleSlot, node->outerAttrNum, &outerIsNull);
-		Datum innerAttrValue = slot_getattr(innerTupleSlot, node->innerAttrNum, &innerIsNull);
-		
-		if (!outerIsNull && !innerIsNull) {
-			int outerValue = DatumGetInt32(outerAttrValue);
-			int innerValue = DatumGetInt32(innerAttrValue);
-			elog(INFO, "outerValue: %d", outerValue);
-			elog(INFO, "innerValue: %d", innerValue);
-		}
-		*/
-		//bha
 
 		if (ExecQual(joinqual, econtext))
 		{

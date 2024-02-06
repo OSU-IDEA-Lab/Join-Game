@@ -915,8 +915,8 @@ typedef TupleTableSlot *(*ExecProcNodeMtd) (struct PlanState *pstate);
 typedef struct PlanState
 {
 	//bha-add
-	int matchCount;
-	unsigned int flag1;
+	// int matchCount;
+	// unsigned int flag1;
 	//bha-end
 	NodeTag		type;
 
