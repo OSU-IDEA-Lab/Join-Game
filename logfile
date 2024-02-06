@@ -1,0 +1,14 @@
+2024-02-05 17:37:34.240 PST [16018] LOG:  listening on IPv6 address "::1", port 4488
+2024-02-05 17:37:34.240 PST [16018] LOG:  listening on IPv4 address "127.0.0.1", port 4488
+2024-02-05 17:37:34.241 PST [16018] LOG:  listening on Unix socket "/tmp/.s.PGSQL.4488"
+2024-02-05 17:37:34.251 PST [16019] LOG:  database system was shut down at 2024-02-05 17:37:23 PST
+2024-02-05 17:37:34.253 PST [16018] LOG:  database system is ready to accept connections
+2024-02-05 17:39:04.595 PST [19686] ERROR:  syntax error at or near "create" at character 26
+2024-02-05 17:39:04.595 PST [19686] STATEMENT:  create database shrestaa
+	create database shrestaa;
+2024-02-05 17:45:06.721 PST [30447] ERROR:  could not open file "/data/bharghav-psql/data/1_gig_data/z1/professor.tbl" for reading: Permission denied
+2024-02-05 17:45:06.721 PST [30447] HINT:  COPY FROM instructs the PostgreSQL server process to read a file. You may want a client-side facility such as psql's \copy.
+2024-02-05 17:45:06.721 PST [30447] STATEMENT:  copy PROFESSOR FROM '/data/bharghav-psql/data/1_gig_data/z1/professor.tbl' WITH DELIMITER AS '|';
+2024-02-05 17:47:10.722 PST [30447] ERROR:  could not open file "/postgres/shrestaa-psql/data/professor.tbl" for reading: No such file or directory
+2024-02-05 17:47:10.722 PST [30447] HINT:  COPY FROM instructs the PostgreSQL server process to read a file. You may want a client-side facility such as psql's \copy.
+2024-02-05 17:47:10.722 PST [30447] STATEMENT:  copy PROFESSOR FROM '/postgres/shrestaa-psql/data/professor.tbl' WITH DELIMITER AS '|';

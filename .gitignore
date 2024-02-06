@@ -47,3 +47,6 @@ lib*.pc
 *.out
 *.swp
 src/tags
+
+# Custom
+DemoDir
