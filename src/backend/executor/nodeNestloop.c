@@ -102,10 +102,12 @@ ExecNestLoop(PlanState *pstate)
 	 * qualifying join tuple.
 	 */
 	ENL1_printf("entering main loop");
-	
+
+	/*
+	 * Initalize left and right tables for Bandit Run
+	 */
 	if (!outerPlan->state->oslBnd8LeftTableInitialized) {
-		elog(INFO, "");
-		elog(INFO, "----------------------------------------");
+		elog(INFO, "\n----------------------------------------");
 		elog(INFO, "Initialization False for outer tuple table, curr_count: %u", outerPlan->state->oslBnd8LeftTableTupleCount);
 		elog(INFO, "outerPlan->state->oslBnd8LeftTableInitialized: %s", outerPlan->state->oslBnd8LeftTableInitialized ? "true" : "false");
 
@@ -114,7 +116,13 @@ ExecNestLoop(PlanState *pstate)
 			if (TupIsNull(outerTupleSlot)) {
 				break;
 			}
+
+			// Add the tuple to the list
+			outerPlan->state->oslBnd8LeftTableTuples[outerPlan->state->oslBnd8LeftTableTupleCount] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+			ExecCopySlot(outerPlan->state->oslBnd8LeftTableTuples[outerPlan->state->oslBnd8LeftTableTupleCount], outerTupleSlot);
 			outerPlan->state->oslBnd8LeftTableTupleCount++;
+			elog(INFO, "Initalization Ongoing for outer tuple table, curr_count: %u", outerPlan->state->oslBnd8LeftTableTupleCount);
+
 			if (outerPlan->state->oslBnd8LeftTableTupleCount >= 10) {
 				break;
 			}
@@ -123,17 +131,13 @@ ExecNestLoop(PlanState *pstate)
 		ExecReScan(outerPlan);
 		outerPlan->state->oslBnd8LeftTableInitialized = true;
 
-		elog(INFO, "Initialization Complete for outer tuple table, curr_count: %u", outerPlan->state->oslBnd8LeftTableTupleCount);
+		elog(INFO, "\nInitialization Complete for outer tuple table, curr_count: %u", outerPlan->state->oslBnd8LeftTableTupleCount);
 		elog(INFO, "outerPlan->state->oslBnd8LeftTableInitialized: %s", outerPlan->state->oslBnd8LeftTableInitialized ? "true" : "false");
-		elog(INFO, "----------------------------------------");
-		elog(INFO, "");
+		elog(INFO, "----------------------------------------\n");
 	}
 
-
-	// elog(INFO, "outerPlan->state->oslBnd8RightTableInitialized: %s", outerPlan->state->oslBnd8RightTableInitialized ? "true" : "false")
 	if (!outerPlan->state->oslBnd8RightTableInitialized) {
-		elog(INFO, "");
-		elog(INFO, "----------------------------------------");
+		elog(INFO, "\n----------------------------------------");
 		elog(INFO, "Initalization False for inner tuple table, curr_count: %u", outerPlan->state->oslBnd8RightTableTupleCount);
 		elog(INFO, "outerPlan->state->oslBnd8RightTableInitialized: %s", outerPlan->state->oslBnd8RightTableInitialized ? "true" : "false");
 
@@ -142,7 +146,14 @@ ExecNestLoop(PlanState *pstate)
 			if (TupIsNull(innerTupleSlot)) {
 				break;
 			}
+
+
+			// Add the tuple to the list
+			outerPlan->state->oslBnd8RightTableTuples[outerPlan->state->oslBnd8RightTableTupleCount] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
+			ExecCopySlot(outerPlan->state->oslBnd8RightTableTuples[outerPlan->state->oslBnd8RightTableTupleCount], innerTupleSlot);
 			outerPlan->state->oslBnd8RightTableTupleCount++;
+			elog(INFO, "Initalization Ongoing for inner tuple table, curr_count: %u", outerPlan->state->oslBnd8RightTableTupleCount);
+
 			if (outerPlan->state->oslBnd8RightTableTupleCount >= 10) {
 				break;
 			}
@@ -150,12 +161,10 @@ ExecNestLoop(PlanState *pstate)
 		ENL1_printf("rescanning inner plan");
 		ExecReScan(innerPlan);
 		outerPlan->state->oslBnd8RightTableInitialized = true;
-		elog(INFO, "Initalization Complete for inner tuple table, curr_count: %u", outerPlan->state->oslBnd8RightTableTupleCount);
+		elog(INFO, "\nInitalization Complete for inner tuple table, curr_count: %u", outerPlan->state->oslBnd8RightTableTupleCount);
 		elog(INFO, "outerPlan->state->oslBnd8RightTableInitialized: %s", outerPlan->state->oslBnd8RightTableInitialized ? "true" : "false");
-		elog(INFO, "----------------------------------------");
-		elog(INFO, "");
+		elog(INFO, "----------------------------------------\n");
 	}
-	// elog(INFO, "outerPlan->state->oslBnd8RightTableInitialized: %s", outerPlan->state->oslBnd8RightTableInitialized ? "true" : "false")
 
 
 	for (;;)
@@ -166,16 +175,26 @@ ExecNestLoop(PlanState *pstate)
 		 */
 		if (node->nl_NeedNewOuter)
 		{
-			ENL1_printf("getting new outer tuple");
-			outerTupleSlot = ExecProcNode(outerPlan);
+			TupleTableSlot *outerTupleSlot;
+			if (outerPlan->state->oslBnd8LeftTableTupleCount > 0) {
+				outerPlan->state->oslBnd8LeftTableTupleCount--;
+				outerTupleSlot = outerPlan->state->oslBnd8LeftTableTuples[outerPlan->state->oslBnd8LeftTableTupleCount];
+				elog(INFO, "\n Popped outer tuple, curr_length: %d", outerPlan->state->oslBnd8LeftTableTupleCount);
+			}
+			else {
+				ENL1_printf("getting new outer tuple");
+				outerTupleSlot = ExecProcNode(outerPlan);
+				elog(INFO, "Read new outer tuple");
+			}
 
-			
+
 			/*
 			 * if there are no more outer tuples, then the join is complete..
 			 */
 			if (TupIsNull(outerTupleSlot))
 			{
 				ENL1_printf("no outer tuple, ending join");
+				elog(INFO, "no outer tuple, ending join");
 				return NULL;
 			} 
 

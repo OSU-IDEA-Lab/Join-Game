@@ -485,6 +485,7 @@ typedef struct OSLBanditState
 	
 } OSLBanditState;
 
+#define BANDIT_TMP_TABLE_SIZE 4096
 typedef struct EState
 {	
 	NodeTag		type;
@@ -596,9 +597,11 @@ typedef struct EState
 	unsigned int oslBnd8TupMatchCount;
 
     bool oslBnd8LeftTableInitialized;
+	TupleTableSlot* oslBnd8LeftTableTuples[BANDIT_TMP_TABLE_SIZE];
     unsigned int oslBnd8LeftTableTupleCount;
 
     bool oslBnd8RightTableInitialized;
+	TupleTableSlot* oslBnd8RightTableTuples[BANDIT_TMP_TABLE_SIZE];
     unsigned int oslBnd8RightTableTupleCount;
 
 } EState;
