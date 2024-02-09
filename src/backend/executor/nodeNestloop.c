@@ -75,19 +75,6 @@ ExecNestLoop(PlanState *pstate)
 	ExprContext *econtext;
 	ListCell   *lc;
 	
-	//bha-add
-	// elog(INFO, "pstate->matchCounte: %d", pstate->matchCount);
-	// elog(INFO, "pstate->flag1: %u", pstate->flag1);
-	// //elog(INFO, "pstate->flag1 != 11: %d", pstate->flag1 != 11);
-	// //pstate->matchCount
-	
-	// if (pstate->flag1 != 1234)
-	// {
-	// 	pstate->flag1=1234;
-	// 	pstate->matchCount=0;
-	// }
-	
-	//bha-end
 
 	CHECK_FOR_INTERRUPTS();
 
@@ -103,13 +90,7 @@ ExecNestLoop(PlanState *pstate)
 	innerPlan = innerPlanState(node);
 	econtext = node->js.ps.ps_ExprContext;
 
-	/*
-    elog(INFO, "Outer Plan Information:");
-    elog(INFO, "Plan Type: %d", nodeTag(outerPlan));
-    elog(INFO, "Inner Plan Information:");
-    elog(INFO, "Plan Type: %d", nodeTag(innerPlan));
-	*/
-	
+
 	/*
 	 * Reset per-tuple memory context to free any expression evaluation
 	 * storage allocated in the previous tuple cycle.
@@ -132,10 +113,7 @@ ExecNestLoop(PlanState *pstate)
 		{
 			ENL1_printf("getting new outer tuple");
 			outerTupleSlot = ExecProcNode(outerPlan);
-			
-			//bha-add
-			// pstate->matchCount=0;
-			//bha-end
+
 			
 			/*
 			 * if there are no more outer tuples, then the join is complete..
@@ -144,11 +122,7 @@ ExecNestLoop(PlanState *pstate)
 			{
 				ENL1_printf("no outer tuple, ending join");
 				return NULL;
-			} else {
-				elog(INFO, "outerPlan->state->matchCount: %d", outerPlan->state->tupMatchCount);
-				elog(INFO,"Resetting Tuple Match Count");
-			 	outerPlan->state->tupMatchCount=0;
-			}
+			} 
 
 			ENL1_printf("saving new outer tuple information");
 			econtext->ecxt_outertuple = outerTupleSlot;
@@ -222,14 +196,6 @@ ExecNestLoop(PlanState *pstate)
 					 * ExecProject().
 					 */
 					ENL1_printf("qualification succeeded, projecting tuple");
-					//bha-add
-					//
-					//pstate->matchCount++;
-					//if (outerPlan->matchCount > 10){
-					//	node->nl_NeedNewOuter = true;
-					//}
-					//
-					//bha-end
 					return ExecProject(node->js.ps.ps_ProjInfo);
 				}
 				else
@@ -278,10 +244,6 @@ ExecNestLoop(PlanState *pstate)
 				 * slot containing the result tuple using ExecProject().
 				 */
 				ENL1_printf("qualification succeeded, projecting tuple");
-				outerPlan->state->tupMatchCount+=1;
-				if (outerPlan->state->tupMatchCount >= 5){
-					node->nl_NeedNewOuter = true;
-				}
 				return ExecProject(node->js.ps.ps_ProjInfo);
 			}
 			else
@@ -345,13 +307,6 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	else
 		eflags &= ~EXEC_FLAG_REWIND;
 	innerPlanState(nlstate) = ExecInitNode(innerPlan(node), estate, eflags);
-	
-	/*
-	// Print the contents using elog() //
-	elog(INFO, "innerPlan(node): %p", (void *)innerPlan(node));
-	elog(INFO, "estate: %p", (void *)estate);
-	elog(INFO, "eflags: %d", eflags);
-	*/
 
 	/*
 	 * Initialize result slot, type and projection.
@@ -374,15 +329,7 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	nlstate->js.single_match = (node->join.inner_unique ||
 								node->join.jointype == JOIN_SEMI);
 	
-	/*
-	//Join Type is coming as "0", JOIN_LEFT value is also "0"//
-	elog(INFO, "node->join.jointype: %d", (int) node->join.jointype);
-	elog(INFO, "JOIN_INNER: %d", JOIN_INNER);
-	elog(INFO, "JOIN_SEMI: %d", JOIN_SEMI);
-	elog(INFO, "JOIN_LEFT: %d", JOIN_LEFT);
-	elog(INFO, "JOIN_ANTI: %d", JOIN_ANTI);
-	*/
-	
+
 	/* set up null tuples for outer joins, if needed */
 	switch (node->join.jointype)
 	{

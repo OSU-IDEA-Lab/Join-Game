@@ -579,9 +579,6 @@ typedef struct EState
 	struct JitContext *es_jit;
 	struct JitInstrumentation *es_jit_worker_instr;
 
-	unsigned int tupMatchCount;
-    unsigned int flag1;
-	
 } EState;
 
 
@@ -925,11 +922,7 @@ typedef struct DummyBanditState
 
 typedef struct PlanState
 {
-	//bha-add
-	// struct DummyBanditState *banditState;
-	//bha-end
 	
-
 	NodeTag		type;
 
 	Plan	   *plan;			/* associated Plan node */
