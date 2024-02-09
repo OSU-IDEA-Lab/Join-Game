@@ -144,6 +144,10 @@ ExecNestLoop(PlanState *pstate)
 			{
 				ENL1_printf("no outer tuple, ending join");
 				return NULL;
+			} else {
+				elog(INFO, "outerPlan->state->matchCount: %d", outerPlan->state->tupMatchCount);
+				elog(INFO,"Resetting Tuple Match Count");
+			 	outerPlan->state->tupMatchCount=0;
 			}
 
 			ENL1_printf("saving new outer tuple information");
@@ -274,7 +278,10 @@ ExecNestLoop(PlanState *pstate)
 				 * slot containing the result tuple using ExecProject().
 				 */
 				ENL1_printf("qualification succeeded, projecting tuple");
-
+				outerPlan->state->tupMatchCount+=1;
+				if (outerPlan->state->tupMatchCount >= 5){
+					node->nl_NeedNewOuter = true;
+				}
 				return ExecProject(node->js.ps.ps_ProjInfo);
 			}
 			else

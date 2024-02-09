@@ -578,6 +578,10 @@ typedef struct EState
 	int			es_jit_flags;
 	struct JitContext *es_jit;
 	struct JitInstrumentation *es_jit_worker_instr;
+
+	unsigned int tupMatchCount;
+    unsigned int flag1;
+	
 } EState;
 
 
@@ -912,12 +916,20 @@ typedef TupleTableSlot *(*ExecProcNodeMtd) (struct PlanState *pstate);
  * abstract superclass for all PlanState-type nodes.
  * ----------------
  */
+
+typedef struct DummyBanditState 
+{
+    unsigned int tupMatchCount;
+    unsigned int flag1;
+}DummyBanditState;
+
 typedef struct PlanState
 {
 	//bha-add
-	// int matchCount;
-	// unsigned int flag1;
+	// struct DummyBanditState *banditState;
 	//bha-end
+	
+
 	NodeTag		type;
 
 	Plan	   *plan;			/* associated Plan node */
