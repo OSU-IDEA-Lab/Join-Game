@@ -471,8 +471,22 @@ typedef struct ResultRelInfo
  * Master working state for an Executor invocation
  * ----------------
  */
-typedef struct EState
+
+
+typedef struct OSLBanditState 
 {
+    unsigned int tupMatchCount;
+
+    bool leftTableInitialized;
+    unsigned int leftTableTupleCount;
+
+    bool rightTableInitialized;
+    unsigned int rightTableTupleCount;
+	
+} OSLBanditState;
+
+typedef struct EState
+{	
 	NodeTag		type;
 
 	/* Basic state for all query types: */
@@ -578,6 +592,14 @@ typedef struct EState
 	int			es_jit_flags;
 	struct JitContext *es_jit;
 	struct JitInstrumentation *es_jit_worker_instr;
+
+	unsigned int oslBnd8TupMatchCount;
+
+    bool oslBnd8LeftTableInitialized;
+    unsigned int oslBnd8LeftTableTupleCount;
+
+    bool oslBnd8RightTableInitialized;
+    unsigned int oslBnd8RightTableTupleCount;
 
 } EState;
 

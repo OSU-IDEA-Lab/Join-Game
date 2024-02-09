@@ -827,6 +827,17 @@ InitPlan(QueryDesc *queryDesc, int eflags)
 	estate->es_plannedstmt = plannedstmt;
 
 	/*
+	* Initialize the execution states Bandit vars 
+	*/
+	estate->oslBnd8TupMatchCount = 0;
+	estate->oslBnd8LeftTableInitialized = false;
+	estate->oslBnd8LeftTableTupleCount = 0;
+
+	estate->oslBnd8RightTableInitialized = false;
+	estate->oslBnd8RightTableTupleCount = 0;
+	
+
+	/*
 	 * initialize result relation stuff, and open/lock the result rels.
 	 *
 	 * We must do this before initializing the plan tree, else we might try to

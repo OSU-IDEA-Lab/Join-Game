@@ -102,6 +102,61 @@ ExecNestLoop(PlanState *pstate)
 	 * qualifying join tuple.
 	 */
 	ENL1_printf("entering main loop");
+	
+	if (!outerPlan->state->oslBnd8LeftTableInitialized) {
+		elog(INFO, "");
+		elog(INFO, "----------------------------------------");
+		elog(INFO, "Initialization False for outer tuple table, curr_count: %u", outerPlan->state->oslBnd8LeftTableTupleCount);
+		elog(INFO, "outerPlan->state->oslBnd8LeftTableInitialized: %s", outerPlan->state->oslBnd8LeftTableInitialized ? "true" : "false");
+
+		for (;;) {
+			outerTupleSlot = ExecProcNode(outerPlan);
+			if (TupIsNull(outerTupleSlot)) {
+				break;
+			}
+			outerPlan->state->oslBnd8LeftTableTupleCount++;
+			if (outerPlan->state->oslBnd8LeftTableTupleCount >= 10) {
+				break;
+			}
+		}
+		ENL1_printf("rescanning outer plan");
+		ExecReScan(outerPlan);
+		outerPlan->state->oslBnd8LeftTableInitialized = true;
+
+		elog(INFO, "Initialization Complete for outer tuple table, curr_count: %u", outerPlan->state->oslBnd8LeftTableTupleCount);
+		elog(INFO, "outerPlan->state->oslBnd8LeftTableInitialized: %s", outerPlan->state->oslBnd8LeftTableInitialized ? "true" : "false");
+		elog(INFO, "----------------------------------------");
+		elog(INFO, "");
+	}
+
+
+	// elog(INFO, "outerPlan->state->oslBnd8RightTableInitialized: %s", outerPlan->state->oslBnd8RightTableInitialized ? "true" : "false")
+	if (!outerPlan->state->oslBnd8RightTableInitialized) {
+		elog(INFO, "");
+		elog(INFO, "----------------------------------------");
+		elog(INFO, "Initalization False for inner tuple table, curr_count: %u", outerPlan->state->oslBnd8RightTableTupleCount);
+		elog(INFO, "outerPlan->state->oslBnd8RightTableInitialized: %s", outerPlan->state->oslBnd8RightTableInitialized ? "true" : "false");
+
+		for (;;) {
+			innerTupleSlot = ExecProcNode(innerPlan);
+			if (TupIsNull(innerTupleSlot)) {
+				break;
+			}
+			outerPlan->state->oslBnd8RightTableTupleCount++;
+			if (outerPlan->state->oslBnd8RightTableTupleCount >= 10) {
+				break;
+			}
+		}
+		ENL1_printf("rescanning inner plan");
+		ExecReScan(innerPlan);
+		outerPlan->state->oslBnd8RightTableInitialized = true;
+		elog(INFO, "Initalization Complete for inner tuple table, curr_count: %u", outerPlan->state->oslBnd8RightTableTupleCount);
+		elog(INFO, "outerPlan->state->oslBnd8RightTableInitialized: %s", outerPlan->state->oslBnd8RightTableInitialized ? "true" : "false");
+		elog(INFO, "----------------------------------------");
+		elog(INFO, "");
+	}
+	// elog(INFO, "outerPlan->state->oslBnd8RightTableInitialized: %s", outerPlan->state->oslBnd8RightTableInitialized ? "true" : "false")
+
 
 	for (;;)
 	{
