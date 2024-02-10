@@ -472,19 +472,6 @@ typedef struct ResultRelInfo
  * ----------------
  */
 
-
-typedef struct OSLBanditState 
-{
-    unsigned int tupMatchCount;
-
-    bool leftTableInitialized;
-    unsigned int leftTableTupleCount;
-
-    bool rightTableInitialized;
-    unsigned int rightTableTupleCount;
-	
-} OSLBanditState;
-
 #define BANDIT_TMP_TABLE_SIZE 4096
 typedef struct EState
 {	
@@ -594,15 +581,33 @@ typedef struct EState
 	struct JitContext *es_jit;
 	struct JitInstrumentation *es_jit_worker_instr;
 
-	unsigned int oslBnd8TupMatchCount;
+
+	TupleTableSlot* oslBnd8TmpTupleTable[1];
+
+	bool oslBnd8InExplorationPhase;
+	bool oslBnd8InExploitationPhase;
 
     bool oslBnd8LeftTableInitialized;
+	bool oslBnd8LeftTableParsedFully;
 	TupleTableSlot* oslBnd8LeftTableTuples[BANDIT_TMP_TABLE_SIZE];
-    unsigned int oslBnd8LeftTableTupleCount;
-
-    bool oslBnd8RightTableInitialized;
+    unsigned int oslBnd8LeftTupTableHead;
+	
+	bool oslBnd8RightTableInitialized;
 	TupleTableSlot* oslBnd8RightTableTuples[BANDIT_TMP_TABLE_SIZE];
-    unsigned int oslBnd8RightTableTupleCount;
+    unsigned int oslBnd8RightTupTableHead;
+
+    unsigned int oslBnd8CurrLeftTableTupleIdxForInnerLoop;
+	unsigned int oslBnd8LeftTableRewards[BANDIT_TMP_TABLE_SIZE];
+	unsigned int oslBnd8RightTableRewards[BANDIT_TMP_TABLE_SIZE];
+
+	unsigned int oslBnd8ToExploreTupleIdxs[BANDIT_TMP_TABLE_SIZE];
+	unsigned int oslBnd8ToExploreTupleIdxsHead;
+	unsigned int oslBnd8ToExploitTupleIdxs[BANDIT_TMP_TABLE_SIZE];
+	unsigned int oslBnd8ToExploitTupleIdxsHead;
+
+	unsigned int oslBnd8CurrNumFailure;
+	unsigned int oslBnd8CurrNumSuccess;
+
 
 } EState;
 
