@@ -66,6 +66,29 @@
 #define BND8_LEFT_TABLE_SIZE 2
 #define BND8_FAILURE_CONSTANT_N 20
 
+int 
+findThenMoveMaxRewardIndexToHead(unsigned int *rewards, unsigned int *indices, unsigned int indices_head) {
+    
+	int maxIndex = indices[0];
+    int maxReward = rewards[maxIndex];
+	int maxIndexPos = 0;
+
+    for (int i = 1; i < indices_head; i++) {
+        if (rewards[indices[i]] > maxReward) {
+            maxReward = rewards[indices[i]];
+            maxIndex = indices[i];
+			maxIndexPos = i;
+        }
+    }
+
+	// Swap the elements at the head and at maxIndexPos
+    if (maxIndexPos != 0) {
+        int temp = indices[indices_head-1];
+        indices[indices_head-1] = indices[maxIndexPos];
+        indices[maxIndexPos] = temp;
+    }
+}
+
 static TupleTableSlot *
 ExecNestLoop(PlanState *pstate)
 {
@@ -217,6 +240,9 @@ ExecNestLoop(PlanState *pstate)
 				if (outerPlan->state->oslBnd8ToExploitTupleIdxsHead > 0){
 					// setup for exploitaiton 
 					// Find Max reward tuple and pop it out of the tuple table. 
+					findThenMoveMaxRewardIndexToHead(outerPlan->state->oslBnd8LeftTableRewards, 
+													outerPlan->state->oslBnd8ToExploitTupleIdxs, 
+													outerPlan->state->oslBnd8ToExploitTupleIdxsHead);
 					// Sort the outerPlan->state->oslBnd8ToExploitTupleIdxs such that the head has max reward tuple idx; [Ascending order]
 					// pop the most rewarding tuple
 					outerPlan->state->oslBnd8ToExploitTupleIdxsHead--;
