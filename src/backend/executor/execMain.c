@@ -802,7 +802,7 @@ ExecCheckXactReadOnly(PlannedStmt *plannedstmt)
  *		and start up the rule manager
  * ----------------------------------------------------------------
  */
-#define BANDIT_TMP_TABLE_SIZE 4096
+#define BANDIT_TMP_TABLE_SIZE 10000
 static void
 InitPlan(QueryDesc *queryDesc, int eflags)
 {
@@ -826,41 +826,6 @@ InitPlan(QueryDesc *queryDesc, int eflags)
 	 */
 	estate->es_range_table = rangeTable;
 	estate->es_plannedstmt = plannedstmt;
-
-	/*
-	* Initialize the execution states Bandit vars 
-	*/
-
-	estate->oslBnd8LeftTableParsedFully = false;
-
-	estate->oslBnd8InExplorationPhase = true;
-	estate->oslBnd8InExploitationPhase = false;
-
-	estate->oslBnd8LeftTableInitialized = false;
-	estate->oslBnd8LeftTupTableHead = 0;
-
-	estate->oslBnd8RightTableInitialized = false;
-	estate->oslBnd8RightTupTableHead = 0;
-
-	estate->oslBnd8ToExploreTupleIdxsHead = 0;
-	estate->oslBnd8ToExploitTupleIdxsHead = 0;
-	estate->oslBnd8CurrNumFailure = 0;
-
-	estate->oslBnd8ExploreCount = 0;
-	estate->oslBnd8ExploitCount = 0;
-
-	elog(INFO, "InitPlan Initialization called");
-
-	
-	// Initialize left table rewards
-	for (int i = 0; i < BANDIT_TMP_TABLE_SIZE; i++) {
-		estate->oslBnd8LeftTableRewards[i] = 0;
-	}
-
-	// Initialize right table rewards
-	for (int i = 0; i < BANDIT_TMP_TABLE_SIZE; i++) {
-		estate->oslBnd8RightTableRewards[i] = 0;
-	}
 
 	/*
 	 * initialize result relation stuff, and open/lock the result rels.

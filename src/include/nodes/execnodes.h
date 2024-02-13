@@ -581,36 +581,6 @@ typedef struct EState
 	struct JitContext *es_jit;
 	struct JitInstrumentation *es_jit_worker_instr;
 
-
-	TupleTableSlot* oslBnd8TmpTupleTable[1];
-
-	bool oslBnd8InExplorationPhase;
-	bool oslBnd8InExploitationPhase;
-
-    bool oslBnd8LeftTableInitialized;
-	bool oslBnd8LeftTableParsedFully;
-	TupleTableSlot* oslBnd8LeftTableTuples[BANDIT_TMP_TABLE_SIZE];
-    unsigned int oslBnd8LeftTupTableHead;
-	
-	bool oslBnd8RightTableInitialized;
-	TupleTableSlot* oslBnd8RightTableTuples[BANDIT_TMP_TABLE_SIZE];
-    unsigned int oslBnd8RightTupTableHead;
-
-    unsigned int oslBnd8CurrLeftTableTupleIdxForInnerLoop;
-	unsigned int oslBnd8LeftTableRewards[BANDIT_TMP_TABLE_SIZE];
-	unsigned int oslBnd8RightTableRewards[BANDIT_TMP_TABLE_SIZE];
-
-	unsigned int oslBnd8ToExploreTupleIdxs[BANDIT_TMP_TABLE_SIZE];
-	unsigned int oslBnd8ToExploreTupleIdxsHead;
-	unsigned int oslBnd8ToExploitTupleIdxs[BANDIT_TMP_TABLE_SIZE];
-	unsigned int oslBnd8ToExploitTupleIdxsHead;
-
-	unsigned int oslBnd8CurrNumFailure;
-	unsigned int oslBnd8CurrNumSuccess;
-
-	unsigned int oslBnd8ExploreCount;
-	unsigned int oslBnd8ExploitCount;
-
 	
 } EState;
 
@@ -1005,6 +975,35 @@ typedef struct PlanState
 	 * descriptor, without encoding knowledge about all executor nodes.
 	 */
 	TupleDesc	scandesc;
+
+
+
+
+	TupleTableSlot* oslBnd8TmpTupleTable[1];
+
+	bool oslBnd8InExplorationPhase;
+	bool oslBnd8InExploitationPhase;
+
+    bool oslBnd8LeftTableInitialized;
+	bool oslBnd8LeftTableParsedFully;
+	TupleTableSlot* oslBnd8LeftTableTuples[BANDIT_TMP_TABLE_SIZE];
+    unsigned int oslBnd8LeftTupTableHead;
+	
+	bool oslBnd8RightTableInitialized;
+	TupleTableSlot* oslBnd8RightTableTuples[BANDIT_TMP_TABLE_SIZE];
+    unsigned int oslBnd8RightTupTableHead;
+
+    unsigned int oslBnd8CurrLeftTableTupleIdxForInnerLoop;
+	unsigned int oslBnd8LeftTableRewards[BANDIT_TMP_TABLE_SIZE];
+	unsigned int oslBnd8RightTableRewards[BANDIT_TMP_TABLE_SIZE];
+
+	unsigned int oslBnd8ToExploreTupleIdxs[BANDIT_TMP_TABLE_SIZE];
+	unsigned int oslBnd8ToExploreTupleIdxsHead;
+	unsigned int oslBnd8ToExploitTupleIdxs[BANDIT_TMP_TABLE_SIZE];
+	unsigned int oslBnd8ToExploitTupleIdxsHead;
+
+	unsigned int oslBnd8CurrNumFailure;
+	unsigned int oslBnd8CurrNumSuccess;
 
 	unsigned int oslBnd8exlporedTupCount;
 	unsigned int oslBnd8exploitedTupCount;
