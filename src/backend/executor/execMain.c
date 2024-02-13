@@ -846,6 +846,11 @@ InitPlan(QueryDesc *queryDesc, int eflags)
 	estate->oslBnd8ToExploitTupleIdxsHead = 0;
 	estate->oslBnd8CurrNumFailure = 0;
 
+	estate->oslBnd8ExploreCount = 0;
+	estate->oslBnd8ExploitCount = 0;
+
+	elog(INFO, "InitPlan Initialization called");
+
 	
 	// Initialize left table rewards
 	for (int i = 0; i < BANDIT_TMP_TABLE_SIZE; i++) {

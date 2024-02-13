@@ -472,7 +472,7 @@ typedef struct ResultRelInfo
  * ----------------
  */
 
-#define BANDIT_TMP_TABLE_SIZE 4096
+#define BANDIT_TMP_TABLE_SIZE 10000
 typedef struct EState
 {	
 	NodeTag		type;
@@ -608,7 +608,10 @@ typedef struct EState
 	unsigned int oslBnd8CurrNumFailure;
 	unsigned int oslBnd8CurrNumSuccess;
 
+	unsigned int oslBnd8ExploreCount;
+	unsigned int oslBnd8ExploitCount;
 
+	
 } EState;
 
 
@@ -1002,6 +1005,9 @@ typedef struct PlanState
 	 * descriptor, without encoding knowledge about all executor nodes.
 	 */
 	TupleDesc	scandesc;
+
+	unsigned int oslBnd8exlporedTupCount;
+	unsigned int oslBnd8exploitedTupCount;
 } PlanState;
 
 /* ----------------
