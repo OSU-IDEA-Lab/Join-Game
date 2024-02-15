@@ -65,6 +65,7 @@
 #define BND8_RIGHT_TABLE_SIZE 110
 #define BND8_LEFT_TABLE_SIZE 3
 #define BND8_FAILURE_CONSTANT_N 20
+#define BND8_INCLUDE_EXPLORE_IN_RESULTS 0
 
 void
 findThenMoveMaxRewardIndexToHead(unsigned int *rewards, unsigned int *indices, unsigned int indices_head) {
@@ -483,7 +484,8 @@ ExecNestLoop(PlanState *pstate)
 
 				if (!outerPlan->oslBnd8InExploitationPhase & outerPlan->oslBnd8InExplorationPhase){
 					outerPlan->oslBnd8LeftTableRewards[outerPlan->oslBnd8CurrLeftTableTupleIdxForInnerLoop] = outerPlan->oslBnd8CurrNumSuccess;
-					InstrCountFiltered2(node, 1);
+					if (BND8_INCLUDE_EXPLORE_IN_RESULTS){ return ExecProject(node->js.ps.ps_ProjInfo);}
+					else {InstrCountFiltered2(node, 1);}
 				}
 				else{
 					return ExecProject(node->js.ps.ps_ProjInfo);
