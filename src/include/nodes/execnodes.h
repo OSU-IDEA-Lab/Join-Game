@@ -38,7 +38,9 @@ struct ExprState;
 struct ExprContext;
 struct ExprEvalStep;			/* avoid including execExpr.h everywhere */
 
-
+/*
+Implicit Co-learning (ICL)
+*/
 /* ----------------
  *		ExprState node
  *
@@ -1709,12 +1711,42 @@ typedef struct JoinState
  * ----------------
  */
 
-#define PAGE_SIZE 32
+#define PAGE_SIZE 320  //16000//1568000
+
+#define N_FAILURE 10
+#define N_FAILURE_INNER 10
+
 typedef struct RelationPage {
-	TupleTableSlot* tuples[PAGE_SIZE]; 
+	TupleTableSlot* tuples[PAGE_SIZE];
 	int index;
 	int tupleCount;
 } RelationPage;
+
+struct tupleRewards {
+    int reward;
+    int size;
+	int page_id;
+	int explore_counter;
+	int fromInner;
+	int toInner;
+    HeapTupleData tuples[PAGE_SIZE];
+};
+
+
+struct tuplePages {
+	HeapTupleData tuples[PAGE_SIZE];
+	int page_id;
+	int size;
+};
+
+struct pageInfoS{
+	int page_id;
+	int reward;
+	int explore_counter;
+	int failure_counter;
+	int size;
+	HeapTupleData tuples[PAGE_SIZE];
+};
 
 typedef struct NestLoopState
 {
@@ -1722,7 +1754,8 @@ typedef struct NestLoopState
 	bool		nl_NeedNewOuter;
 	bool		nl_MatchedOuter;
 	TupleTableSlot *nl_NullInnerTupleSlot;
-
+    ScanState*  ss;
+	ScanState* ss_in;
 
 	int activeRelationPages;
 	RelationPage *outerPage;
@@ -1734,7 +1767,8 @@ typedef struct NestLoopState
 	long innerPageNumber;
 	long outerPageNumber;
 	int sqrtOfInnerPages;
-	
+	int sqrtOfOuterPages;
+
 	bool needOuterPage;
 	bool needInnerPage;
 	int exploreStepCounter;
@@ -1750,14 +1784,78 @@ typedef struct NestLoopState
 	int generatedJoins;
 	int rescanCount;
 
+    struct tupleRewards* tidRewards;
+
+	//below items are added for ICL and OSLO
+	struct tuplePages* innerRelStorage; 
+	int innerStorageSize; 
+	int innerStorageInd; 
+	int innerPageStorageInd; 
+	int innerPageInStore; 
+	int innerStorageAccess;
+
+	struct tuplePages* outerRelStorage; 
+	int outerStorageInd; 
+	int outerStorageSize;
+	int outerPageInStore; 
+	
+	int outerExploreInd; 
+	int innerExpBeginCand; 
+	int accOutToExploitInd; 
+	bool anotherInnerToExploit; 
+	
+	bool groupExploitation;
+	int groupExploitCounter; 
+	bool groupJoinDone; 
+	bool firstEverExplore;
+	bool justDoneInnerExploit; 
+	bool justDoneOuterExploit; 
+
+	int innerPageReadCounter; 
+	int innerRescanCount; 
+	int outerRescanCount; 
+	int outerPageCounterTotal; 
+
+	struct pageInfoS* exploreBuffer; 
+	int exploreBufferIndex;
+	int exploreBufferSize; 
+	int maxExplorePageIdS;
+	int tillNowExploredInner;
+
+	struct pageInfoS* exploitBuffer; 
+	int exploitBufferIndex; 
+	int exploitBufferSize; 
+
+	int exploitedInnerPageSize; 
+	int* exploitedInnerPages; 
+	int exploitedInnerIndex; 
+	
+	int* trackOuterPages; 
+	
+	int availableSlot; 
+	int availableSlotExploit; 
+
+	bool outerPageFullJoin; 
+	bool innerPageFullJoin; 
+
+	int bestIPExploitIndex; 
+	int bestOuterPageIndex; 
+	int skipInnerPagesFrom; 
+	int skipInnerPagesTo; 
+	int nextInnerToStartExplore; 
+	
 	int* xids; //TODO these could be heaps to improve time
 	int* rewards;
+	//int* rewardsForS; //summit 
+	//int* page_id_S; 
 	int pageIndex;
 	int lastPageIndex;
 	ScanKey xidScanKey;
+	/* bha - add */
+	int nFailure;
+	/* bha - end */
 
-	List** pageIdJoinIdLists;
-
+//	List** pageIdJoinIdLists;	//mx
 } NestLoopState;
 
 /* ----------------
