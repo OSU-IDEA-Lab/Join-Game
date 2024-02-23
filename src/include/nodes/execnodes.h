@@ -472,7 +472,6 @@ typedef struct ResultRelInfo
  * ----------------
  */
 
-#define BANDIT_TMP_TABLE_SIZE 10000
 typedef struct EState
 {	
 	NodeTag		type;
@@ -923,6 +922,9 @@ typedef struct DummyBanditState
     unsigned int flag1;
 }DummyBanditState;
 
+#define BANDIT_LEFT_TMP_TABLE_SIZE 4096
+#define BANDIT_RIGHT_TMP_TABLE_SIZE 10000
+
 typedef struct PlanState
 {
 	
@@ -977,29 +979,37 @@ typedef struct PlanState
 	TupleDesc	scandesc;
 
 
+	/*
+	 * Bandit Variables 
+	 */
 
-
+	/* Temporary Variables for Working Memory of Algorithm*/
 	TupleTableSlot* oslBnd8TmpTupleTable[1];
+    unsigned int oslBnd8CurrLeftTableTupleIdxForInnerLoop;
 
+
+	/* Flags for Tracking Exploration and Exploitation */
 	bool oslBnd8InExplorationPhase;
 	bool oslBnd8InExploitationPhase;
-
+	
+	/* Left Table and Trackers */
     bool oslBnd8LeftTableInitialized;
 	bool oslBnd8LeftTableParsedFully;
-	TupleTableSlot* oslBnd8LeftTableTuples[BANDIT_TMP_TABLE_SIZE];
+	TupleTableSlot* oslBnd8LeftTableTuples[BANDIT_LEFT_TMP_TABLE_SIZE];
+	unsigned int oslBnd8LeftTableRewards[BANDIT_LEFT_TMP_TABLE_SIZE];
     unsigned int oslBnd8LeftTupTableHead;
 	
+	/* Right Table and Trackers */
 	bool oslBnd8RightTableInitialized;
-	TupleTableSlot* oslBnd8RightTableTuples[BANDIT_TMP_TABLE_SIZE];
+	TupleTableSlot* oslBnd8RightTableTuples[BANDIT_RIGHT_TMP_TABLE_SIZE];
+	unsigned int oslBnd8RightTableRewards[BANDIT_RIGHT_TMP_TABLE_SIZE];
     unsigned int oslBnd8RightTupTableHead;
 
-    unsigned int oslBnd8CurrLeftTableTupleIdxForInnerLoop;
-	unsigned int oslBnd8LeftTableRewards[BANDIT_TMP_TABLE_SIZE];
-	unsigned int oslBnd8RightTableRewards[BANDIT_TMP_TABLE_SIZE];
 
-	unsigned int oslBnd8ToExploreTupleIdxs[BANDIT_TMP_TABLE_SIZE];
+	/* Explore Exploit Managers */
+	unsigned int oslBnd8ToExploreTupleIdxs[BANDIT_LEFT_TMP_TABLE_SIZE];
 	unsigned int oslBnd8ToExploreTupleIdxsHead;
-	unsigned int oslBnd8ToExploitTupleIdxs[BANDIT_TMP_TABLE_SIZE];
+	unsigned int oslBnd8ToExploitTupleIdxs[BANDIT_LEFT_TMP_TABLE_SIZE];
 	unsigned int oslBnd8ToExploitTupleIdxsHead;
 
 	unsigned int oslBnd8CurrNumFailure;

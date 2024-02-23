@@ -64,11 +64,12 @@
 
 #define BND8_RIGHT_TABLE_SIZE 110
 #define BND8_LEFT_TABLE_SIZE 3
+#define BND8_INIT_EXPLORE_THRESHOLD 5
 #define BND8_FAILURE_CONSTANT_N 20
 #define BND8_INCLUDE_EXPLORE_IN_RESULTS 0
 
 void
-findThenMoveMaxRewardIndexToHead(unsigned int *rewards, unsigned int *indices, unsigned int indices_head) {
+findMaxRewardIndexThenMoveToHead(unsigned int *rewards, unsigned int *indices, unsigned int indices_head) {
     
 	int maxIndex = indices[0];
     int maxReward = rewards[maxIndex];
@@ -88,6 +89,23 @@ findThenMoveMaxRewardIndexToHead(unsigned int *rewards, unsigned int *indices, u
         indices[indices_head-1] = indices[maxIndexPos];
         indices[maxIndexPos] = temp;
     }
+}
+
+int 
+findNoExploitIdx(unsigned int *rewards, unsigned int *indices, unsigned int indices_head){
+	unsigned int minIndex = indices[indices_head-1];
+    int minReward = rewards[minIndex];
+
+    for (int i = indices_head-1; i >= 0; i--) {
+        if (rewards[indices[i]] == 0) {
+            return indices[i];
+        }
+		if (rewards[indices[i]] < minReward) {
+            minReward = rewards[indices[i]];
+            minIndex = indices[i];
+        }
+    }
+	return minIndex;
 }
 
 static TupleTableSlot *
@@ -180,6 +198,7 @@ ExecNestLoop(PlanState *pstate)
 		// elog(INFO, "outerPlan->oslBnd8LeftTableInitialized: %s", outerPlan->oslBnd8LeftTableInitialized ? "true" : "false");
 		
 		// PreFill Initialize necessary variables 
+		outerPlan->oslBnd8LeftTableParsedFully=false;
 		outerPlan->oslBnd8LeftTupTableHead = 0;
 		outerPlan->oslBnd8ToExploreTupleIdxsHead = 0;
 		outerPlan->oslBnd8ToExploitTupleIdxsHead = 0;
@@ -234,7 +253,7 @@ ExecNestLoop(PlanState *pstate)
 		 */
 		if (node->nl_NeedNewOuter)
 		{	
-			if (outerPlan->oslBnd8ToExploitTupleIdxsHead == 0 & outerPlan->oslBnd8LeftTableParsedFully ){
+			if (outerPlan->oslBnd8ToExploitTupleIdxsHead == 0 & outerPlan->oslBnd8ToExploreTupleIdxsHead == 0  & outerPlan->oslBnd8LeftTableParsedFully ){
 				ENL1_printf("no outer tuple, ending join");
 				elog(INFO, "");
 				elog(INFO, "No outer tuple left to exploit, ending join");
@@ -252,6 +271,9 @@ ExecNestLoop(PlanState *pstate)
 				// elog(INFO, "\n Peeked top outer tuple for Exploration, at index : %d", toExploreLeftTableIndx);
 				outerTupleSlot = outerPlan->oslBnd8TmpTupleTable[0];
 
+				// update rewards for to explore tuple
+				outerPlan->oslBnd8LeftTableRewards[toExploreLeftTableIndx] = 0;
+
 				// setup for exploration
 				outerPlan->oslBnd8InExplorationPhase = true;
 				outerPlan->oslBnd8InExploitationPhase = false;
@@ -260,12 +282,38 @@ ExecNestLoop(PlanState *pstate)
 				outerPlan->oslBnd8CurrNumFailure = 0;
 				outerPlan->oslBnd8CurrLeftTableTupleIdxForInnerLoop = toExploreLeftTableIndx;
 				outerPlan->oslBnd8exlporedTupCount++;
+
+				// outerPlan->oslBnd8ToExploreTupleIdxsHead == 0 ; This means that the last to explore tuple is being explored now
+				// !outerPlan->oslBnd8LeftTableParsedFully ; Means there are still tuples to be read in left table. 
+				// outerPlan->oslBnd8exlporedTupCount < BND8_INIT_EXPLORE_THRESHOLD; Means that total number of explored tuples is not big yet. 
+				if (outerPlan->oslBnd8ToExploreTupleIdxsHead == 0 & !outerPlan->oslBnd8LeftTableParsedFully & outerPlan->oslBnd8exlporedTupCount < BND8_INIT_EXPLORE_THRESHOLD){
+					tmpTupleSlot = ExecProcNode(outerPlan);
+					
+					if (TupIsNull(tmpTupleSlot)){
+						// elog(INFO, "\n Not pushing anything new to exploit, curr oslBnd8ToExploitTupleIdxsHead %d", outerPlan->oslBnd8ToExploitTupleIdxsHead);
+						outerPlan->oslBnd8LeftTableParsedFully = true;
+					}
+					else{
+						int toNotExploitLeftTableIndx = findNoExploitIdx(outerPlan->oslBnd8LeftTableRewards, 
+																		outerPlan->oslBnd8ToExploitTupleIdxs, 
+																		outerPlan->oslBnd8ToExploitTupleIdxsHead);
+						// Add the tuple to the list
+						outerPlan->oslBnd8LeftTableTuples[toNotExploitLeftTableIndx] = MakeSingleTupleTableSlot(tmpTupleSlot->tts_tupleDescriptor);
+						ExecCopySlot(outerPlan->oslBnd8LeftTableTuples[toNotExploitLeftTableIndx], tmpTupleSlot);
+
+						// update the to explore tuple idxs
+						outerPlan->oslBnd8ToExploreTupleIdxs[outerPlan->oslBnd8ToExploreTupleIdxsHead] = toNotExploitLeftTableIndx;
+						outerPlan->oslBnd8ToExploreTupleIdxsHead++;
+						// outerPlan->oslBnd8LeftTupTableHead now contains the new exploration tuple 
+					}
+				}
+
 			}
 			else{
 				if (outerPlan->oslBnd8ToExploitTupleIdxsHead > 0){
 					// setup for exploitaiton 
 					// Find Max reward tuple and pop it out of the tuple table. 
-					findThenMoveMaxRewardIndexToHead(outerPlan->oslBnd8LeftTableRewards, 
+					findMaxRewardIndexThenMoveToHead(outerPlan->oslBnd8LeftTableRewards, 
 													outerPlan->oslBnd8ToExploitTupleIdxs, 
 													outerPlan->oslBnd8ToExploitTupleIdxsHead);
 					// Sort the outerPlan->oslBnd8ToExploitTupleIdxs such that the head has max reward tuple idx; [Ascending order]
