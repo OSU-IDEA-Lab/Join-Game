@@ -171,7 +171,9 @@ ExecNestLoop(PlanState *pstate)
 			}
 
 			// Add the tuple to the list
+			if (TupIsNull(outerPlan->oslBnd8RightTableTuples[outerPlan->oslBnd8RightTupTableHead])) {
 			outerPlan->oslBnd8RightTableTuples[outerPlan->oslBnd8RightTupTableHead] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
+			}
 			ExecCopySlot(outerPlan->oslBnd8RightTableTuples[outerPlan->oslBnd8RightTupTableHead], innerTupleSlot);
 			outerPlan->oslBnd8RightTupTableHead++;
 			// elog(INFO, "Initialization Ongoing for inner tuple table, Current oslBnd8RightTupTableHead: %u", outerPlan->oslBnd8RightTupTableHead);
@@ -219,7 +221,9 @@ ExecNestLoop(PlanState *pstate)
 			}
 
 			// Add the tuple to the list
+			if (TupIsNull(outerPlan->oslBnd8LeftTableTuples[outerPlan->oslBnd8LeftTupTableHead])) {
 			outerPlan->oslBnd8LeftTableTuples[outerPlan->oslBnd8LeftTupTableHead] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+			}
 			ExecCopySlot(outerPlan->oslBnd8LeftTableTuples[outerPlan->oslBnd8LeftTupTableHead], outerTupleSlot);
 			outerPlan->oslBnd8LeftTableRewards[outerPlan->oslBnd8LeftTupTableHead] = 0;
 
@@ -266,7 +270,9 @@ ExecNestLoop(PlanState *pstate)
 				outerPlan->oslBnd8ToExploreTupleIdxsHead--;
 				int toExploreLeftTableIndx = outerPlan->oslBnd8ToExploreTupleIdxs[outerPlan->oslBnd8ToExploreTupleIdxsHead];
 				outerTupleSlot = outerPlan->oslBnd8LeftTableTuples[toExploreLeftTableIndx];
+				if (TupIsNull(outerPlan->oslBnd8TmpTupleTable[0])) {
 				outerPlan->oslBnd8TmpTupleTable[0] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+				}
 				ExecCopySlot(outerPlan->oslBnd8TmpTupleTable[0], outerTupleSlot);
 				// elog(INFO, "\n Peeked top outer tuple for Exploration, at index : %d", toExploreLeftTableIndx);
 				outerTupleSlot = outerPlan->oslBnd8TmpTupleTable[0];
@@ -298,7 +304,9 @@ ExecNestLoop(PlanState *pstate)
 																		outerPlan->oslBnd8ToExploitTupleIdxs, 
 																		outerPlan->oslBnd8ToExploitTupleIdxsHead);
 						// Add the tuple to the list
+						if (TupIsNull(outerPlan->oslBnd8LeftTableTuples[toNotExploitLeftTableIndx])) {
 						outerPlan->oslBnd8LeftTableTuples[toNotExploitLeftTableIndx] = MakeSingleTupleTableSlot(tmpTupleSlot->tts_tupleDescriptor);
+						}
 						ExecCopySlot(outerPlan->oslBnd8LeftTableTuples[toNotExploitLeftTableIndx], tmpTupleSlot);
 
 						// update the to explore tuple idxs
@@ -321,7 +329,9 @@ ExecNestLoop(PlanState *pstate)
 					outerPlan->oslBnd8ToExploitTupleIdxsHead--;
 					int toExploitLeftTableIndx = outerPlan->oslBnd8ToExploitTupleIdxs[outerPlan->oslBnd8ToExploitTupleIdxsHead];
 					outerTupleSlot = outerPlan->oslBnd8LeftTableTuples[toExploitLeftTableIndx];
+					if (TupIsNull(outerPlan->oslBnd8TmpTupleTable[0])) {
 					outerPlan->oslBnd8TmpTupleTable[0] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+					}
 					ExecCopySlot(outerPlan->oslBnd8TmpTupleTable[0], outerTupleSlot);
 					// elog(INFO, "\n Popped top outer tuple for exploitation, at index : %d", toExploitLeftTableIndx);
 					outerTupleSlot = outerPlan->oslBnd8TmpTupleTable[0];
@@ -345,7 +355,9 @@ ExecNestLoop(PlanState *pstate)
 						}
 						else{
 							// Add the tuple to the list
+							if (TupIsNull(outerPlan->oslBnd8LeftTableTuples[toExploitLeftTableIndx])) {
 							outerPlan->oslBnd8LeftTableTuples[toExploitLeftTableIndx] = MakeSingleTupleTableSlot(tmpTupleSlot->tts_tupleDescriptor);
+							}
 							ExecCopySlot(outerPlan->oslBnd8LeftTableTuples[toExploitLeftTableIndx], tmpTupleSlot);
 							// outerPlan->oslBnd8LeftTupTableHead now contains the new exploration tuple 
 
@@ -683,6 +695,29 @@ ExecEndNestLoop(NestLoopState *node)
 	/*
 	 * close down subplans
 	 */
+	PlanState  *outerPlan;
+	outerPlan = outerPlanState(node);
+	
+	// Free up the Memory
+	int i;
+	for (i = 0; i < BND8_RIGHT_TABLE_SIZE; i++) {
+		if (!TupIsNull(outerPlan->oslBnd8RightTableTuples[i])) {
+			ExecDropSingleTupleTableSlot(outerPlan->oslBnd8RightTableTuples[i]);
+			outerPlan->oslBnd8RightTableTuples[i] = NULL;
+		}
+	}
+	for (i = 0; i < BND8_LEFT_TABLE_SIZE; i++) {
+		if (!TupIsNull(outerPlan->oslBnd8LeftTableTuples[i])) {
+			ExecDropSingleTupleTableSlot(outerPlan->oslBnd8LeftTableTuples[i]);
+			outerPlan->oslBnd8LeftTableTuples[i] = NULL;
+		}
+	}
+	// Free up the Memory
+	if (!TupIsNull(outerPlan->oslBnd8TmpTupleTable[0])) {
+		ExecDropSingleTupleTableSlot(outerPlan->oslBnd8TmpTupleTable[0]);
+		outerPlan->oslBnd8TmpTupleTable[0] = NULL;
+	}
+
 	ExecEndNode(outerPlanState(node));
 	ExecEndNode(innerPlanState(node));
 
