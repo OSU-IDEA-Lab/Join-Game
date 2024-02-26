@@ -62,7 +62,7 @@
  * ----------------------------------------------------------------
  */
 
-#define PGNST8_LEFT_PAGE_SIZE 3
+#define PGNST8_LEFT_PAGE_SIZE 320
 
 static TupleTableSlot *
 ExecNestLoop(PlanState *pstate)
