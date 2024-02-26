@@ -61,6 +61,9 @@
  *			   are prepared to return the first tuple.
  * ----------------------------------------------------------------
  */
+
+#define PGNST8_LEFT_PAGE_SIZE 3
+
 static TupleTableSlot *
 ExecNestLoop(PlanState *pstate)
 {
@@ -106,15 +109,57 @@ ExecNestLoop(PlanState *pstate)
 	for (;;)
 	{
 		/*
+		* Initalize left Page
+		*/
+		if (outerPlan->nl_needNewOuterPage){
+			outerPlan->pgNst8LeftPageHead = 0;
+			outerPlan->pgNst8LeftPageSize = 0;
+			
+			// Fill Table
+			while (!outerPlan->pgNst8LeftParsedFully & outerPlan->pgNst8LeftPageHead < PGNST8_LEFT_PAGE_SIZE) {
+				outerTupleSlot = ExecProcNode(outerPlan);
+				if (TupIsNull(outerTupleSlot)) { 
+					// elog(INFO, "Finished Parsing left table: %u", outerPlan->pgNst8LeftPageHead);
+					outerPlan->pgNst8LeftParsedFully = true;
+					break;
+				}
+
+				// Allocate Memory if it has not been allocated
+				if (TupIsNull(outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead])) {
+					outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+				}
+
+				// Insert Tuple to Left Page
+				// outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+				ExecCopySlot(outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead], outerTupleSlot);
+				outerPlan->pgNst8LeftPageHead++;
+				outerPlan->pgNst8LeftPageSize++;
+				// elog(INFO, "Tuple inserted in left page, Current pgNst8LeftPageHead: %u", outerPlan->pgNst8LeftPageHead);
+			}
+			outerPlan->nl_needNewOuterPage = false;
+
+			ENL1_printf("rescanning inner plan");
+			// elog(INFO, "rescanning inner plan");
+			ExecReScan(innerPlan);
+		}
+		/*
 		 * If we don't have an outer tuple, get the next one and reset the
 		 * inner scan.
 		 */
 		if (node->nl_NeedNewOuter)
-		{
+		{	
 			ENL1_printf("getting new outer tuple");
-			outerTupleSlot = ExecProcNode(outerPlan);
+			// outerTupleSlot = ExecProcNode(outerPlan);
 
-			
+			/* Scan From Page*/
+			if (outerPlan->pgNst8LeftPageSize ==0){
+				outerTupleSlot = NULL;
+			}
+			else{
+				outerPlan->pgNst8LeftPageHead--;
+				outerTupleSlot = outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead];
+			}
+
 			/*
 			 * if there are no more outer tuples, then the join is complete..
 			 */
@@ -156,8 +201,8 @@ ExecNestLoop(PlanState *pstate)
 			/*
 			 * now rescan the inner plan
 			 */
-			ENL1_printf("rescanning inner plan");
-			ExecReScan(innerPlan);
+			// ENL1_printf("rescanning inner plan");
+			// ExecReScan(innerPlan);
 		}
 
 		/*
@@ -165,14 +210,35 @@ ExecNestLoop(PlanState *pstate)
 		 */
 		ENL1_printf("getting new inner tuple");
 
-		innerTupleSlot = ExecProcNode(innerPlan);
+		node->nl_NeedNewOuter = true;
+		// If this is a fresh left page scan, and get new inner tuple
+		if (outerPlan->pgNst8LeftPageHead == outerPlan->pgNst8LeftPageSize-1){
+			// elog(INFO, "Getting New Inner Tuple for left page head @: %u", outerPlan->pgNst8LeftPageHead);
+			innerTupleSlot = ExecProcNode(innerPlan);
+			// Allocate Memory if it has not been allocated
+			if (TupIsNull(outerPlan->pgNst8_innertuple[0])) {
+				outerPlan->pgNst8_innertuple[0] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
+			}
+			ExecCopySlot(outerPlan->pgNst8_innertuple[0], innerTupleSlot);
+		}
+		else{
+			// elog(INFO, "Using the same Inner Tuple for left page head @: %u", outerPlan->pgNst8LeftPageHead);
+			innerTupleSlot = outerPlan->pgNst8_innertuple[0];
+			// if page end, Loop back Page Head 
+			if (outerPlan->pgNst8LeftPageHead == 0){
+				outerPlan->pgNst8LeftPageHead = outerPlan->pgNst8LeftPageSize;
+			}
+		}
 		econtext->ecxt_innertuple = innerTupleSlot;
+		outerPlan->pgNst8InnerTableParseCount++;
+		// elog(INFO, "pgNst8InnerTableParseCount @: %u", outerPlan->pgNst8InnerTableParseCount);
 
 		if (TupIsNull(innerTupleSlot))
 		{
 			ENL1_printf("no inner tuple, need new outer tuple");
+			// elog(INFO, "no inner tuple, need new outer tuple");
 
-			node->nl_NeedNewOuter = true;
+			outerPlan->nl_needNewOuterPage = true;
 
 			if (!node->nl_MatchedOuter &&
 				(node->js.jointype == JOIN_LEFT ||
@@ -302,6 +368,12 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	 * values.
 	 */
 	outerPlanState(nlstate) = ExecInitNode(outerPlan(node), estate, eflags);
+	// Initialize variables
+	PlanState  *outerPlan;
+	outerPlan = outerPlanState(nlstate);
+	outerPlan->nl_needNewOuterPage = true;
+	outerPlan->pgNst8InnerTableParseCount = 0;
+	outerPlan->pgNst8LeftParsedFully = false;
 	if (node->nestParams == NIL)
 		eflags |= EXEC_FLAG_REWIND;
 	else
@@ -387,6 +459,23 @@ ExecEndNestLoop(NestLoopState *node)
 	/*
 	 * close down subplans
 	 */
+	PlanState  *outerPlan;
+	outerPlan = outerPlanState(node);
+	
+	// Free up the Memory
+	int i;
+	for (i = 0; i < PGNST8_LEFT_PAGE_SIZE; i++) {
+		if (!TupIsNull(outerPlan->pgNst8LeftPage[i])) {
+			ExecDropSingleTupleTableSlot(outerPlan->pgNst8LeftPage[i]);
+			outerPlan->pgNst8LeftPage[i] = NULL;
+		}
+	}
+	// Free up the Memory
+	if (!TupIsNull(outerPlan->pgNst8_innertuple[0])) {
+		ExecDropSingleTupleTableSlot(outerPlan->pgNst8_innertuple[0]);
+		outerPlan->pgNst8_innertuple[0] = NULL;
+	}
+
 	ExecEndNode(outerPlanState(node));
 	ExecEndNode(innerPlanState(node));
 

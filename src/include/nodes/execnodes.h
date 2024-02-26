@@ -920,6 +920,8 @@ typedef struct DummyBanditState
     unsigned int flag1;
 }DummyBanditState;
 
+
+#define PGNST8_LEFT_PAGE_SIZE 4096
 typedef struct PlanState
 {
 	
@@ -972,6 +974,19 @@ typedef struct PlanState
 	 * descriptor, without encoding knowledge about all executor nodes.
 	 */
 	TupleDesc	scandesc;
+
+	/*
+	* Page Nested Loop Variables 
+	*/
+
+	TupleTableSlot* pgNst8LeftPage[PGNST8_LEFT_PAGE_SIZE];
+    unsigned int pgNst8LeftPageHead;
+    unsigned int pgNst8LeftPageSize;
+    unsigned int pgNst8InnerTableParseCount;
+    bool nl_needNewOuterPage;
+	bool pgNst8LeftParsedFully;
+
+	TupleTableSlot *pgNst8_innertuple[1];
 } PlanState;
 
 /* ----------------
