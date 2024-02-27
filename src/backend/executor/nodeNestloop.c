@@ -66,6 +66,7 @@
 #define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 4096
 #define MUST_EXPLORE_TUPLE_COUNT_N 2048
 #define DEBUG_FLAG 0
+#define OSL_FLAG 1
 
 
 void
@@ -413,8 +414,12 @@ ExecNestLoop(PlanState *pstate)
 		* Read new left Page, if new outer page is needed
 		*/
 		if (outerPlan->nl_needNewOuterPage){
-			seedToExploitLeftPage(pstate);
-			// seedNextLeftPage(pstate);
+			if(OSL_FLAG){
+				seedToExploitLeftPage(pstate);
+			}
+			else{
+				seedNextLeftPage(pstate);
+			}
 			outerPlan->nl_needNewOuterPage = false;
 			ExecReScan(innerPlan);
 		}
