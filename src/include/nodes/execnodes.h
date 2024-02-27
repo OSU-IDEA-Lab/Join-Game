@@ -921,7 +921,8 @@ typedef struct DummyBanditState
 }DummyBanditState;
 
 
-#define PGNST8_LEFT_PAGE_SIZE 4096
+#define PGNST8_LEFT_PAGE_MAX_SIZE 4096
+#define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 4096
 typedef struct PlanState
 {
 	
@@ -979,14 +980,25 @@ typedef struct PlanState
 	* Page Nested Loop Variables 
 	*/
 
-	TupleTableSlot* pgNst8LeftPage[PGNST8_LEFT_PAGE_SIZE];
+    bool nl_needNewOuterPage;
+	TupleTableSlot* pgNst8LeftPage[PGNST8_LEFT_PAGE_MAX_SIZE];
     unsigned int pgNst8LeftPageHead;
     unsigned int pgNst8LeftPageSize;
-    unsigned int pgNst8InnerTableParseCount;
-    bool nl_needNewOuterPage;
 	bool pgNst8LeftParsedFully;
+    unsigned int pgNst8InnerTableParseCount;
 
 	TupleTableSlot *pgNst8_innertuple[1];
+
+
+	/*
+	* Bnd8 Variables
+	*/
+	/* Right Table and Trackers */
+	bool oslBnd8RightTableCacheInitialized;
+	TupleTableSlot* oslBnd8RightTableCache[OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE];
+    unsigned int oslBnd8RightTableCacheHead;
+    unsigned int oslBnd8RightTableCacheSize;
+
 } PlanState;
 
 /* ----------------

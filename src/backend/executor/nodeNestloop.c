@@ -62,7 +62,8 @@
  * ----------------------------------------------------------------
  */
 
-#define PGNST8_LEFT_PAGE_SIZE 320
+#define PGNST8_LEFT_PAGE_MAX_SIZE 320
+#define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 4096
 
 static TupleTableSlot *
 ExecNestLoop(PlanState *pstate)
@@ -78,7 +79,6 @@ ExecNestLoop(PlanState *pstate)
 	ExprContext *econtext;
 	ListCell   *lc;
 	
-
 	CHECK_FOR_INTERRUPTS();
 
 	/*
@@ -109,14 +109,40 @@ ExecNestLoop(PlanState *pstate)
 	for (;;)
 	{
 		/*
-		* Initalize left Page
+		* Initalize Right Table Cacheif it has not be initalized
+		*/
+		if(!outerPlan->oslBnd8RightTableCacheInitialized){
+			elog(INFO, "Right init Start ----------------------------------------");
+			while (outerPlan->oslBnd8RightTableCacheHead<OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE){
+				// Fill Table
+				innerTupleSlot = ExecProcNode(innerPlan);
+				if (TupIsNull(innerTupleSlot)) {
+					break;
+				}
+				// Add the tuple to the list
+				if (TupIsNull(outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead])) {
+					outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
+				}
+				ExecCopySlot(outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead], innerTupleSlot);
+				outerPlan->oslBnd8RightTableCacheHead++;
+				outerPlan->oslBnd8RightTableCacheSize++;
+			}
+			elog(INFO, "Initialization Complete for inner table cache, current head: %u", outerPlan->oslBnd8RightTableCacheHead);
+			outerPlan->oslBnd8RightTableCacheInitialized = true;
+			elog(INFO, "rescanning inner plan");
+			ExecReScan(innerPlan);
+			elog(INFO, "Right Init End ----------------------------------------\n");
+		}
+		
+		/*
+		* Read new left Page, if new outer page is needed
 		*/
 		if (outerPlan->nl_needNewOuterPage){
 			outerPlan->pgNst8LeftPageHead = 0;
 			outerPlan->pgNst8LeftPageSize = 0;
 			
 			// Fill Table
-			while (!outerPlan->pgNst8LeftParsedFully & outerPlan->pgNst8LeftPageHead < PGNST8_LEFT_PAGE_SIZE) {
+			while (!outerPlan->pgNst8LeftParsedFully & outerPlan->pgNst8LeftPageHead < PGNST8_LEFT_PAGE_MAX_SIZE) {
 				outerTupleSlot = ExecProcNode(outerPlan);
 				if (TupIsNull(outerTupleSlot)) { 
 					// elog(INFO, "Finished Parsing left table: %u", outerPlan->pgNst8LeftPageHead);
@@ -370,12 +396,20 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	 * values.
 	 */
 	outerPlanState(nlstate) = ExecInitNode(outerPlan(node), estate, eflags);
+
 	// Initialize variables
 	PlanState  *outerPlan;
 	outerPlan = outerPlanState(nlstate);
+	
 	outerPlan->nl_needNewOuterPage = true;
-	outerPlan->pgNst8InnerTableParseCount = 0;
+	outerPlan->pgNst8LeftPageHead = 0;
+	outerPlan->pgNst8LeftPageSize = 0;
 	outerPlan->pgNst8LeftParsedFully = false;
+	outerPlan->pgNst8InnerTableParseCount = 0;
+
+	outerPlan->oslBnd8RightTableCacheInitialized = false;
+	outerPlan->oslBnd8RightTableCacheHead = 0;
+
 	if (node->nestParams == NIL)
 		eflags |= EXEC_FLAG_REWIND;
 	else
@@ -466,7 +500,7 @@ ExecEndNestLoop(NestLoopState *node)
 	
 	// Free up the Memory
 	int i;
-	for (i = 0; i < PGNST8_LEFT_PAGE_SIZE; i++) {
+	for (i = 0; i < PGNST8_LEFT_PAGE_MAX_SIZE; i++) {
 		if (!TupIsNull(outerPlan->pgNst8LeftPage[i])) {
 			ExecDropSingleTupleTableSlot(outerPlan->pgNst8LeftPage[i]);
 			outerPlan->pgNst8LeftPage[i] = NULL;
@@ -476,6 +510,13 @@ ExecEndNestLoop(NestLoopState *node)
 	if (!TupIsNull(outerPlan->pgNst8_innertuple[0])) {
 		ExecDropSingleTupleTableSlot(outerPlan->pgNst8_innertuple[0]);
 		outerPlan->pgNst8_innertuple[0] = NULL;
+	}
+	// Free up the Memory
+	for (i = 0; i < OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE; i++) {
+		if (!TupIsNull(outerPlan->oslBnd8RightTableCache[i])) {
+			ExecDropSingleTupleTableSlot(outerPlan->oslBnd8RightTableCache[i]);
+			outerPlan->oslBnd8RightTableCache[i] = NULL;
+		}
 	}
 
 	ExecEndNode(outerPlanState(node));
