@@ -219,7 +219,9 @@ ExecNestLoop(PlanState *pstate)
 			if (TupIsNull(outerPlan->pgNst8_innertuple[0])) {
 				outerPlan->pgNst8_innertuple[0] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
 			}
+			if (!TupIsNull(innerTupleSlot)){
 			ExecCopySlot(outerPlan->pgNst8_innertuple[0], innerTupleSlot);
+			}
 		}
 		else{
 			// elog(INFO, "Using the same Inner Tuple for left page head @: %u", outerPlan->pgNst8LeftPageHead);
