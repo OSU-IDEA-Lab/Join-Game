@@ -999,6 +999,14 @@ typedef struct PlanState
     unsigned int oslBnd8RightTableCacheHead;
     unsigned int oslBnd8RightTableCacheSize;
 
+	/* Exploration Trackers */
+	// bool oslBnd8InExplorationPhase;
+	// bool oslBnd8InExplorationPhaseInitComplete;
+	// TupleTableSlot *oslBnd8_currExploreTuple;
+	unsigned int oslBnd8_currExploreTupleReward;
+
+
+
 } PlanState;
 
 /* ----------------

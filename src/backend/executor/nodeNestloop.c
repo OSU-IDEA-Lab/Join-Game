@@ -64,6 +64,307 @@
 
 #define PGNST8_LEFT_PAGE_MAX_SIZE 320
 #define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 4096
+#define MUST_EXPLORE_TUPLE_COUNT_N 2048
+#define DEBUG_FLAG 0
+
+
+void
+InitializeRightTableCache(PlanState *pstate){
+	NestLoopState *node = castNode(NestLoopState, pstate);
+	NestLoop   *nl;
+	PlanState  *innerPlan;
+	PlanState  *outerPlan;
+	TupleTableSlot *outerTupleSlot;
+	TupleTableSlot *innerTupleSlot;
+	ExprState  *joinqual;
+	ExprState  *otherqual;
+	ExprContext *econtext;
+	ListCell   *lc;
+	
+	CHECK_FOR_INTERRUPTS();
+
+	/*
+	 * get information from the node
+	 */
+	ENL1_printf("getting info from node");
+
+	nl = (NestLoop *) node->js.ps.plan;
+	joinqual = node->js.joinqual;
+	otherqual = node->js.ps.qual;
+	outerPlan = outerPlanState(node);
+	innerPlan = innerPlanState(node);
+	econtext = node->js.ps.ps_ExprContext;
+
+	/*
+	 * Reset per-tuple memory context to free any expression evaluation
+	 * storage allocated in the previous tuple cycle.
+	 */
+	ResetExprContext(econtext);
+
+
+	/*
+	* Initalize Right Table Cacheif it has not be initalized
+	*/
+	elog(INFO, "rescanning inner plan");
+	ExecReScan(innerPlan);
+	elog(INFO, "Right init Start ----------------------------------------");
+	while (outerPlan->oslBnd8RightTableCacheHead<OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE){
+		// Fill Table
+		innerTupleSlot = ExecProcNode(innerPlan);
+		if (TupIsNull(innerTupleSlot)) {
+			break;
+		}
+		// Add the tuple to the list
+		if (TupIsNull(outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead])) {
+			outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
+		}
+		ExecCopySlot(outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead], innerTupleSlot);
+		outerPlan->oslBnd8RightTableCacheHead++;
+		outerPlan->oslBnd8RightTableCacheSize++;
+	}
+
+	elog(INFO, "Initialization Complete for inner table cache, current head: %u", outerPlan->oslBnd8RightTableCacheHead);
+	outerPlan->oslBnd8RightTableCacheInitialized = true;
+	elog(INFO, "rescanning inner plan");
+	ExecReScan(innerPlan);
+	elog(INFO, "Right Init End ----------------------------------------\n");
+}
+
+void
+seedToExploitLeftPage(PlanState *pstate){
+	NestLoopState *node = castNode(NestLoopState, pstate);
+	NestLoop   *nl;
+	PlanState  *innerPlan;
+	PlanState  *outerPlan;
+	TupleTableSlot *outerTupleSlot;
+	TupleTableSlot *innerTupleSlot;
+	ExprState  *joinqual;
+	ExprState  *otherqual;
+	ExprContext *econtext;
+	ListCell   *lc;
+	
+	CHECK_FOR_INTERRUPTS();
+
+	/*
+	 * get information from the node
+	 */
+	ENL1_printf("getting info from node");
+
+	nl = (NestLoop *) node->js.ps.plan;
+	joinqual = node->js.joinqual;
+	otherqual = node->js.ps.qual;
+	outerPlan = outerPlanState(node);
+	innerPlan = innerPlanState(node);
+	econtext = node->js.ps.ps_ExprContext;
+
+	/*
+	 * Reset per-tuple memory context to free any expression evaluation
+	 * storage allocated in the previous tuple cycle.
+	 */
+	ResetExprContext(econtext);
+
+
+	/*
+	 * Ok, everything is setup for the join so now loop until we return a
+	 * qualifying join tuple.
+	 */
+	if(DEBUG_FLAG){elog(INFO, "New Left Page Read Called");}
+
+	int num_tuples_explored;
+	num_tuples_explored = 0;
+
+	outerPlan->pgNst8LeftPageHead = 0;
+	outerPlan->pgNst8LeftPageSize = 0;
+
+	/* Read a page such that They can be exploited*/
+	while (!outerPlan->pgNst8LeftParsedFully & outerPlan->pgNst8LeftPageHead < PGNST8_LEFT_PAGE_MAX_SIZE){
+		/*
+		* If we don't have an outer tuple, get the next one and reset the
+		* inner scan.
+		*/
+		if (node->nl_NeedNewOuter)
+		{
+			if (num_tuples_explored > MUST_EXPLORE_TUPLE_COUNT_N){
+				if(DEBUG_FLAG){elog(INFO, "num_tuples_explored greater than N, num_tuples_explored: %u", num_tuples_explored);}
+				break;
+			}
+
+			ENL1_printf("getting new outer tuple");
+			outerTupleSlot = ExecProcNode(outerPlan);
+			if (TupIsNull(outerTupleSlot)) { 
+				// elog(INFO, "Finished Parsing left table: %u", outerPlan->pgNst8LeftPageHead);
+				outerPlan->pgNst8LeftParsedFully = true;
+				break;
+			}
+			// if (TupIsNull(outerPlan->oslBnd8_currExploreTuple)) { outerPlan->oslBnd8_currExploreTuple = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);}
+			// if (!TupIsNull(outerTupleSlot)){ ExecCopySlot(outerPlan->oslBnd8_currExploreTuple, outerTupleSlot);}
+			outerPlan->oslBnd8_currExploreTupleReward = 0;
+			outerPlan->oslBnd8RightTableCacheHead=outerPlan->oslBnd8RightTableCacheSize;
+			num_tuples_explored++;
+
+			/*
+			* if there are no more outer tuples, then the join is complete..
+			*/
+			if (TupIsNull(outerTupleSlot))
+			{
+				ENL1_printf("no outer tuple, ending join");
+				return NULL;
+			} 
+
+			ENL1_printf("saving new outer tuple information");
+			econtext->ecxt_outertuple = outerTupleSlot;
+			
+			node->nl_NeedNewOuter = false;
+			node->nl_MatchedOuter = false;
+
+			/*
+			* fetch the values of any outer Vars that must be passed to the
+			* inner scan, and store them in the appropriate PARAM_EXEC slots.
+			*/
+			foreach(lc, nl->nestParams)
+			{
+				NestLoopParam *nlp = (NestLoopParam *) lfirst(lc);
+				int			paramno = nlp->paramno;
+				ParamExecData *prm;
+
+				prm = &(econtext->ecxt_param_exec_vals[paramno]);
+				/* Param value should be an OUTER_VAR var */
+				Assert(IsA(nlp->paramval, Var));
+				Assert(nlp->paramval->varno == OUTER_VAR);
+				Assert(nlp->paramval->varattno > 0);
+				prm->value = slot_getattr(outerTupleSlot,
+										nlp->paramval->varattno,
+										&(prm->isnull));
+				/* Flag parameter value as changed */
+				innerPlan->chgParam = bms_add_member(innerPlan->chgParam,
+													paramno);
+			}
+
+			/*
+			* now rescan the inner plan
+			*/
+			ENL1_printf("rescanning inner plan");
+			outerPlan->oslBnd8RightTableCacheHead = outerPlan->oslBnd8RightTableCacheSize;
+			// ExecReScan(innerPlan);
+		}
+
+		/*
+		* we have an outerTuple, try to get the next inner tuple.
+		*/
+		ENL1_printf("getting new inner tuple");
+		outerPlan->oslBnd8RightTableCacheHead--;
+		innerTupleSlot = outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead];
+		econtext->ecxt_innertuple = innerTupleSlot;
+		
+		ENL1_printf("testing qualification");
+		node->nl_MatchedOuter = ExecQual(joinqual, econtext);
+		if(node->nl_MatchedOuter){outerPlan->oslBnd8_currExploreTupleReward++;}
+		
+		if (outerPlan->oslBnd8RightTableCacheHead==0){
+			node->nl_NeedNewOuter = true;
+			if(outerPlan->oslBnd8_currExploreTupleReward>0){
+				// Allocate Memory if it has not been allocated
+				if (TupIsNull(outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead])) {outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);}
+				ExecCopySlot(outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead], outerTupleSlot);
+				outerPlan->pgNst8LeftPageHead++;
+				outerPlan->pgNst8LeftPageSize++;
+			}
+		}
+		/*
+		* Tuple fails qual, so free per-tuple memory and try again.
+		*/
+		ResetExprContext(econtext);
+		ENL1_printf("qualification failed, looping");
+	}
+
+	if(DEBUG_FLAG){elog(INFO, "Eploration Complete with pgNst8LeftPageSize: %u", outerPlan->pgNst8LeftPageSize);}
+
+
+	/* Just select any next outer tuples if page is not filled*/
+	while (!outerPlan->pgNst8LeftParsedFully & outerPlan->pgNst8LeftPageHead < PGNST8_LEFT_PAGE_MAX_SIZE) {
+		outerTupleSlot = ExecProcNode(outerPlan);
+		if (TupIsNull(outerTupleSlot)) { 
+			// elog(INFO, "Finished Parsing left table: %u", outerPlan->pgNst8LeftPageHead);
+			outerPlan->pgNst8LeftParsedFully = true;
+			break;
+		}
+
+		// Allocate Memory if it has not been allocated
+		if (TupIsNull(outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead])) {
+			outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+		}
+
+		// Insert Tuple to Left Page
+		// outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+		ExecCopySlot(outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead], outerTupleSlot);
+		outerPlan->pgNst8LeftPageHead++;
+		outerPlan->pgNst8LeftPageSize++;
+		// elog(INFO, "Tuple inserted in left page, Current pgNst8LeftPageHead: %u", outerPlan->pgNst8LeftPageHead);
+	}
+	if(DEBUG_FLAG){elog(INFO, "Seed Complete with: %u", outerPlan->pgNst8LeftPageSize);}
+
+}
+
+
+void
+seedNextLeftPage(PlanState *pstate){
+	NestLoopState *node = castNode(NestLoopState, pstate);
+	NestLoop   *nl;
+	PlanState  *innerPlan;
+	PlanState  *outerPlan;
+	TupleTableSlot *outerTupleSlot;
+	TupleTableSlot *innerTupleSlot;
+	ExprState  *joinqual;
+	ExprState  *otherqual;
+	ExprContext *econtext;
+	ListCell   *lc;
+	
+	CHECK_FOR_INTERRUPTS();
+
+	/*
+	 * get information from the node
+	 */
+	ENL1_printf("getting info from node");
+
+	nl = (NestLoop *) node->js.ps.plan;
+	joinqual = node->js.joinqual;
+	otherqual = node->js.ps.qual;
+	outerPlan = outerPlanState(node);
+	innerPlan = innerPlanState(node);
+	econtext = node->js.ps.ps_ExprContext;
+
+	/*
+	 * Reset per-tuple memory context to free any expression evaluation
+	 * storage allocated in the previous tuple cycle.
+	 */
+	ResetExprContext(econtext);
+
+	outerPlan->pgNst8LeftPageHead = 0;
+	outerPlan->pgNst8LeftPageSize = 0;
+	
+	// Fill Page
+	while (!outerPlan->pgNst8LeftParsedFully & outerPlan->pgNst8LeftPageHead < PGNST8_LEFT_PAGE_MAX_SIZE) {
+		outerTupleSlot = ExecProcNode(outerPlan);
+		if (TupIsNull(outerTupleSlot)) { 
+			// elog(INFO, "Finished Parsing left table: %u", outerPlan->pgNst8LeftPageHead);
+			outerPlan->pgNst8LeftParsedFully = true;
+			break;
+		}
+
+		// Allocate Memory if it has not been allocated
+		if (TupIsNull(outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead])) {
+			outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+		}
+
+		// Insert Tuple to Left Page
+		// outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+		ExecCopySlot(outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead], outerTupleSlot);
+		outerPlan->pgNst8LeftPageHead++;
+		outerPlan->pgNst8LeftPageSize++;
+		// elog(INFO, "Tuple inserted in left page, Current pgNst8LeftPageHead: %u", outerPlan->pgNst8LeftPageHead);
+	}
+
+}
 
 static TupleTableSlot *
 ExecNestLoop(PlanState *pstate)
@@ -100,74 +401,24 @@ ExecNestLoop(PlanState *pstate)
 	 */
 	ResetExprContext(econtext);
 
-	/*
-	 * Ok, everything is setup for the join so now loop until we return a
-	 * qualifying join tuple.
-	 */
-	ENL1_printf("entering main loop");
+	/* Initalize Right Table Cache if it has not been initialized */
+	if (!outerPlan->oslBnd8RightTableCacheInitialized){
+		InitializeRightTableCache(pstate);
+	}
 
+	ENL1_printf("entering main loop");
 	for (;;)
 	{
-		/*
-		* Initalize Right Table Cacheif it has not be initalized
-		*/
-		if(!outerPlan->oslBnd8RightTableCacheInitialized){
-			elog(INFO, "Right init Start ----------------------------------------");
-			while (outerPlan->oslBnd8RightTableCacheHead<OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE){
-				// Fill Table
-				innerTupleSlot = ExecProcNode(innerPlan);
-				if (TupIsNull(innerTupleSlot)) {
-					break;
-				}
-				// Add the tuple to the list
-				if (TupIsNull(outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead])) {
-					outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
-				}
-				ExecCopySlot(outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead], innerTupleSlot);
-				outerPlan->oslBnd8RightTableCacheHead++;
-				outerPlan->oslBnd8RightTableCacheSize++;
-			}
-			elog(INFO, "Initialization Complete for inner table cache, current head: %u", outerPlan->oslBnd8RightTableCacheHead);
-			outerPlan->oslBnd8RightTableCacheInitialized = true;
-			elog(INFO, "rescanning inner plan");
-			ExecReScan(innerPlan);
-			elog(INFO, "Right Init End ----------------------------------------\n");
-		}
-		
 		/*
 		* Read new left Page, if new outer page is needed
 		*/
 		if (outerPlan->nl_needNewOuterPage){
-			outerPlan->pgNst8LeftPageHead = 0;
-			outerPlan->pgNst8LeftPageSize = 0;
-			
-			// Fill Table
-			while (!outerPlan->pgNst8LeftParsedFully & outerPlan->pgNst8LeftPageHead < PGNST8_LEFT_PAGE_MAX_SIZE) {
-				outerTupleSlot = ExecProcNode(outerPlan);
-				if (TupIsNull(outerTupleSlot)) { 
-					// elog(INFO, "Finished Parsing left table: %u", outerPlan->pgNst8LeftPageHead);
-					outerPlan->pgNst8LeftParsedFully = true;
-					break;
-				}
-
-				// Allocate Memory if it has not been allocated
-				if (TupIsNull(outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead])) {
-					outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
-				}
-
-				// Insert Tuple to Left Page
-				// outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
-				ExecCopySlot(outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead], outerTupleSlot);
-				outerPlan->pgNst8LeftPageHead++;
-				outerPlan->pgNst8LeftPageSize++;
-				// elog(INFO, "Tuple inserted in left page, Current pgNst8LeftPageHead: %u", outerPlan->pgNst8LeftPageHead);
-			}
+			seedToExploitLeftPage(pstate);
+			// seedNextLeftPage(pstate);
 			outerPlan->nl_needNewOuterPage = false;
-
-			ENL1_printf("rescanning inner plan");
-			// elog(INFO, "rescanning inner plan");
 			ExecReScan(innerPlan);
 		}
+
 		/*
 		 * If we don't have an outer tuple, get the next one and reset the
 		 * inner scan.
@@ -409,6 +660,8 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 
 	outerPlan->oslBnd8RightTableCacheInitialized = false;
 	outerPlan->oslBnd8RightTableCacheHead = 0;
+
+	// outerPlan->oslBnd8InExplorationPhase = true;
 
 	if (node->nestParams == NIL)
 		eflags |= EXEC_FLAG_REWIND;
