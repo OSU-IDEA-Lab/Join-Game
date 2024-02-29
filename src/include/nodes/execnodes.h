@@ -1002,9 +1002,11 @@ typedef struct PlanState
 	/* Exploration Trackers */
 	// bool oslBnd8InExplorationPhase;
 	// bool oslBnd8InExplorationPhaseInitComplete;
-	// TupleTableSlot *oslBnd8_currExploreTuple;
+	TupleTableSlot *oslBnd8_currExploreTuple;
 	unsigned int oslBnd8_currExploreTupleReward;
-
+	unsigned int oslBnd8_currExploreTupleFailureCount;
+	unsigned int oslBnd8_numTuplesExplored;
+	bool oslBnd8_ExplorationStarted;
 
 
 } PlanState;
