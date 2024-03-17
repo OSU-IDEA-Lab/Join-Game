@@ -22,4 +22,4 @@ fi
 git commit -m "Ripple Join test"
 
 # Push the changes to the RippleJoin branch on the remote named origin
-git push origin -u RippleJoin
+git push Test -u RippleJoin
