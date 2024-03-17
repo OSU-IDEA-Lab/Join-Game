@@ -3418,3 +3418,514 @@
 2024-03-16 03:53:48.112 PDT [12325] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
 2024-03-16 03:53:48.123 PDT [12326] LOG:  database system was shut down at 2024-03-16 03:53:40 PDT
 2024-03-16 03:53:48.125 PDT [12325] LOG:  database system is ready to accept connections
+2024-03-16 19:55:00.871 PDT [4101] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-16 19:55:00.871 PDT [4101] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-16 19:55:00.871 PDT [4101] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-16 19:55:00.882 PDT [4102] LOG:  database system was shut down at 2024-03-16 19:55:00 PDT
+2024-03-16 19:55:00.884 PDT [4101] LOG:  database system is ready to accept connections
+2024-03-16 19:55:09.977 PDT [4101] LOG:  received fast shutdown request
+2024-03-16 19:55:09.978 PDT [4101] LOG:  aborting any active transactions
+2024-03-16 19:55:09.978 PDT [4101] LOG:  background worker "logical replication launcher" (PID 4108) exited with exit code 1
+2024-03-16 19:55:09.978 PDT [4103] LOG:  shutting down
+2024-03-16 19:55:09.986 PDT [4101] LOG:  database system is shut down
+2024-03-16 19:55:10.097 PDT [4154] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-16 19:55:10.097 PDT [4154] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-16 19:55:10.098 PDT [4154] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-16 19:55:10.109 PDT [4155] LOG:  database system was shut down at 2024-03-16 19:55:09 PDT
+2024-03-16 19:55:10.111 PDT [4154] LOG:  database system is ready to accept connections
+2024-03-16 19:55:48.898 PDT [4154] LOG:  received fast shutdown request
+2024-03-16 19:55:48.899 PDT [4154] LOG:  aborting any active transactions
+2024-03-16 19:55:48.899 PDT [4154] LOG:  background worker "logical replication launcher" (PID 4161) exited with exit code 1
+2024-03-16 19:55:48.899 PDT [4156] LOG:  shutting down
+2024-03-16 19:55:48.906 PDT [4154] LOG:  database system is shut down
+2024-03-16 20:00:09.550 PDT [15536] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-16 20:00:09.550 PDT [15536] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-16 20:00:09.551 PDT [15536] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-16 20:00:09.563 PDT [15537] LOG:  database system was shut down at 2024-03-16 19:55:48 PDT
+2024-03-16 20:00:09.565 PDT [15536] LOG:  database system is ready to accept connections
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:00:23.941 PDT [15604] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8d29786380 (16391,-1) still referenced
+2024-03-16 20:15:40.457 PDT [15536] LOG:  received fast shutdown request
+2024-03-16 20:15:40.457 PDT [15536] LOG:  aborting any active transactions
+2024-03-16 20:15:40.458 PDT [15536] LOG:  background worker "logical replication launcher" (PID 15551) exited with exit code 1
+2024-03-16 20:15:40.458 PDT [15538] LOG:  shutting down
+2024-03-16 20:15:40.465 PDT [15536] LOG:  database system is shut down
+2024-03-16 20:17:22.914 PDT [20788] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-16 20:17:22.914 PDT [20788] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-16 20:17:22.915 PDT [20788] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-16 20:17:23.006 PDT [20790] LOG:  database system was shut down at 2024-03-16 20:15:40 PDT
+2024-03-16 20:17:23.008 PDT [20788] LOG:  database system is ready to accept connections
+2024-03-17 00:20:09.943 PDT [20788] LOG:  received fast shutdown request
+2024-03-17 00:20:09.944 PDT [20788] LOG:  aborting any active transactions
+2024-03-17 00:20:09.944 PDT [20788] LOG:  background worker "logical replication launcher" (PID 20796) exited with exit code 1
+2024-03-17 00:20:09.946 PDT [20791] LOG:  shutting down
+2024-03-17 00:20:09.995 PDT [20788] LOG:  database system is shut down
+2024-03-17 00:43:01.341 PDT [22138] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-17 00:43:01.341 PDT [22138] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-17 00:43:01.342 PDT [22138] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-17 00:43:01.433 PDT [22140] LOG:  database system was shut down at 2024-03-17 00:42:18 PDT
+2024-03-17 00:43:01.435 PDT [22138] LOG:  database system is ready to accept connections
+2024-03-17 00:51:15.207 PDT [22138] LOG:  received fast shutdown request
+2024-03-17 00:51:15.207 PDT [22138] LOG:  aborting any active transactions
+2024-03-17 00:51:15.208 PDT [22138] LOG:  background worker "logical replication launcher" (PID 22146) exited with exit code 1
+2024-03-17 00:51:15.209 PDT [22141] LOG:  shutting down
+2024-03-17 00:51:15.255 PDT [22138] LOG:  database system is shut down
+2024-03-17 00:51:16.559 PDT [24742] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-17 00:51:16.559 PDT [24742] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-17 00:51:16.560 PDT [24742] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-17 00:51:16.650 PDT [24743] LOG:  database system was shut down at 2024-03-17 00:51:15 PDT
+2024-03-17 00:51:16.652 PDT [24742] LOG:  database system is ready to accept connections
+2024-03-17 00:53:24.810 PDT [24742] LOG:  received fast shutdown request
+2024-03-17 00:53:24.811 PDT [24742] LOG:  aborting any active transactions
+2024-03-17 00:53:24.811 PDT [24742] LOG:  background worker "logical replication launcher" (PID 24749) exited with exit code 1
+2024-03-17 00:53:24.813 PDT [24744] LOG:  shutting down
+2024-03-17 00:53:24.877 PDT [24742] LOG:  database system is shut down
+2024-03-17 00:54:25.756 PDT [27408] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-17 00:54:25.756 PDT [27408] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-17 00:54:25.757 PDT [27408] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-17 00:54:25.847 PDT [27410] LOG:  database system was shut down at 2024-03-17 00:53:24 PDT
+2024-03-17 00:54:25.849 PDT [27408] LOG:  database system is ready to accept connections
+2024-03-17 00:56:24.808 PDT [27408] LOG:  received fast shutdown request
+2024-03-17 00:56:24.809 PDT [27408] LOG:  aborting any active transactions
+2024-03-17 00:56:24.809 PDT [27408] LOG:  background worker "logical replication launcher" (PID 27416) exited with exit code 1
+2024-03-17 00:56:24.811 PDT [27411] LOG:  shutting down
+2024-03-17 00:56:24.882 PDT [27408] LOG:  database system is shut down
+2024-03-17 00:58:07.102 PDT [30746] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-17 00:58:07.102 PDT [30746] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-17 00:58:07.102 PDT [30746] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-17 00:58:07.192 PDT [30747] LOG:  database system was shut down at 2024-03-17 00:56:24 PDT
+2024-03-17 00:58:07.194 PDT [30746] LOG:  database system is ready to accept connections
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 00:58:44.128 PDT [30755] WARNING:  TupleDesc reference leak: TupleDesc 0x7f03c7095380 (16391,-1) still referenced
+2024-03-17 01:04:55.713 PDT [30746] LOG:  received fast shutdown request
+2024-03-17 01:04:55.713 PDT [30746] LOG:  aborting any active transactions
+2024-03-17 01:04:55.714 PDT [30746] LOG:  background worker "logical replication launcher" (PID 30753) exited with exit code 1
+2024-03-17 01:04:55.716 PDT [30748] LOG:  shutting down
+2024-03-17 01:04:55.764 PDT [30746] LOG:  database system is shut down
+2024-03-17 01:06:38.102 PDT [2383] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-17 01:06:38.102 PDT [2383] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-17 01:06:38.102 PDT [2383] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-17 01:06:38.193 PDT [2384] LOG:  database system was shut down at 2024-03-17 01:04:55 PDT
+2024-03-17 01:06:38.195 PDT [2383] LOG:  database system is ready to accept connections
+2024-03-17 01:07:15.271 PDT [2383] LOG:  server process (PID 2392) was terminated by signal 11: Segmentation fault
+2024-03-17 01:07:15.271 PDT [2383] DETAIL:  Failed process was running: SELECT COUNT(*) FROM professor p1, student s1 where p1.p_pid = s1.s_pid;
+2024-03-17 01:07:15.271 PDT [2383] LOG:  terminating any other active server processes
+2024-03-17 01:07:15.271 PDT [2388] WARNING:  terminating connection because of crash of another server process
+2024-03-17 01:07:15.271 PDT [2388] DETAIL:  The postmaster has commanded this server process to roll back the current transaction and exit, because another server process exited abnormally and possibly corrupted shared memory.
+2024-03-17 01:07:15.271 PDT [2388] HINT:  In a moment you should be able to reconnect to the database and repeat your command.
+2024-03-17 01:07:15.272 PDT [2757] FATAL:  the database system is in recovery mode
+2024-03-17 01:07:15.273 PDT [2383] LOG:  all server processes terminated; reinitializing
+2024-03-17 01:07:15.935 PDT [2759] LOG:  database system was interrupted; last known up at 2024-03-17 01:06:38 PDT
+2024-03-17 01:07:15.961 PDT [2759] LOG:  database system was not properly shut down; automatic recovery in progress
+2024-03-17 01:07:15.962 PDT [2759] LOG:  redo starts at D/4ECB04F0
+2024-03-17 01:07:15.962 PDT [2759] LOG:  invalid record length at D/4ECB0528: wanted 24, got 0
+2024-03-17 01:07:15.962 PDT [2759] LOG:  redo done at D/4ECB04F0
+2024-03-17 01:07:15.996 PDT [2383] LOG:  database system is ready to accept connections
+2024-03-17 01:16:42.481 PDT [2383] LOG:  received fast shutdown request
+2024-03-17 01:16:42.482 PDT [2383] LOG:  aborting any active transactions
+2024-03-17 01:16:42.482 PDT [2383] LOG:  background worker "logical replication launcher" (PID 2765) exited with exit code 1
+2024-03-17 01:16:42.486 PDT [2760] LOG:  shutting down
+2024-03-17 01:16:42.546 PDT [2383] LOG:  database system is shut down
+2024-03-17 01:16:50.457 PDT [5759] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-17 01:16:50.457 PDT [5759] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-17 01:16:50.458 PDT [5759] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-17 01:16:50.547 PDT [5760] LOG:  database system was shut down at 2024-03-17 01:16:42 PDT
+2024-03-17 01:16:50.548 PDT [5759] LOG:  database system is ready to accept connections
+2024-03-17 01:17:10.293 PDT [5759] LOG:  server process (PID 5768) was terminated by signal 11: Segmentation fault
+2024-03-17 01:17:10.293 PDT [5759] DETAIL:  Failed process was running: SELECT COUNT(*) FROM professor p1, student s1 where p1.p_pid = s1.s_pid;
+2024-03-17 01:17:10.293 PDT [5759] LOG:  terminating any other active server processes
+2024-03-17 01:17:10.293 PDT [5764] WARNING:  terminating connection because of crash of another server process
+2024-03-17 01:17:10.293 PDT [5764] DETAIL:  The postmaster has commanded this server process to roll back the current transaction and exit, because another server process exited abnormally and possibly corrupted shared memory.
+2024-03-17 01:17:10.293 PDT [5764] HINT:  In a moment you should be able to reconnect to the database and repeat your command.
+2024-03-17 01:17:10.294 PDT [6000] FATAL:  the database system is in recovery mode
+2024-03-17 01:17:10.295 PDT [5759] LOG:  all server processes terminated; reinitializing
+2024-03-17 01:17:10.926 PDT [6002] LOG:  database system was interrupted; last known up at 2024-03-17 01:16:50 PDT
+2024-03-17 01:17:10.953 PDT [6002] LOG:  database system was not properly shut down; automatic recovery in progress
+2024-03-17 01:17:10.954 PDT [6002] LOG:  redo starts at D/4ECB0640
+2024-03-17 01:17:10.954 PDT [6002] LOG:  invalid record length at D/4ECB0678: wanted 24, got 0
+2024-03-17 01:17:10.954 PDT [6002] LOG:  redo done at D/4ECB0640
+2024-03-17 01:17:10.988 PDT [5759] LOG:  database system is ready to accept connections
+2024-03-17 01:18:00.491 PDT [5759] LOG:  received fast shutdown request
+2024-03-17 01:18:00.491 PDT [5759] LOG:  aborting any active transactions
+2024-03-17 01:18:00.492 PDT [5759] LOG:  background worker "logical replication launcher" (PID 6008) exited with exit code 1
+2024-03-17 01:18:00.494 PDT [6003] LOG:  shutting down
+2024-03-17 01:18:00.556 PDT [5759] LOG:  database system is shut down
+2024-03-17 01:18:08.492 PDT [7172] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-17 01:18:08.492 PDT [7172] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-17 01:18:08.493 PDT [7172] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-17 01:18:08.583 PDT [7173] LOG:  database system was shut down at 2024-03-17 01:18:00 PDT
+2024-03-17 01:18:08.584 PDT [7172] LOG:  database system is ready to accept connections
+2024-03-17 01:18:30.005 PDT [7172] LOG:  server process (PID 7182) was terminated by signal 11: Segmentation fault
+2024-03-17 01:18:30.005 PDT [7172] DETAIL:  Failed process was running: SELECT COUNT(*) FROM professor p1, student s1 where p1.p_pid = s1.s_pid;
+2024-03-17 01:18:30.006 PDT [7172] LOG:  terminating any other active server processes
+2024-03-17 01:18:30.006 PDT [7177] WARNING:  terminating connection because of crash of another server process
+2024-03-17 01:18:30.006 PDT [7177] DETAIL:  The postmaster has commanded this server process to roll back the current transaction and exit, because another server process exited abnormally and possibly corrupted shared memory.
+2024-03-17 01:18:30.006 PDT [7177] HINT:  In a moment you should be able to reconnect to the database and repeat your command.
+2024-03-17 01:18:30.006 PDT [7351] FATAL:  the database system is in recovery mode
+2024-03-17 01:18:30.008 PDT [7172] LOG:  all server processes terminated; reinitializing
+2024-03-17 01:18:30.698 PDT [7355] LOG:  database system was interrupted; last known up at 2024-03-17 01:18:08 PDT
+2024-03-17 01:18:30.725 PDT [7355] LOG:  database system was not properly shut down; automatic recovery in progress
+2024-03-17 01:18:30.726 PDT [7355] LOG:  redo starts at D/4ECB0790
+2024-03-17 01:18:30.726 PDT [7355] LOG:  invalid record length at D/4ECB07C8: wanted 24, got 0
+2024-03-17 01:18:30.726 PDT [7355] LOG:  redo done at D/4ECB0790
+2024-03-17 01:18:30.761 PDT [7172] LOG:  database system is ready to accept connections
+2024-03-17 01:19:01.620 PDT [7172] LOG:  server process (PID 7423) was terminated by signal 11: Segmentation fault
+2024-03-17 01:19:01.620 PDT [7172] DETAIL:  Failed process was running: SELECT COUNT(*) FROM professor p1, student s1 where p1.p_pid = s1.s_pid;
+2024-03-17 01:19:01.620 PDT [7172] LOG:  terminating any other active server processes
+2024-03-17 01:19:01.620 PDT [7359] WARNING:  terminating connection because of crash of another server process
+2024-03-17 01:19:01.620 PDT [7359] DETAIL:  The postmaster has commanded this server process to roll back the current transaction and exit, because another server process exited abnormally and possibly corrupted shared memory.
+2024-03-17 01:19:01.620 PDT [7359] HINT:  In a moment you should be able to reconnect to the database and repeat your command.
+2024-03-17 01:19:01.622 PDT [7634] FATAL:  the database system is in recovery mode
+2024-03-17 01:19:01.622 PDT [7172] LOG:  all server processes terminated; reinitializing
+2024-03-17 01:19:02.414 PDT [7635] LOG:  database system was interrupted; last known up at 2024-03-17 01:18:30 PDT
+2024-03-17 01:19:02.439 PDT [7635] LOG:  database system was not properly shut down; automatic recovery in progress
+2024-03-17 01:19:02.440 PDT [7635] LOG:  redo starts at D/4ECB0838
+2024-03-17 01:19:02.440 PDT [7635] LOG:  invalid record length at D/4ECB0870: wanted 24, got 0
+2024-03-17 01:19:02.440 PDT [7635] LOG:  redo done at D/4ECB0838
+2024-03-17 01:19:02.475 PDT [7172] LOG:  database system is ready to accept connections
+2024-03-17 01:19:05.777 PDT [7172] LOG:  received fast shutdown request
+2024-03-17 01:19:05.777 PDT [7172] LOG:  aborting any active transactions
+2024-03-17 01:19:05.778 PDT [7172] LOG:  background worker "logical replication launcher" (PID 7643) exited with exit code 1
+2024-03-17 01:19:05.778 PDT [7638] LOG:  shutting down
+2024-03-17 01:19:05.843 PDT [7172] LOG:  database system is shut down
+2024-03-17 01:19:13.786 PDT [8864] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-17 01:19:13.786 PDT [8864] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-17 01:19:13.787 PDT [8864] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-17 01:19:13.877 PDT [8865] LOG:  database system was shut down at 2024-03-17 01:19:05 PDT
+2024-03-17 01:19:13.879 PDT [8864] LOG:  database system is ready to accept connections
+2024-03-17 01:19:28.811 PDT [8864] LOG:  server process (PID 8873) was terminated by signal 11: Segmentation fault
+2024-03-17 01:19:28.811 PDT [8864] DETAIL:  Failed process was running: SELECT COUNT(*) FROM professor p1, student s1 where p1.p_pid = s1.s_pid;
+2024-03-17 01:19:28.811 PDT [8864] LOG:  terminating any other active server processes
+2024-03-17 01:19:28.811 PDT [8869] WARNING:  terminating connection because of crash of another server process
+2024-03-17 01:19:28.811 PDT [8869] DETAIL:  The postmaster has commanded this server process to roll back the current transaction and exit, because another server process exited abnormally and possibly corrupted shared memory.
+2024-03-17 01:19:28.811 PDT [8869] HINT:  In a moment you should be able to reconnect to the database and repeat your command.
+2024-03-17 01:19:28.812 PDT [8984] FATAL:  the database system is in recovery mode
+2024-03-17 01:19:28.812 PDT [8864] LOG:  all server processes terminated; reinitializing
+2024-03-17 01:19:29.532 PDT [8986] LOG:  database system was interrupted; last known up at 2024-03-17 01:19:13 PDT
+2024-03-17 01:19:29.559 PDT [8986] LOG:  database system was not properly shut down; automatic recovery in progress
+2024-03-17 01:19:29.559 PDT [8986] LOG:  invalid record length at D/4ECB0950: wanted 24, got 0
+2024-03-17 01:19:29.559 PDT [8986] LOG:  redo is not required
+2024-03-17 01:19:29.594 PDT [8864] LOG:  database system is ready to accept connections
+2024-03-17 01:25:09.903 PDT [8864] LOG:  received fast shutdown request
+2024-03-17 01:25:09.903 PDT [8864] LOG:  aborting any active transactions
+2024-03-17 01:25:09.904 PDT [8864] LOG:  background worker "logical replication launcher" (PID 8992) exited with exit code 1
+2024-03-17 01:25:09.907 PDT [8987] LOG:  shutting down
+2024-03-17 01:25:09.967 PDT [8864] LOG:  database system is shut down
+2024-03-17 01:25:17.837 PDT [10739] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-17 01:25:17.837 PDT [10739] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-17 01:25:17.838 PDT [10739] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-17 01:25:17.929 PDT [10740] LOG:  database system was shut down at 2024-03-17 01:25:09 PDT
+2024-03-17 01:25:17.931 PDT [10739] LOG:  database system is ready to accept connections
+2024-03-17 01:25:45.203 PDT [10739] LOG:  server process (PID 10748) was terminated by signal 11: Segmentation fault
+2024-03-17 01:25:45.203 PDT [10739] DETAIL:  Failed process was running: SELECT COUNT(*) FROM professor p1, student s1 where p1.p_pid = s1.s_pid;
+2024-03-17 01:25:45.203 PDT [10739] LOG:  terminating any other active server processes
+2024-03-17 01:25:45.203 PDT [10744] WARNING:  terminating connection because of crash of another server process
+2024-03-17 01:25:45.203 PDT [10744] DETAIL:  The postmaster has commanded this server process to roll back the current transaction and exit, because another server process exited abnormally and possibly corrupted shared memory.
+2024-03-17 01:25:45.203 PDT [10744] HINT:  In a moment you should be able to reconnect to the database and repeat your command.
+2024-03-17 01:25:45.204 PDT [10869] FATAL:  the database system is in recovery mode
+2024-03-17 01:25:45.205 PDT [10739] LOG:  all server processes terminated; reinitializing
+2024-03-17 01:25:45.988 PDT [10872] LOG:  database system was interrupted; last known up at 2024-03-17 01:25:17 PDT
+2024-03-17 01:25:46.014 PDT [10872] LOG:  database system was not properly shut down; automatic recovery in progress
+2024-03-17 01:25:46.014 PDT [10872] LOG:  redo starts at D/4ECB0A68
+2024-03-17 01:25:46.014 PDT [10872] LOG:  invalid record length at D/4ECB0AA0: wanted 24, got 0
+2024-03-17 01:25:46.014 PDT [10872] LOG:  redo done at D/4ECB0A68
+2024-03-17 01:25:46.049 PDT [10739] LOG:  database system is ready to accept connections
+2024-03-17 01:26:26.235 PDT [10739] LOG:  received fast shutdown request
+2024-03-17 01:26:26.236 PDT [10739] LOG:  aborting any active transactions
+2024-03-17 01:26:26.236 PDT [10739] LOG:  background worker "logical replication launcher" (PID 10878) exited with exit code 1
+2024-03-17 01:26:26.238 PDT [10873] LOG:  shutting down
+2024-03-17 01:26:26.301 PDT [10739] LOG:  database system is shut down
+2024-03-17 01:26:34.233 PDT [12256] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-17 01:26:34.233 PDT [12256] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-17 01:26:34.234 PDT [12256] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-17 01:26:34.323 PDT [12257] LOG:  database system was shut down at 2024-03-17 01:26:26 PDT
+2024-03-17 01:26:34.325 PDT [12256] LOG:  database system is ready to accept connections
+2024-03-17 01:26:51.592 PDT [12256] LOG:  server process (PID 12265) was terminated by signal 11: Segmentation fault
+2024-03-17 01:26:51.592 PDT [12256] DETAIL:  Failed process was running: SELECT COUNT(*) FROM professor p1, student s1 where p1.p_pid = s1.s_pid;
+2024-03-17 01:26:51.592 PDT [12256] LOG:  terminating any other active server processes
+2024-03-17 01:26:51.592 PDT [12261] WARNING:  terminating connection because of crash of another server process
+2024-03-17 01:26:51.592 PDT [12261] DETAIL:  The postmaster has commanded this server process to roll back the current transaction and exit, because another server process exited abnormally and possibly corrupted shared memory.
+2024-03-17 01:26:51.592 PDT [12261] HINT:  In a moment you should be able to reconnect to the database and repeat your command.
+2024-03-17 01:26:51.593 PDT [12367] FATAL:  the database system is in recovery mode
+2024-03-17 01:26:51.594 PDT [12256] LOG:  all server processes terminated; reinitializing
+2024-03-17 01:26:52.385 PDT [12368] LOG:  database system was interrupted; last known up at 2024-03-17 01:26:34 PDT
+2024-03-17 01:26:52.412 PDT [12368] LOG:  database system was not properly shut down; automatic recovery in progress
+2024-03-17 01:26:52.412 PDT [12368] LOG:  redo starts at D/4ECB0BB8
+2024-03-17 01:26:52.412 PDT [12368] LOG:  invalid record length at D/4ECB0BF0: wanted 24, got 0
+2024-03-17 01:26:52.412 PDT [12368] LOG:  redo done at D/4ECB0BB8
+2024-03-17 01:26:52.445 PDT [12256] LOG:  database system is ready to accept connections
+2024-03-17 01:29:10.815 PDT [12256] LOG:  received fast shutdown request
+2024-03-17 01:29:10.815 PDT [12256] LOG:  aborting any active transactions
+2024-03-17 01:29:10.816 PDT [12256] LOG:  background worker "logical replication launcher" (PID 12375) exited with exit code 1
+2024-03-17 01:29:10.821 PDT [12369] LOG:  shutting down
+2024-03-17 01:29:10.883 PDT [12256] LOG:  database system is shut down
+2024-03-17 01:29:25.013 PDT [13242] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-17 01:29:25.013 PDT [13242] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-17 01:29:25.014 PDT [13242] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-17 01:29:25.105 PDT [13243] LOG:  database system was shut down at 2024-03-17 01:29:10 PDT
+2024-03-17 01:29:25.107 PDT [13242] LOG:  database system is ready to accept connections
+2024-03-17 01:30:34.216 PDT [13242] LOG:  received fast shutdown request
+2024-03-17 01:30:34.217 PDT [13242] LOG:  aborting any active transactions
+2024-03-17 01:30:34.217 PDT [13242] LOG:  background worker "logical replication launcher" (PID 13249) exited with exit code 1
+2024-03-17 01:30:34.218 PDT [13244] LOG:  shutting down
+2024-03-17 01:30:34.284 PDT [13242] LOG:  database system is shut down
+2024-03-17 01:30:36.268 PDT [13559] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-17 01:30:36.268 PDT [13559] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-17 01:30:36.269 PDT [13559] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-17 01:30:36.358 PDT [13564] LOG:  database system was shut down at 2024-03-17 01:30:34 PDT
+2024-03-17 01:30:36.360 PDT [13559] LOG:  database system is ready to accept connections
+2024-03-17 01:30:50.531 PDT [13559] LOG:  received fast shutdown request
+2024-03-17 01:30:50.532 PDT [13559] LOG:  aborting any active transactions
+2024-03-17 01:30:50.532 PDT [13559] LOG:  background worker "logical replication launcher" (PID 13570) exited with exit code 1
+2024-03-17 01:30:50.533 PDT [13565] LOG:  shutting down
+2024-03-17 01:30:50.600 PDT [13559] LOG:  database system is shut down
+2024-03-17 01:33:14.664 PDT [17154] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-17 01:33:14.664 PDT [17154] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-17 01:33:14.665 PDT [17154] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-17 01:33:14.755 PDT [17155] LOG:  database system was shut down at 2024-03-17 01:30:50 PDT
+2024-03-17 01:33:14.757 PDT [17154] LOG:  database system is ready to accept connections
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.729 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:33:37.730 PDT [17163] WARNING:  TupleDesc reference leak: TupleDesc 0x7f8b2eb89380 (16391,-1) still referenced
+2024-03-17 01:34:43.400 PDT [17154] LOG:  received fast shutdown request
+2024-03-17 01:34:43.400 PDT [17154] LOG:  aborting any active transactions
+2024-03-17 01:34:43.401 PDT [17154] LOG:  background worker "logical replication launcher" (PID 17161) exited with exit code 1
+2024-03-17 01:34:43.402 PDT [17156] LOG:  shutting down
+2024-03-17 01:34:43.466 PDT [17154] LOG:  database system is shut down
+2024-03-17 01:34:51.423 PDT [18652] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-17 01:34:51.423 PDT [18652] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-17 01:34:51.423 PDT [18652] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-17 01:34:51.515 PDT [18653] LOG:  database system was shut down at 2024-03-17 01:34:43 PDT
+2024-03-17 01:34:51.517 PDT [18652] LOG:  database system is ready to accept connections
+2024-03-17 01:51:57.645 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:51:57.646 PDT [18661] WARNING:  TupleDesc reference leak: TupleDesc 0x7fa3c6316380 (16391,-1) still referenced
+2024-03-17 01:52:51.708 PDT [18661] ERROR:  canceling statement due to user request
+2024-03-17 01:52:51.708 PDT [18661] STATEMENT:  SELECT COUNT(*)
+	FROM (SELECT * FROM customer10 ORDER BY c_custkey LIMIT 4000) AS limited_customer10
+	JOIN (SELECT * FROM order10 ORDER BY o_custkey LIMIT 4000) AS limited_order10
+	ON limited_customer10.c_custkey = limited_order10.o_custkey;
+2024-03-17 01:52:51.708 PDT [21490] FATAL:  terminating connection due to administrator command
+2024-03-17 01:52:51.708 PDT [21490] STATEMENT:  SELECT COUNT(*)
+	FROM (SELECT * FROM customer10 ORDER BY c_custkey LIMIT 4000) AS limited_customer10
+	JOIN (SELECT * FROM order10 ORDER BY o_custkey LIMIT 4000) AS limited_order10
+	ON limited_customer10.c_custkey = limited_order10.o_custkey;
+2024-03-17 01:52:51.708 PDT [21489] FATAL:  terminating connection due to administrator command
+2024-03-17 01:52:51.708 PDT [21489] STATEMENT:  SELECT COUNT(*)
+	FROM (SELECT * FROM customer10 ORDER BY c_custkey LIMIT 4000) AS limited_customer10
+	JOIN (SELECT * FROM order10 ORDER BY o_custkey LIMIT 4000) AS limited_order10
+	ON limited_customer10.c_custkey = limited_order10.o_custkey;
+2024-03-17 01:52:51.711 PDT [18652] LOG:  background worker "parallel worker" (PID 21489) exited with exit code 1
+2024-03-17 01:52:51.711 PDT [18652] LOG:  background worker "parallel worker" (PID 21490) exited with exit code 1
+2024-03-17 01:52:51.711 PDT [21487] FATAL:  terminating connection due to administrator command
+2024-03-17 01:52:51.711 PDT [21487] STATEMENT:  SELECT COUNT(*)
+	FROM (SELECT * FROM customer10 ORDER BY c_custkey LIMIT 4000) AS limited_customer10
+	JOIN (SELECT * FROM order10 ORDER BY o_custkey LIMIT 4000) AS limited_order10
+	ON limited_customer10.c_custkey = limited_order10.o_custkey;
+2024-03-17 01:52:51.711 PDT [21486] FATAL:  terminating connection due to administrator command
+2024-03-17 01:52:51.711 PDT [21486] STATEMENT:  SELECT COUNT(*)
+	FROM (SELECT * FROM customer10 ORDER BY c_custkey LIMIT 4000) AS limited_customer10
+	JOIN (SELECT * FROM order10 ORDER BY o_custkey LIMIT 4000) AS limited_order10
+	ON limited_customer10.c_custkey = limited_order10.o_custkey;
+2024-03-17 01:52:51.713 PDT [18652] LOG:  background worker "parallel worker" (PID 21486) exited with exit code 1
+2024-03-17 01:52:51.713 PDT [18652] LOG:  background worker "parallel worker" (PID 21487) exited with exit code 1
+2024-03-17 01:55:56.411 PDT [18652] LOG:  received fast shutdown request
+2024-03-17 01:55:56.411 PDT [18652] LOG:  aborting any active transactions
+2024-03-17 01:55:56.412 PDT [18652] LOG:  background worker "logical replication launcher" (PID 18659) exited with exit code 1
+2024-03-17 01:55:56.413 PDT [18654] LOG:  shutting down
+2024-03-17 01:55:56.461 PDT [18652] LOG:  database system is shut down
+2024-03-17 01:56:04.391 PDT [23262] LOG:  listening on IPv6 address "::1", port 5240
+2024-03-17 01:56:04.391 PDT [23262] LOG:  listening on IPv4 address "127.0.0.1", port 5240
+2024-03-17 01:56:04.392 PDT [23262] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5240"
+2024-03-17 01:56:04.482 PDT [23263] LOG:  database system was shut down at 2024-03-17 01:55:56 PDT
+2024-03-17 01:56:04.484 PDT [23262] LOG:  database system is ready to accept connections

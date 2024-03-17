@@ -21,5 +21,5 @@ fi
 # Commit the changes
 git commit -m "Ripple Join test"
 
-# Push the changes to the RippleJoin branch on the remote named origin
-git push IDEA -u RippleJoin
+# Push the changes to the RippleJoin branch on the remote
+# git push IDEA -u RippleJoin

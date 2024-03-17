@@ -1,0 +1,9 @@
+Name: libecpg_compat
+Description: PostgreSQL libecpg_compat library
+Url: http://www.postgresql.org/
+Version: 11.5
+Requires: 
+Requires.private: libecpg libpgtypes
+Cflags: -I/postgres/leeyongh-psql/execu/include
+Libs: -L/postgres/leeyongh-psql/execu/lib -lecpg_compat
+Libs.private:  -lm

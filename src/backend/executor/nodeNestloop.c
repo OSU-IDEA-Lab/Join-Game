@@ -105,63 +105,43 @@ ExecNestLoop(PlanState *pstate)
 	
 	for (;;)
 	{	
-		/*
-		 * Read a new outer tuple from the disk and an inner tuple from the memory.
-		 */
-		if (node->ripple_left2right)
+		switch (node->direction)
 		{
-			if (node->nl_NeedNewOuter && !node->ripple_outerEnd)
-			{
-				outerTupleSlot = ExecProcNode(outerPlan);
-				if (TupIsNull(outerTupleSlot))
+			/*
+		 	 * Read a new outer tuple from the disk and an inner tuple from the memory.
+		 	 */
+			case LEFT_TO_RIGHT:
+				// elog(INFO, "Left to Right");
+				if (node->nl_NeedNewOuter && !node->ripple_outerEnd)
 				{
-					if (node->ripple_innerEnd)
-						return NULL;
-					node->ripple_outerEnd = true;
-					node->nl_NeedNewInner = true;
-					node->ripple_left2right = false;
-					node->ripple_right2left = true;
+					outerTupleSlot = ExecProcNode(outerPlan);
+					if (TupIsNull(outerTupleSlot))
+					{
+						if (node->ripple_innerEnd)
+							return NULL;
+						node->ripple_outerEnd = true;
+						node->nl_NeedNewInner = true;
+						node->direction = RIGHT_TO_LEFT;
+					}
+					else
+					{
+						if (TupIsNull(outerPlan->rippleLeftPage[node->rippleLeftSize]))
+							outerPlan->rippleLeftPage[node->rippleLeftSize] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+						ExecCopySlot(outerPlan->rippleLeftPage[node->rippleLeftSize], outerTupleSlot);
+						node->rippleLeftSize++;
+						node->rippleRightHead = 0;
+						node->nl_NeedNewOuter = false;
+						node->nl_MatchedOuter = false;
+					}
 				}
 				else
 				{
-					if (TupIsNull(outerPlan->rippleLeftPage[node->rippleLeftSize]))
-						outerPlan->rippleLeftPage[node->rippleLeftSize] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
-					ExecCopySlot(outerPlan->rippleLeftPage[node->rippleLeftSize], outerTupleSlot);
-					node->rippleLeftSize++;
-					node->rippleRightHead = 0;
-					node->nl_NeedNewOuter = false;
-					node->nl_MatchedOuter = false;
+					outerTupleSlot = outerPlan->rippleLeftPage[node->rippleLeftSize-1];
 				}
 
-			}
-			else
-			{
-				outerTupleSlot = outerPlan->rippleLeftPage[node->rippleLeftSize-1];
-			}
-
-			if (node->rippleRightSize == 0)
-			{
-				innerTupleSlot = ExecProcNode(innerPlan);
-				if (TupIsNull(innerTupleSlot))
-					return NULL;
-				
-				if (TupIsNull(innerPlan->rippleRightPage[node->rippleRightSize]))
-					innerPlan->rippleRightPage[node->rippleRightSize] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
-				ExecCopySlot(innerPlan->rippleRightPage[node->rippleRightSize], innerTupleSlot);
-				node->rippleRightSize++;				
-
-				if (node->rippleRightHead+1 == node->rippleRightSize)
-				{
-					node->nl_NeedNewInner = true;
-					node->ripple_left2right = false;
-					node->ripple_right2left = true;
-				}	
-			}
-			else
-			{
 				innerTupleSlot = innerPlan->rippleRightPage[node->rippleRightHead];
             	node->rippleRightHead++;
-            	
+				
 				if (node->rippleRightHead == node->rippleRightSize)
 				{
 					if (node->ripple_innerEnd)
@@ -172,68 +152,96 @@ ExecNestLoop(PlanState *pstate)
 					else
 					{
 						node->nl_NeedNewInner = true;
-						node->ripple_left2right = false;
-						node->ripple_right2left = true;
+						node->direction = RIGHT_TO_LEFT;
 					}
 				}
-			}
-		}
+				break;
+		
+			/*
+			 * Read a new inner tuple from the disk and an outer tuple from the memory.
+			 */
+			case RIGHT_TO_LEFT:
+				// elog(INFO, "Right to Left");
+				if (node->nl_NeedNewInner && !node->ripple_innerEnd)
+				{
+					innerTupleSlot = ExecProcNode(innerPlan);
+					if (TupIsNull(innerTupleSlot))
+					{
+						if (node->ripple_outerEnd)
+							return NULL;
+						node->ripple_innerEnd = true;
+						node->nl_NeedNewOuter = true;
+						node->direction = LEFT_TO_RIGHT;
+					}
+					else
+					{
+						if (TupIsNull(innerPlan->rippleRightPage[node->rippleRightSize]))
+							innerPlan->rippleRightPage[node->rippleRightSize] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
+						ExecCopySlot(innerPlan->rippleRightPage[node->rippleRightSize], innerTupleSlot);
+						node->rippleRightSize++;
+						node->rippleLeftHead = 0;
+						node->nl_NeedNewInner = false;
+						node->nl_MatchedInner = false;
+					}
+				}
+				else
+				{
+					innerTupleSlot = innerPlan->rippleRightPage[node->rippleRightSize-1];
+				}
 
-		/*
-		 * Read a new inner tuple from the disk and an outer tuple from the memory.
-		 */
-		else if (node->ripple_right2left)
-		{
-			if (node->nl_NeedNewInner && !node->ripple_innerEnd)
-			{
-				innerTupleSlot = ExecProcNode(innerPlan);
-				if (TupIsNull(innerTupleSlot))
+				outerTupleSlot = outerPlan->rippleLeftPage[node->rippleLeftHead];
+				node->rippleLeftHead++;
+
+				if (node->rippleLeftHead == node->rippleLeftSize)
 				{
 					if (node->ripple_outerEnd)
-						return NULL;
-					node->ripple_innerEnd = true;
-					node->nl_NeedNewOuter = true;
-					node->ripple_left2right = true;
-					node->ripple_right2left = false;
+					{
+						node->nl_NeedNewInner = true;
+						node->rippleLeftHead = 0;
+					}
+					else
+					{
+						node->nl_NeedNewOuter = true;
+						node->direction = LEFT_TO_RIGHT;
+					}
 				}
-				else
-				{
-					if (TupIsNull(innerPlan->rippleRightPage[node->rippleRightSize]))
-						innerPlan->rippleRightPage[node->rippleRightSize] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
-					ExecCopySlot(innerPlan->rippleRightPage[node->rippleRightSize], innerTupleSlot);
-					node->rippleRightSize++;
-					node->rippleLeftHead = 0;
-					node->nl_NeedNewInner = false;
-					node->nl_MatchedInner = false;
-				}
-			}
-			else
-			{
-				innerTupleSlot = innerPlan->rippleRightPage[node->rippleRightSize-1];
-			}
+				break;
 
-			outerTupleSlot = outerPlan->rippleLeftPage[node->rippleLeftHead];
-			node->rippleLeftHead++;
-			if (node->rippleLeftHead == node->rippleLeftSize)
-			{
-				if (node->ripple_outerEnd)
-				{
-					node->nl_NeedNewInner = true;
-					node->rippleLeftHead = 0;
-				}
-				else
-				{
-					node->nl_NeedNewOuter = true;
-					node->ripple_left2right = true;
-					node->ripple_right2left = false;					
-				}
-			}
+			/*
+			 * Read a new inner tuple from the disk and an outer tuple from the disk.
+			 */
+			default:
+				// elog(INFO, "START");
+				outerTupleSlot = ExecProcNode(outerPlan);
+				if (TupIsNull(outerTupleSlot))
+					return NULL;
+				if (TupIsNull(outerPlan->rippleLeftPage[node->rippleLeftSize]))
+					outerPlan->rippleLeftPage[node->rippleLeftSize] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+				ExecCopySlot(outerPlan->rippleLeftPage[node->rippleLeftSize], outerTupleSlot);
+				node->rippleLeftSize++;
+				node->rippleRightHead = 0;
+				node->nl_NeedNewOuter = false;
+				node->nl_MatchedOuter = false;
+
+				innerTupleSlot = ExecProcNode(innerPlan);
+				if (TupIsNull(innerTupleSlot))
+					return NULL;
+				if (TupIsNull(innerPlan->rippleRightPage[node->rippleRightSize]))
+					innerPlan->rippleRightPage[node->rippleRightSize] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
+				ExecCopySlot(innerPlan->rippleRightPage[node->rippleRightSize], innerTupleSlot);
+				node->rippleRightSize++;				
+				node->nl_NeedNewInner = true;
+
+				node->direction = RIGHT_TO_LEFT;
+				break;
 		}
+
 		econtext->ecxt_outertuple = outerTupleSlot;
 		econtext->ecxt_innertuple = innerTupleSlot;
 
-		////////////////////////////////////////////////////////////////////////////
-		////////////////////////////////////////////////////////////////////////////
+		/*
+		 * If no tuple from inner table,
+		 */
 		if (TupIsNull(innerTupleSlot))
 		{
 			if (!node->nl_MatchedOuter &&
@@ -256,6 +264,9 @@ ExecNestLoop(PlanState *pstate)
 			continue;
 		}
 
+		/*
+		 * If no tuple from outer table,
+		 */
 		else if (TupIsNull(outerTupleSlot))
 		{
 			if (!node->nl_MatchedInner &&
@@ -290,7 +301,7 @@ ExecNestLoop(PlanState *pstate)
 			/* In an antijoin, we never return a matched tuple */
 			if (node->js.jointype == JOIN_ANTI)
 			{
-				node->nl_NeedNewOuter = true;
+				//node->nl_NeedNewOuter = true;
 				continue;		/* return to top of loop */
 			}
 
@@ -430,10 +441,9 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	/*
 	 * Ripple join initialization
 	 */
+	nlstate->direction = BI_DIRECTION;
 	nlstate->nl_NeedNewInner = false;
 	nlstate->nl_MatchedInner = false;
-	nlstate->ripple_left2right = true;
-	nlstate->ripple_right2left = false;
 	nlstate->ripple_outerEnd = false;
 	nlstate->ripple_innerEnd = false;
 

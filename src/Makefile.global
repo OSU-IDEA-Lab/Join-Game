@@ -270,9 +270,9 @@ LLVM_CXXFLAGS =
 
 # Kind-of compilers
 
-BISON = /usr/bin/bison
+BISON = /bin/bison
 BISONFLAGS =  -Wno-deprecated $(YFLAGS)
-FLEX = /usr/bin/flex
+FLEX = /bin/flex
 FLEXFLAGS =  $(LFLAGS)
 DTRACE = 
 DTRACEFLAGS = 
@@ -289,7 +289,7 @@ LDAP_LIBS_BE =
 UUID_LIBS = 
 UUID_EXTRA_OBJS = 
 LLVM_LIBS=
-LD = /usr/bin/ld
+LD = /bin/ld
 with_gnu_ld = yes
 
 # It's critical that within LDFLAGS, all -L switches pointing to build-tree
@@ -324,9 +324,9 @@ X =
 
 # Perl
 
-ifneq (/usr/bin/perl,)
+ifneq (/bin/perl,)
     # quoted to protect pathname with spaces
-    PERL		= '/usr/bin/perl'
+    PERL		= '/bin/perl'
 else
     PERL		= $(missing) perl
 endif
@@ -344,7 +344,7 @@ MSGFMT  =
 MSGFMT_FLAGS = 
 MSGMERGE = 
 PYTHON	= 
-TAR	= /usr/bin/tar
+TAR	= /bin/tar
 XGETTEXT = 
 
 GZIP	= gzip
@@ -446,7 +446,7 @@ endif
 
 # Installation.
 
-install_bin = /usr/bin/install -c
+install_bin = /bin/install -c
 install_sh = $(SHELL) $(top_srcdir)/config/install-sh -c
 INSTALL = $(if $(use_install_sh),$(install_sh),$(if $(install_bin),$(install_bin),$(install_sh)))
 
@@ -460,7 +460,7 @@ INSTALL_SHLIB	= $(INSTALL_SHLIB_ENV) $(INSTALL) $(INSTALL_SHLIB_OPTS) $(INSTALL_
 # Override in Makefile.port if necessary
 INSTALL_SHLIB_OPTS = -m 755
 
-MKDIR_P = /usr/bin/mkdir -p
+MKDIR_P = /bin/mkdir -p
 
 missing		= $(SHELL) $(top_srcdir)/config/missing
 
@@ -472,8 +472,8 @@ STRIP_SHARED_LIB = strip --strip-unneeded
 
 DBTOEPUB	= 
 FOP				= 
-XMLLINT			= /usr/bin/xmllint
-XSLTPROC		= /usr/bin/xsltproc
+XMLLINT			= /bin/xmllint
+XSLTPROC		= /bin/xsltproc
 
 # Code coverage
 
