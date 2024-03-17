@@ -141,6 +141,7 @@ ExecNestLoop(PlanState *pstate)
 
 				innerTupleSlot = innerPlan->rippleRightPage[node->rippleRightHead];
             	node->rippleRightHead++;
+				//elog
 				
 				if (node->rippleRightHead == node->rippleRightSize)
 				{
