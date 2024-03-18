@@ -125,15 +125,36 @@ ExecNestLoop(PlanState *pstate)
 					}
 					else
 					{
+						/*
+		 				 * If the outer page has available memory,
+					 	 */
 						if (TupIsNull(outerPlan->rippleLeftPage[node->rippleLeftSize]))
+						{
 							outerPlan->rippleLeftPage[node->rippleLeftSize] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
-						ExecCopySlot(outerPlan->rippleLeftPage[node->rippleLeftSize], outerTupleSlot);
-						node->rippleLeftSize++;
+							ExecCopySlot(outerPlan->rippleLeftPage[node->rippleLeftSize], outerTupleSlot);
+							node->rippleLeftSize++;
+						}
+						/*
+		 				 * If the outer page does not have available memory, replace the oldest outer tuple from the memory.
+					 	 */
+						else
+						{
+							ExecCopySlot(outerPlan->rippleLeftPage[node->memoryLeftHead], outerTupleSlot);
+							node->memoryLeftHead++;
+							if (node->memoryLeftHead == node->rippleLeftSize)
+							{
+								node->memoryLeftHead = 0;
+							}
+						}
 						node->rippleRightHead = 0;
 						node->nl_NeedNewOuter = false;
 						node->nl_MatchedOuter = false;
 					}
+					econtext->ecxt_outertuple = outerTupleSlot;
 				}
+				/*
+				 * No need to take an outer tuple from the disk, take the latest outer tuple from the memory.
+				 */
 				else
 				{
 					outerTupleSlot = outerPlan->rippleLeftPage[node->rippleLeftSize-1];
@@ -154,8 +175,10 @@ ExecNestLoop(PlanState *pstate)
 						node->direction = RIGHT_TO_LEFT;
 					}
 				}
+				econtext->ecxt_innertuple = innerTupleSlot;
 				break;
-		
+
+
 			/*
 			 * Read a new inner tuple from the disk and an outer tuple from the memory.
 			 */
@@ -174,15 +197,36 @@ ExecNestLoop(PlanState *pstate)
 					}
 					else
 					{
+						/*
+		 				 * If the inner page has available memory,
+					 	 */						
 						if (TupIsNull(innerPlan->rippleRightPage[node->rippleRightSize]))
+						{
 							innerPlan->rippleRightPage[node->rippleRightSize] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
-						ExecCopySlot(innerPlan->rippleRightPage[node->rippleRightSize], innerTupleSlot);
-						node->rippleRightSize++;
+							ExecCopySlot(innerPlan->rippleRightPage[node->rippleRightSize], innerTupleSlot);
+							node->rippleRightSize++;
+						}
+						/*
+		 				 * If the inner page does not have available memory, replace the oldest inner tuple from the memory.
+					 	 */
+						else
+						{
+							ExecCopySlot(innerPlan->rippleRightPage[node->memoryRightHead], innerTupleSlot);
+							node->memoryRightHead++;
+							if (node->memoryRightHead == node->rippleRightSize)
+							{
+								node->memoryRightHead = 0;
+							}
+						}						
 						node->rippleLeftHead = 0;
 						node->nl_NeedNewInner = false;
 						node->nl_MatchedInner = false;
 					}
+					econtext->ecxt_innertuple = innerTupleSlot;
 				}
+				/*
+				 * No need to take an inner tuple from the disk, take the latest inner tuple from the memory.
+				 */
 				else
 				{
 					innerTupleSlot = innerPlan->rippleRightPage[node->rippleRightSize-1];
@@ -204,20 +248,28 @@ ExecNestLoop(PlanState *pstate)
 						node->direction = LEFT_TO_RIGHT;
 					}
 				}
+				econtext->ecxt_outertuple = outerTupleSlot;
 				break;
 
+
 			/*
-			 * Read a new inner tuple from the disk and an outer tuple from the disk.
+			 * Read a new inner tuple from the disk and a new outer tuple from the disk.
 			 */
 			default:
-				// elog(INFO, "START");
+				// elog(INFO, "Start");
 				outerTupleSlot = ExecProcNode(outerPlan);
 				if (TupIsNull(outerTupleSlot))
 					return NULL;
+				/*
+				 * If memory is available for an outer table
+				 */
 				if (TupIsNull(outerPlan->rippleLeftPage[node->rippleLeftSize]))
+				{
 					outerPlan->rippleLeftPage[node->rippleLeftSize] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
-				ExecCopySlot(outerPlan->rippleLeftPage[node->rippleLeftSize], outerTupleSlot);
-				node->rippleLeftSize++;
+					ExecCopySlot(outerPlan->rippleLeftPage[node->rippleLeftSize], outerTupleSlot);
+					node->rippleLeftSize++;
+				}
+				econtext->ecxt_outertuple = outerTupleSlot;
 				node->rippleRightHead = 0;
 				node->nl_NeedNewOuter = false;
 				node->nl_MatchedOuter = false;
@@ -225,18 +277,22 @@ ExecNestLoop(PlanState *pstate)
 				innerTupleSlot = ExecProcNode(innerPlan);
 				if (TupIsNull(innerTupleSlot))
 					return NULL;
+				/*
+				 * If memory is available for an inner table
+				 */					
 				if (TupIsNull(innerPlan->rippleRightPage[node->rippleRightSize]))
+				{
 					innerPlan->rippleRightPage[node->rippleRightSize] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
-				ExecCopySlot(innerPlan->rippleRightPage[node->rippleRightSize], innerTupleSlot);
-				node->rippleRightSize++;				
+					ExecCopySlot(innerPlan->rippleRightPage[node->rippleRightSize], innerTupleSlot);
+					node->rippleRightSize++;
+				}
+				econtext->ecxt_innertuple = innerTupleSlot;
 				node->nl_NeedNewInner = true;
-
+				
 				node->direction = RIGHT_TO_LEFT;
 				break;
 		}
 
-		econtext->ecxt_outertuple = outerTupleSlot;
-		econtext->ecxt_innertuple = innerTupleSlot;
 
 		/*
 		 * If no tuple from inner table,
@@ -283,6 +339,7 @@ ExecNestLoop(PlanState *pstate)
 			continue;
 		}
 
+
 		/*
 		 * at this point we have a new pair of inner and outer tuples so we
 		 * test the inner and outer tuples to see if they satisfy the node's
@@ -300,7 +357,7 @@ ExecNestLoop(PlanState *pstate)
 			/* In an antijoin, we never return a matched tuple */
 			if (node->js.jointype == JOIN_ANTI)
 			{
-				//node->nl_NeedNewOuter = true;
+				node->nl_NeedNewOuter = true;
 				continue;		/* return to top of loop */
 			}
 
@@ -450,6 +507,9 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
     nlstate->rippleRightHead = 0;
     nlstate->rippleLeftSize = 0;
     nlstate->rippleRightSize = 0;
+
+	nlstate->memoryLeftHead = 0;
+	nlstate->memoryRightHead = 0;
 	
 	return nlstate;
 }

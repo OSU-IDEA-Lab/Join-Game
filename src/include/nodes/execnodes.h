@@ -1859,6 +1859,9 @@ typedef struct NestLoopState
 	unsigned int rippleRightHead;
     unsigned int rippleRightSize;
 
+	unsigned int memoryLeftHead;
+	unsigned int memoryRightHead;
+
 } NestLoopState;
 
 /* ----------------
