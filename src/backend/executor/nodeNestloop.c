@@ -365,7 +365,7 @@ ExecNestLoop(PlanState *pstate)
 			/* In an antijoin, we never return a matched tuple */
 			if (node->js.jointype == JOIN_ANTI)
 			{
-				node->nl_NeedNewOuter = true;
+				//node->nl_NeedNewOuter = true;
 				continue;		/* return to top of loop */
 			}
 
@@ -374,10 +374,12 @@ ExecNestLoop(PlanState *pstate)
 			 * consider returning this one, but after that continue with next
 			 * outer tuple.
 			 */
+			/*
 			if (node->js.single_match)
 			{
 				node->nl_NeedNewOuter = true;
 			}
+			*/
 
 			if (otherqual == NULL || ExecQual(otherqual, econtext))
 			{
