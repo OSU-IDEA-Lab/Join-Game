@@ -115,6 +115,10 @@ ExecNestLoop(PlanState *pstate)
 				if (node->nl_NeedNewOuter && !node->ripple_outerEnd)
 				{
 					outerTupleSlot = ExecProcNode(outerPlan);
+					node->nl_MatchedOuter = false;
+					/*
+		 			 * If no tuple from outer table,
+		 			 */					
 					if (TupIsNull(outerTupleSlot))
 					{
 						if (node->ripple_innerEnd)
@@ -122,6 +126,18 @@ ExecNestLoop(PlanState *pstate)
 						node->ripple_outerEnd = true;
 						node->nl_NeedNewInner = true;
 						node->direction = RIGHT_TO_LEFT;
+
+						if (!node->nl_MatchedInner &&
+							(node->js.jointype == JOIN_RIGHT ||
+				 			node->js.jointype == JOIN_ANTI))
+						{
+							econtext->ecxt_outertuple = node->nl_NullOuterTupleSlot;
+							if (otherqual == NULL || ExecQual(otherqual, econtext))
+								return ExecProject(node->js.ps.ps_ProjInfo);
+							else
+								InstrCountFiltered2(node, 1);
+						}
+						continue;
 					}
 					else
 					{
@@ -139,6 +155,9 @@ ExecNestLoop(PlanState *pstate)
 					 	 */
 						else
 						{
+							ExecDropSingleTupleTableSlot(outerPlan->rippleLeftPage[node->memoryLeftHead]);
+							
+							outerPlan->rippleLeftPage[node->memoryLeftHead] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
 							ExecCopySlot(outerPlan->rippleLeftPage[node->memoryLeftHead], outerTupleSlot);
 							node->memoryLeftHead++;
 							if (node->memoryLeftHead == node->rippleLeftSize)
@@ -160,6 +179,9 @@ ExecNestLoop(PlanState *pstate)
 					outerTupleSlot = outerPlan->rippleLeftPage[node->rippleLeftSize-1];
 				}
 
+				/*
+				 * Take an inner tuple from the memory.
+				 */
 				innerTupleSlot = innerPlan->rippleRightPage[node->rippleRightHead];
             	node->rippleRightHead++;
 				if (node->rippleRightHead == node->rippleRightSize)
@@ -176,6 +198,7 @@ ExecNestLoop(PlanState *pstate)
 					}
 				}
 				econtext->ecxt_innertuple = innerTupleSlot;
+
 				break;
 
 
@@ -187,6 +210,10 @@ ExecNestLoop(PlanState *pstate)
 				if (node->nl_NeedNewInner && !node->ripple_innerEnd)
 				{
 					innerTupleSlot = ExecProcNode(innerPlan);
+					node->nl_MatchedInner = false;
+					/*
+					 * If no tuple from inner table,
+		 			 */
 					if (TupIsNull(innerTupleSlot))
 					{
 						if (node->ripple_outerEnd)
@@ -194,6 +221,24 @@ ExecNestLoop(PlanState *pstate)
 						node->ripple_innerEnd = true;
 						node->nl_NeedNewOuter = true;
 						node->direction = LEFT_TO_RIGHT;
+
+						if (!node->nl_MatchedOuter &&
+							(node->js.jointype == JOIN_LEFT ||
+							 node->js.jointype == JOIN_ANTI))
+						{
+							econtext->ecxt_innertuple = node->nl_NullInnerTupleSlot;
+
+							ENL1_printf("testing qualification for outer-join tuple");
+
+							if (otherqual == NULL || ExecQual(otherqual, econtext))
+							{
+								ENL1_printf("qualification succeeded, projecting tuple");
+								return ExecProject(node->js.ps.ps_ProjInfo);
+							}
+							else
+								InstrCountFiltered2(node, 1);
+						}
+						continue;
 					}
 					else
 					{
@@ -211,6 +256,9 @@ ExecNestLoop(PlanState *pstate)
 					 	 */
 						else
 						{
+							ExecDropSingleTupleTableSlot(innerPlan->rippleRightPage[node->memoryRightHead]);
+
+							innerPlan->rippleRightPage[node->memoryRightHead] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
 							ExecCopySlot(innerPlan->rippleRightPage[node->memoryRightHead], innerTupleSlot);
 							node->memoryRightHead++;
 							if (node->memoryRightHead == node->rippleRightSize)
@@ -232,6 +280,9 @@ ExecNestLoop(PlanState *pstate)
 					innerTupleSlot = innerPlan->rippleRightPage[node->rippleRightSize-1];
 				}
 
+				/*
+				 * Take an outer tuple from the memory.
+				 */
 				outerTupleSlot = outerPlan->rippleLeftPage[node->rippleLeftHead];
 				node->rippleLeftHead++;
 
@@ -249,6 +300,7 @@ ExecNestLoop(PlanState *pstate)
 					}
 				}
 				econtext->ecxt_outertuple = outerTupleSlot;
+
 				break;
 
 
@@ -270,9 +322,9 @@ ExecNestLoop(PlanState *pstate)
 					node->rippleLeftSize++;
 				}
 				econtext->ecxt_outertuple = outerTupleSlot;
-				node->rippleRightHead = 0;
 				node->nl_NeedNewOuter = false;
 				node->nl_MatchedOuter = false;
+				node->rippleRightHead = 0;
 
 				innerTupleSlot = ExecProcNode(innerPlan);
 				if (TupIsNull(innerTupleSlot))
@@ -288,55 +340,10 @@ ExecNestLoop(PlanState *pstate)
 				}
 				econtext->ecxt_innertuple = innerTupleSlot;
 				node->nl_NeedNewInner = true;
-				
+				node->nl_MatchedInner = false;
 				node->direction = RIGHT_TO_LEFT;
+
 				break;
-		}
-
-
-		/*
-		 * If no tuple from inner table,
-		 */
-		if (TupIsNull(innerTupleSlot))
-		{
-			if (!node->nl_MatchedOuter &&
-				(node->js.jointype == JOIN_LEFT ||
-				 node->js.jointype == JOIN_ANTI))
-			{
-				econtext->ecxt_innertuple = node->nl_NullInnerTupleSlot;
-
-				ENL1_printf("testing qualification for outer-join tuple");
-
-				if (otherqual == NULL || ExecQual(otherqual, econtext))
-				{
-
-					ENL1_printf("qualification succeeded, projecting tuple");
-					return ExecProject(node->js.ps.ps_ProjInfo);
-				}
-				else
-					InstrCountFiltered2(node, 1);
-			}
-			continue;
-		}
-
-		/*
-		 * If no tuple from outer table,
-		 */
-		else if (TupIsNull(outerTupleSlot))
-		{
-			if (!node->nl_MatchedInner &&
-				(node->js.jointype == JOIN_LEFT ||
-				 node->js.jointype == JOIN_ANTI))
-			{
-				econtext->ecxt_outertuple = node->nl_NullOuterTupleSlot;
-				if (otherqual == NULL || ExecQual(otherqual, econtext))
-				{
-					return ExecProject(node->js.ps.ps_ProjInfo);
-				}
-				else
-					InstrCountFiltered2(node, 1);
-			}
-			continue;
 		}
 
 
@@ -353,6 +360,7 @@ ExecNestLoop(PlanState *pstate)
 		if (ExecQual(joinqual, econtext))
 		{
 			node->nl_MatchedOuter = true;
+			node->nl_MatchedInner = true;
 
 			/* In an antijoin, we never return a matched tuple */
 			if (node->js.jointype == JOIN_ANTI)
@@ -367,7 +375,9 @@ ExecNestLoop(PlanState *pstate)
 			 * outer tuple.
 			 */
 			if (node->js.single_match)
+			{
 				node->nl_NeedNewOuter = true;
+			}
 
 			if (otherqual == NULL || ExecQual(otherqual, econtext))
 			{
