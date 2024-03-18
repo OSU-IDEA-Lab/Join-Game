@@ -174,10 +174,10 @@ ExecNestLoop(PlanState *pstate)
 				/*
 				 * No need to take an outer tuple from the disk, take the latest outer tuple from the memory.
 				 */
-				else
-				{
-					outerTupleSlot = outerPlan->rippleLeftPage[node->rippleLeftSize-1];
-				}
+				//else
+				//{
+				//	outerTupleSlot = outerPlan->rippleLeftPage[node->rippleLeftSize-1];
+				//}
 
 				/*
 				 * Take an inner tuple from the memory.
@@ -275,10 +275,10 @@ ExecNestLoop(PlanState *pstate)
 				/*
 				 * No need to take an inner tuple from the disk, take the latest inner tuple from the memory.
 				 */
-				else
-				{
-					innerTupleSlot = innerPlan->rippleRightPage[node->rippleRightSize-1];
-				}
+				//else
+				//{
+				//	innerTupleSlot = innerPlan->rippleRightPage[node->rippleRightSize-1];
+				//}
 
 				/*
 				 * Take an outer tuple from the memory.
@@ -367,7 +367,7 @@ ExecNestLoop(PlanState *pstate)
 			 * For either the anti-join or single-match case, the algorithm
 			 * attempts to perform joins that can be redundant. To optimize
 			 * the Ripple Join process, this part needs to be changed.
-			 * We can consider to remember which tuple in the memory passed it,
+			 * We can consider to remember tuples in the memory passed here,
 			 * and for those tuples passed these conditions skip to join.
 			 */
 			/* In an antijoin, we never return a matched tuple */
