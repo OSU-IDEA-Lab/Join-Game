@@ -362,10 +362,29 @@ ExecNestLoop(PlanState *pstate)
 			node->nl_MatchedOuter = true;
 			node->nl_MatchedInner = true;
 
+			///////////////////////////////////////////////////////////////////
+			/*
+			 * For either the anti-join or single-match case, the algorithm
+			 * attempts to perform joins that can be redundant. To optimize
+			 * the Ripple Join process, this part needs to be changed.
+			 * We can consider to remember which tuple in the memory passed it,
+			 * and for those tuples passed these conditions skip to join.
+			 */
 			/* In an antijoin, we never return a matched tuple */
 			if (node->js.jointype == JOIN_ANTI)
 			{
-				//node->nl_NeedNewOuter = true;
+				switch (node->direction)
+				{
+					case LEFT_TO_RIGHT:
+						node->nl_NeedNewOuter = true;
+						node->direction = RIGHT_TO_LEFT;
+						break;
+
+					case RIGHT_TO_LEFT:
+						node->nl_NeedNewInner = true;
+						node->direction = LEFT_TO_RIGHT;
+						break;
+				}
 				continue;		/* return to top of loop */
 			}
 
@@ -374,12 +393,23 @@ ExecNestLoop(PlanState *pstate)
 			 * consider returning this one, but after that continue with next
 			 * outer tuple.
 			 */
-			/*
 			if (node->js.single_match)
 			{
+				switch (node->direction)
+				{
+					case LEFT_TO_RIGHT:
+						node->nl_NeedNewOuter = true;
+						node->direction = RIGHT_TO_LEFT;
+						break;
+						
+					case RIGHT_TO_LEFT:
+						node->nl_NeedNewInner = true;
+						node->direction = LEFT_TO_RIGHT;
+						break;
+				}				
 				node->nl_NeedNewOuter = true;
 			}
-			*/
+			///////////////////////////////////////////////////////////////////
 
 			if (otherqual == NULL || ExecQual(otherqual, econtext))
 			{
