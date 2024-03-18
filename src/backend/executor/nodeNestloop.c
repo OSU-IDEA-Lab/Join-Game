@@ -62,12 +62,13 @@
  * ----------------------------------------------------------------
  */
 
-#define PGNST8_LEFT_PAGE_MAX_SIZE 320
-#define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 4096
-#define MUST_EXPLORE_TUPLE_COUNT_N 2048
-#define FAILURE_COUNT_N 2048
-#define DEBUG_FLAG 0
-#define OSL_FLAG 1
+#define PGNST8_LEFT_PAGE_MAX_SIZE 320 // Memory Size for ToExploitBatch after every exploration.
+#define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 4096 // In Memory Size Right Table Cache Size, used for exploration. 
+#define MUST_EXPLORE_TUPLE_COUNT_N 2048 // Number of tuples that must be explored before Exploration can happen. 
+#define FAILURE_COUNT_N 2048 // Number of failures allowed during exploration, before jumping into next outer tuple, for exploration
+#define DEBUG_FLAG 0 // print statements will be activate if set to 1
+#define OSL_FLAG 1 // Will work as a default Page Wise Nested loop if set to 0
+#define OSL_NO_LEARN_FLAG 1 // Will work as a no learning if set to 0
 
 
 void
@@ -183,7 +184,7 @@ seedToExploitLeftPage(PlanState *pstate){
 		int dummy;
 	}
 	else{
-		outerPlan->oslBnd8_currExploreTupleFailureCount =0;
+		// outerPlan->oslBnd8_currExploreTupleFailureCount =0;
 		outerPlan->oslBnd8_numTuplesExplored=0;
 		outerPlan->pgNst8LeftPageHead = 0;
 		outerPlan->pgNst8LeftPageSize = 0;
@@ -203,10 +204,10 @@ seedToExploitLeftPage(PlanState *pstate){
 				break;
 			}
 
-			if (outerPlan->oslBnd8_currExploreTupleFailureCount > FAILURE_COUNT_N){
-				if(DEBUG_FLAG){elog(INFO, "failure_count greater than FAILURE_COUNT_N, failure_count: %u", outerPlan->oslBnd8_currExploreTupleFailureCount);}
-				break;
-			}
+			// if (outerPlan->oslBnd8_currExploreTupleFailureCount > FAILURE_COUNT_N){
+			// 	if(DEBUG_FLAG){elog(INFO, "failure_count greater than FAILURE_COUNT_N, failure_count: %u", outerPlan->oslBnd8_currExploreTupleFailureCount);}
+			// 	break;
+			// }
 
 			ENL1_printf("getting new outer tuple");
 			if(DEBUG_FLAG){elog(INFO, "outerPlan-> Disk Read Tuple");}
@@ -291,7 +292,7 @@ seedToExploitLeftPage(PlanState *pstate){
 
 		if (outerPlan->oslBnd8RightTableCacheHead==0){
 			node->nl_NeedNewOuter = true;
-			if(outerPlan->oslBnd8_currExploreTupleReward>0){
+			if(OSL_NO_LEARN_FLAG || outerPlan->oslBnd8_currExploreTupleReward>0){
 				// Allocate Memory if it has not been allocated
 				if(DEBUG_FLAG){elog(INFO, "outerPlan->pgNst8LeftPageHead: %u", outerPlan->pgNst8LeftPageHead);}
 				if(DEBUG_FLAG){elog(INFO, "Match Found, Adding it to the LEft Page, num_tuples_explored: %u", outerPlan->oslBnd8_numTuplesExplored);}
