@@ -161,9 +161,7 @@ ExecNestLoop(PlanState *pstate)
 							ExecCopySlot(outerPlan->rippleLeftPage[node->memoryLeftHead], outerTupleSlot);
 							node->memoryLeftHead++;
 							if (node->memoryLeftHead == node->rippleLeftSize)
-							{
 								node->memoryLeftHead = 0;
-							}
 						}
 						node->rippleRightHead = 0;
 						node->nl_NeedNewOuter = false;
@@ -262,9 +260,7 @@ ExecNestLoop(PlanState *pstate)
 							ExecCopySlot(innerPlan->rippleRightPage[node->memoryRightHead], innerTupleSlot);
 							node->memoryRightHead++;
 							if (node->memoryRightHead == node->rippleRightSize)
-							{
 								node->memoryRightHead = 0;
-							}
 						}						
 						node->rippleLeftHead = 0;
 						node->nl_NeedNewInner = false;
