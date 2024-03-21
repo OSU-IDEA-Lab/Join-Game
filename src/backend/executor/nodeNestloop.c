@@ -114,6 +114,7 @@ ExecNestLoop(PlanState *pstate)
 				// elog(INFO, "Left to Right");
 				if (node->nl_NeedNewOuter && !node->ripple_outerEnd)
 				{
+					// elog(INFO, "getting new outer tuple");
 					outerTupleSlot = ExecProcNode(outerPlan);
 					node->nl_MatchedOuter = false;
 					/*
@@ -122,7 +123,10 @@ ExecNestLoop(PlanState *pstate)
 					if (TupIsNull(outerTupleSlot))
 					{
 						if (node->ripple_innerEnd)
+						{
+							// elog(INFO, "no outer and inner tuple, ending join");
 							return NULL;
+						}
 						node->ripple_outerEnd = true;
 						node->nl_NeedNewInner = true;
 						node->direction = RIGHT_TO_LEFT;
@@ -132,8 +136,14 @@ ExecNestLoop(PlanState *pstate)
 				 			node->js.jointype == JOIN_ANTI))
 						{
 							econtext->ecxt_outertuple = node->nl_NullOuterTupleSlot;
+
+							// elog(INFO, "testing qualification for inner-join tuple");
+
 							if (otherqual == NULL || ExecQual(otherqual, econtext))
+							{
+								// elog(INFO, "qualification succeeded, projecting tuple");
 								return ExecProject(node->js.ps.ps_ProjInfo);
+							}
 							else
 								InstrCountFiltered2(node, 1);
 						}
@@ -146,15 +156,20 @@ ExecNestLoop(PlanState *pstate)
 					 	 */
 						if (TupIsNull(outerPlan->rippleLeftPage[node->rippleLeftSize]))
 						{
+							// elog(INFO, "store new outer tuple into left page");
+
 							outerPlan->rippleLeftPage[node->rippleLeftSize] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
 							ExecCopySlot(outerPlan->rippleLeftPage[node->rippleLeftSize], outerTupleSlot);
 							node->rippleLeftSize++;
 						}
 						/*
-		 				 * If the outer page does not have available memory, replace the oldest outer tuple from the memory.
+		 				 * Just in case if the outer page does not have available memory, replace the oldest outer tuple from the memory.
 					 	 */
 						else
 						{
+							// elog(INFO, "replace old outer tuple with new outer tuple");
+							elog(WARNING, "The memory exceeds, so replacing an old outer tuple with a new outer tuple");
+
 							ExecDropSingleTupleTableSlot(outerPlan->rippleLeftPage[node->memoryLeftHead]);
 							
 							outerPlan->rippleLeftPage[node->memoryLeftHead] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
@@ -167,34 +182,35 @@ ExecNestLoop(PlanState *pstate)
 						node->nl_NeedNewOuter = false;
 						node->nl_MatchedOuter = false;
 					}
+					// elog(INFO, "saving new outer tuple information");
 					econtext->ecxt_outertuple = outerTupleSlot;
 				}
 				/*
 				 * No need to take an outer tuple from the disk, take the latest outer tuple from the memory.
 				 */
-				//else
-				//{
-				//	outerTupleSlot = outerPlan->rippleLeftPage[node->rippleLeftSize-1];
-				//}
-
+				
 				/*
 				 * Take an inner tuple from the memory.
 				 */
+				// elog(INFO, "getting old inner tuple");
 				innerTupleSlot = innerPlan->rippleRightPage[node->rippleRightHead];
             	node->rippleRightHead++;
 				if (node->rippleRightHead == node->rippleRightSize)
 				{
 					if (node->ripple_innerEnd)
 					{
+						// elog(INFO, "no inner tuple, getting new outer tuple again");
 						node->nl_NeedNewOuter = true;
 						node->rippleRightHead = 0;
 					}
 					else
 					{
+						// elog(INFO, "right page join finished, getting new inner tuple");
 						node->nl_NeedNewInner = true;
 						node->direction = RIGHT_TO_LEFT;
 					}
 				}
+				// elog(INFO, "saving old inner tuple information");
 				econtext->ecxt_innertuple = innerTupleSlot;
 
 				break;
@@ -207,6 +223,7 @@ ExecNestLoop(PlanState *pstate)
 				// elog(INFO, "Right to Left");
 				if (node->nl_NeedNewInner && !node->ripple_innerEnd)
 				{
+					// elog(INFO, "getting new inner tuple");
 					innerTupleSlot = ExecProcNode(innerPlan);
 					node->nl_MatchedInner = false;
 					/*
@@ -214,8 +231,12 @@ ExecNestLoop(PlanState *pstate)
 		 			 */
 					if (TupIsNull(innerTupleSlot))
 					{
+						// elog(INFO, "qualification succeeded, projecting tuple");
 						if (node->ripple_outerEnd)
+						{
+							// elog(INFO, "no outer and inner tuple, ending join");
 							return NULL;
+						}
 						node->ripple_innerEnd = true;
 						node->nl_NeedNewOuter = true;
 						node->direction = LEFT_TO_RIGHT;
@@ -226,11 +247,11 @@ ExecNestLoop(PlanState *pstate)
 						{
 							econtext->ecxt_innertuple = node->nl_NullInnerTupleSlot;
 
-							ENL1_printf("testing qualification for outer-join tuple");
+							// elog(INFO, "testing qualification for outer-join tuple");
 
 							if (otherqual == NULL || ExecQual(otherqual, econtext))
 							{
-								ENL1_printf("qualification succeeded, projecting tuple");
+								// elog(INFO, "qualification succeeded, projecting tuple");
 								return ExecProject(node->js.ps.ps_ProjInfo);
 							}
 							else
@@ -245,15 +266,20 @@ ExecNestLoop(PlanState *pstate)
 					 	 */						
 						if (TupIsNull(innerPlan->rippleRightPage[node->rippleRightSize]))
 						{
+							// elog(INFO, "store new inner tuple into right page");
+
 							innerPlan->rippleRightPage[node->rippleRightSize] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
 							ExecCopySlot(innerPlan->rippleRightPage[node->rippleRightSize], innerTupleSlot);
 							node->rippleRightSize++;
 						}
 						/*
-		 				 * If the inner page does not have available memory, replace the oldest inner tuple from the memory.
+		 				 * Just in case if the inner page does not have available memory, replace the oldest inner tuple from the memory.
 					 	 */
 						else
 						{
+							// elog(INFO, "replace old inner tuple with new inner tuple");
+							elog(WARNING, "The memory exceeds, so replacing an old inner tuple with a new inner tuple");
+
 							ExecDropSingleTupleTableSlot(innerPlan->rippleRightPage[node->memoryRightHead]);
 
 							innerPlan->rippleRightPage[node->memoryRightHead] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
@@ -266,19 +292,16 @@ ExecNestLoop(PlanState *pstate)
 						node->nl_NeedNewInner = false;
 						node->nl_MatchedInner = false;
 					}
+					// elog(INFO, "saving new inner tuple information");
 					econtext->ecxt_innertuple = innerTupleSlot;
 				}
 				/*
 				 * No need to take an inner tuple from the disk, take the latest inner tuple from the memory.
-				 */
-				//else
-				//{
-				//	innerTupleSlot = innerPlan->rippleRightPage[node->rippleRightSize-1];
-				//}
 
 				/*
 				 * Take an outer tuple from the memory.
 				 */
+				// elog(INFO, "getting old outer tuple");
 				outerTupleSlot = outerPlan->rippleLeftPage[node->rippleLeftHead];
 				node->rippleLeftHead++;
 
@@ -286,15 +309,18 @@ ExecNestLoop(PlanState *pstate)
 				{
 					if (node->ripple_outerEnd)
 					{
+						// elog(INFO, "no outer tuple, getting new inner tuple again");
 						node->nl_NeedNewInner = true;
 						node->rippleLeftHead = 0;
 					}
 					else
 					{
+						// elog(INFO, "left page join finished, getting new outer tuple");
 						node->nl_NeedNewOuter = true;
 						node->direction = LEFT_TO_RIGHT;
 					}
 				}
+				// elog(INFO, "saving old outer tuple information");
 				econtext->ecxt_outertuple = outerTupleSlot;
 
 				break;
@@ -305,9 +331,13 @@ ExecNestLoop(PlanState *pstate)
 			 */
 			default:
 				// elog(INFO, "Start");
+				// elog(INFO, "getting new outer tuple");
 				outerTupleSlot = ExecProcNode(outerPlan);
 				if (TupIsNull(outerTupleSlot))
+				{
+					// elog(INFO, "no outer tuple, ending join");
 					return NULL;
+				}
 				/*
 				 * If memory is available for an outer table
 				 */
@@ -317,14 +347,19 @@ ExecNestLoop(PlanState *pstate)
 					ExecCopySlot(outerPlan->rippleLeftPage[node->rippleLeftSize], outerTupleSlot);
 					node->rippleLeftSize++;
 				}
+				// elog(INFO, "saving new outer tuple information");
 				econtext->ecxt_outertuple = outerTupleSlot;
 				node->nl_NeedNewOuter = false;
 				node->nl_MatchedOuter = false;
 				node->rippleRightHead = 0;
 
+				// elog(INFO, "getting new inner tuple");
 				innerTupleSlot = ExecProcNode(innerPlan);
 				if (TupIsNull(innerTupleSlot))
+				{
+					// elog(INFO, "no inner tuple, ending join");
 					return NULL;
+				}
 				/*
 				 * If memory is available for an inner table
 				 */					
@@ -334,6 +369,7 @@ ExecNestLoop(PlanState *pstate)
 					ExecCopySlot(innerPlan->rippleRightPage[node->rippleRightSize], innerTupleSlot);
 					node->rippleRightSize++;
 				}
+				// elog(INFO, "saving new inner tuple information");
 				econtext->ecxt_innertuple = innerTupleSlot;
 				node->nl_NeedNewInner = true;
 				node->nl_MatchedInner = false;
@@ -351,7 +387,7 @@ ExecNestLoop(PlanState *pstate)
 		 * Only the joinquals determine MatchedOuter status, but all quals
 		 * must pass to actually return the tuple.
 		 */
-		ENL1_printf("testing qualification");
+		// elog(INFO, "testing qualification");
 
 		if (ExecQual(joinqual, econtext))
 		{
@@ -413,7 +449,7 @@ ExecNestLoop(PlanState *pstate)
 				 * qualification was satisfied so we project and return the
 				 * slot containing the result tuple using ExecProject().
 				 */
-				ENL1_printf("qualification succeeded, projecting tuple");
+				// elog(INFO, "qualification succeeded, projecting tuple");
 				return ExecProject(node->js.ps.ps_ProjInfo);
 			}
 			else
@@ -427,7 +463,7 @@ ExecNestLoop(PlanState *pstate)
 		 */
 		ResetExprContext(econtext);
 
-		ENL1_printf("qualification failed, looping");
+		// elog(INFO, "qualification failed, looping");
 	}
 }
 
@@ -574,6 +610,33 @@ ExecEndNestLoop(NestLoopState *node)
 	 */
 	ExecClearTuple(node->js.ps.ps_ResultTupleSlot);
 
+	/*
+	 * clean out the ripple pages
+	 */
+	int i;
+	PlanState  *outerPlan;
+	PlanState  *innerPlan;
+	outerPlan = outerPlanState(node);
+	innerPlan = innerPlanState(node);
+	
+	for (i = 0; i < node->rippleLeftSize; i++)
+	{
+		if (!TupIsNull(outerPlan->rippleLeftPage[i]))
+		{
+			ExecDropSingleTupleTableSlot(outerPlan->rippleLeftPage[i]);
+			outerPlan->rippleLeftPage[i] = NULL;
+		}
+	}
+
+	for (i = 0; i < node->rippleRightSize; i++)
+	{
+		if (!TupIsNull(innerPlan->rippleRightPage[i]))
+		{
+			ExecDropSingleTupleTableSlot(innerPlan->rippleRightPage[i]);
+			innerPlan->rippleRightPage[i] = NULL;
+		}
+	}
+	
 	/*
 	 * close down subplans
 	 */
