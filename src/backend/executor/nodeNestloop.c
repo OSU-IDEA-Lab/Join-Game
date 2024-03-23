@@ -482,7 +482,7 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	NL1_printf("ExecInitNestLoop: %s\n",
 			   "initializing node");
 	
-	elog(INFO, "Nested loop is called:");
+	elog(INFO, "Ripple join is called:");
 	/*
 	 * create state structure
 	 */
