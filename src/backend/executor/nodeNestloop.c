@@ -31,6 +31,18 @@
 #include "access/tupdesc.h"
 #include "catalog/pg_type.h"
 #include "utils/rel.h"
+
+#include "executor/hashjoin.h"
+#include "executor/nodeHash.h"
+
+
+/*
+ * States of ripple join state machine
+ */
+#define LEFT_TO_RIGHT		1
+#define RIGHT_TO_LEFT		2
+
+
 /* ----------------------------------------------------------------
  *		ExecNestLoop(node)
  *
@@ -138,7 +150,6 @@ ExecNestLoop(PlanState *pstate)
 							econtext->ecxt_outertuple = node->nl_NullOuterTupleSlot;
 
 							// elog(INFO, "testing qualification for inner-join tuple");
-
 							if (otherqual == NULL || ExecQual(otherqual, econtext))
 							{
 								// elog(INFO, "qualification succeeded, projecting tuple");
@@ -168,7 +179,7 @@ ExecNestLoop(PlanState *pstate)
 						else
 						{
 							// elog(INFO, "replace old outer tuple with new outer tuple");
-							elog(WARNING, "The memory exceeds, so replacing an old outer tuple with a new outer tuple");
+							elog(WARNING, "The memory exceeds, replacing an old outer tuple with a new outer tuple");
 
 							ExecDropSingleTupleTableSlot(outerPlan->rippleLeftPage[node->memoryLeftHead]);
 							
@@ -278,7 +289,7 @@ ExecNestLoop(PlanState *pstate)
 						else
 						{
 							// elog(INFO, "replace old inner tuple with new inner tuple");
-							elog(WARNING, "The memory exceeds, so replacing an old inner tuple with a new inner tuple");
+							elog(WARNING, "The memory exceeds, replacing an old inner tuple with a new inner tuple");
 
 							ExecDropSingleTupleTableSlot(innerPlan->rippleRightPage[node->memoryRightHead]);
 
@@ -362,7 +373,7 @@ ExecNestLoop(PlanState *pstate)
 				}
 				/*
 				 * If memory is available for an inner table
-				 */					
+				 */
 				if (TupIsNull(innerPlan->rippleRightPage[node->rippleRightSize]))
 				{
 					innerPlan->rippleRightPage[node->rippleRightSize] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
@@ -394,7 +405,6 @@ ExecNestLoop(PlanState *pstate)
 			node->nl_MatchedOuter = true;
 			node->nl_MatchedInner = true;
 
-			///////////////////////////////////////////////////////////////////
 			/*
 			 * For either the anti-join or single-match case, the algorithm
 			 * attempts to perform joins that can be redundant. To optimize
@@ -441,7 +451,6 @@ ExecNestLoop(PlanState *pstate)
 				}				
 				node->nl_NeedNewOuter = true;
 			}
-			///////////////////////////////////////////////////////////////////
 
 			if (otherqual == NULL || ExecQual(otherqual, econtext))
 			{
@@ -569,9 +578,9 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 			   "node initialized");
 	
 	/*
-	 * Ripple join initialization
+	 * Hash Ripple join initialization
 	 */
-	nlstate->direction = BI_DIRECTION;
+	nlstate->direction = 0;
 	nlstate->nl_NeedNewInner = false;
 	nlstate->nl_MatchedInner = false;
 	nlstate->ripple_outerEnd = false;
