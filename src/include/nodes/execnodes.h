@@ -920,8 +920,8 @@ typedef struct DummyBanditState
     unsigned int flag1;
 }DummyBanditState;
 
-#define RIPPLE_LEFT_PAGE_SIZE 4096
-#define RIPPLE_RIGHT_PAGE_SIZE 65536
+#define RIPPLE_LEFT_PAGE_SIZE 524288
+#define RIPPLE_RIGHT_PAGE_SIZE 524288
 typedef struct PlanState
 {
 
@@ -1843,11 +1843,7 @@ typedef struct NestLoopState
 	/*
 	 * Ripple join variables
 	 */
-	enum RippleDirection {
-        BI_DIRECTION,
-		LEFT_TO_RIGHT,
-        RIGHT_TO_LEFT,		
-    } direction; // Variable of type enum RippleDirection
+	unsigned int direction;
 	bool		nl_NeedNewInner;
 	bool		nl_MatchedInner;
 	bool		ripple_outerEnd;

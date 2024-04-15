@@ -39,6 +39,7 @@
 /*
  * States of ripple join state machine
  */
+#define BI_DIRECTION		0
 #define LEFT_TO_RIGHT		1
 #define RIGHT_TO_LEFT		2
 
@@ -340,7 +341,7 @@ ExecNestLoop(PlanState *pstate)
 			/*
 			 * Read a new inner tuple from the disk and a new outer tuple from the disk.
 			 */
-			default:
+			case BI_DIRECTION:
 				// elog(INFO, "Start");
 				// elog(INFO, "getting new outer tuple");
 				outerTupleSlot = ExecProcNode(outerPlan);
@@ -384,9 +385,15 @@ ExecNestLoop(PlanState *pstate)
 				econtext->ecxt_innertuple = innerTupleSlot;
 				node->nl_NeedNewInner = true;
 				node->nl_MatchedInner = false;
+				node->rippleLeftHead = 0;
+				
 				node->direction = RIGHT_TO_LEFT;
 
 				break;
+
+			default:
+				elog(ERROR, "unrecognized ripple join direction: %d",
+					 (int) node->direction);
 		}
 
 
@@ -398,20 +405,11 @@ ExecNestLoop(PlanState *pstate)
 		 * Only the joinquals determine MatchedOuter status, but all quals
 		 * must pass to actually return the tuple.
 		 */
-		// elog(INFO, "testing qualification");
-
 		if (ExecQual(joinqual, econtext))
 		{
 			node->nl_MatchedOuter = true;
 			node->nl_MatchedInner = true;
 
-			/*
-			 * For either the anti-join or single-match case, the algorithm
-			 * attempts to perform joins that can be redundant. To optimize
-			 * the Ripple Join process, this part needs to be changed.
-			 * We can consider to remember tuples in the memory passed here,
-			 * and for those tuples passed these conditions skip to join.
-			 */
 			/* In an antijoin, we never return a matched tuple */
 			if (node->js.jointype == JOIN_ANTI)
 			{
@@ -471,8 +469,6 @@ ExecNestLoop(PlanState *pstate)
 		 * Tuple fails qual, so free per-tuple memory and try again.
 		 */
 		ResetExprContext(econtext);
-
-		// elog(INFO, "qualification failed, looping");
 	}
 }
 
