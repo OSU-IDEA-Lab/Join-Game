@@ -920,13 +920,8 @@ typedef struct DummyBanditState
     unsigned int flag1;
 }DummyBanditState;
 
-<<<<<<< HEAD
 #define RIPPLE_LEFT_PAGE_SIZE 524288
 #define RIPPLE_RIGHT_PAGE_SIZE 524288
-=======
-#define RIPPLE_LEFT_PAGE_SIZE 32768
-#define RIPPLE_RIGHT_PAGE_SIZE 32768
->>>>>>> cb703591f7508a35a5adbeffe54dbbc811165422
 typedef struct PlanState
 {
 
