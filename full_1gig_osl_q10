@@ -1,0 +1,69 @@
+======================================================== 
+Time of the test run: 2024-04-18 08:49:27.941444
+BNL: select * from customer110, order110 where c_custkey = o_custkey limit 100000; #1
+  time before fetch: 0.002147 sec50, 0.026285, 0.020966
+100, 0.056697, 0.035158
+Total joined tuples fetched: 115,0.064328
+Time of current query run: 0.06 sec
+
+======================================================== 
+Time of the test run: 2024-04-18 08:49:28.010277
+BNL: select * from customer120, order120 where c_custkey = o_custkey limit 100000; #1
+  time before fetch: 0.000594 sec50, 0.029667, 0.023404
+Total joined tuples fetched: 95,0.061812
+Time of current query run: 0.06 sec
+
+======================================================== 
+Time of the test run: 2024-04-18 08:49:28.074820
+BNL: select * from customer130, order130 where c_custkey = o_custkey limit 100000; #1
+  time before fetch: 0.000569 sec50, 0.028235, 0.022180
+100, 0.061051, 0.037830
+Total joined tuples fetched: 106,0.063973
+Time of current query run: 0.06 sec
+
+======================================================== 
+Time of the test run: 2024-04-18 08:49:28.141457
+BNL: select * from customer111, order111 where c_custkey = o_custkey limit 100000; #1
+  time before fetch: 0.000579 sec50, 0.032160, 0.024955
+100, 0.062610, 0.039131
+Total joined tuples fetched: 102,0.064049
+Time of current query run: 0.06 sec
+
+======================================================== 
+Time of the test run: 2024-04-18 08:49:28.208399
+BNL: select * from customer121, order121 where c_custkey = o_custkey limit 100000; #1
+  time before fetch: 0.000593 sec50, 0.029569, 0.022868
+100, 0.056592, 0.035614
+Total joined tuples fetched: 109,0.063786
+Time of current query run: 0.06 sec
+
+======================================================== 
+Time of the test run: 2024-04-18 08:49:28.274955
+BNL: select * from customer131, order131 where c_custkey = o_custkey limit 100000; #1
+  time before fetch: 0.000562 sec50, 0.027680, 0.021655
+100, 0.059903, 0.037077
+Total joined tuples fetched: 105,0.063550
+Time of current query run: 0.06 sec
+
+======================================================== 
+Time of the test run: 2024-04-18 08:49:28.341342
+BNL: select * from customer111_5, order111_5 where c_custkey = o_custkey limit 100000; #1
+  time before fetch: 0.000583 sec50, 0.034166, 0.026757
+Total joined tuples fetched: 95,0.061528
+Time of current query run: 0.06 sec
+
+======================================================== 
+Time of the test run: 2024-04-18 08:49:28.405497
+BNL: select * from customer121_5, order121_5 where c_custkey = o_custkey limit 100000; #1
+  time before fetch: 0.000621 sec50, 0.033276, 0.026311
+Total joined tuples fetched: 90,0.061066
+Time of current query run: 0.06 sec
+
+======================================================== 
+Time of the test run: 2024-04-18 08:49:28.469326
+BNL: select * from customer131_5, order131_5 where c_custkey = o_custkey limit 100000; #1
+  time before fetch: 0.000616 sec50, 0.029294, 0.023251
+100, 0.057704, 0.036605
+Total joined tuples fetched: 112,0.064819
+Time of current query run: 0.06 sec
+

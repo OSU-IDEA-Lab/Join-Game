@@ -17,3 +17,30 @@
 2024-04-17 21:55:09.494 PDT [12969] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5447"
 2024-04-17 21:55:09.501 PDT [12969] LOG:  redirecting log output to logging collector process
 2024-04-17 21:55:09.501 PDT [12969] HINT:  Future log output will appear in directory "log".
+2024-04-18 01:39:19.383 PDT [8169] LOG:  listening on IPv4 address "0.0.0.0", port 5447
+2024-04-18 01:39:19.383 PDT [8169] LOG:  listening on IPv6 address "::", port 5447
+2024-04-18 01:39:19.384 PDT [8169] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5447"
+2024-04-18 01:39:19.390 PDT [8169] LOG:  redirecting log output to logging collector process
+2024-04-18 01:39:19.390 PDT [8169] HINT:  Future log output will appear in directory "log".
+2024-04-18 01:44:39.428 PDT [13525] LOG:  listening on IPv4 address "0.0.0.0", port 5447
+2024-04-18 01:44:39.428 PDT [13525] LOG:  listening on IPv6 address "::", port 5447
+2024-04-18 01:44:39.428 PDT [13525] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5447"
+2024-04-18 01:44:39.434 PDT [13525] LOG:  redirecting log output to logging collector process
+2024-04-18 01:44:39.434 PDT [13525] HINT:  Future log output will appear in directory "log".
+2024-04-18 01:53:18.987 PDT [15938] LOG:  listening on IPv4 address "0.0.0.0", port 5447
+2024-04-18 01:53:18.987 PDT [15938] LOG:  listening on IPv6 address "::", port 5447
+2024-04-18 01:53:18.988 PDT [15938] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5447"
+2024-04-18 01:53:18.994 PDT [15938] LOG:  redirecting log output to logging collector process
+2024-04-18 01:53:18.994 PDT [15938] HINT:  Future log output will appear in directory "log".
+2024-04-18 02:02:00.752 PDT [19523] LOG:  listening on IPv4 address "0.0.0.0", port 5447
+2024-04-18 02:02:00.753 PDT [19523] LOG:  listening on IPv6 address "::", port 5447
+2024-04-18 02:02:00.753 PDT [19523] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5447"
+2024-04-18 02:02:00.760 PDT [19523] LOG:  redirecting log output to logging collector process
+2024-04-18 02:02:00.760 PDT [19523] HINT:  Future log output will appear in directory "log".
+2024-04-18 08:49:07.508 PDT [9263] FATAL:  lock file "postmaster.pid" already exists
+2024-04-18 08:49:07.508 PDT [9263] HINT:  Is another postmaster (PID 19523) running in data directory "/data/bharghav-psql/bandit/Join-Game/DemoDir"?
+2024-04-18 08:49:15.891 PDT [9300] LOG:  listening on IPv4 address "0.0.0.0", port 5447
+2024-04-18 08:49:15.891 PDT [9300] LOG:  listening on IPv6 address "::", port 5447
+2024-04-18 08:49:15.892 PDT [9300] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5447"
+2024-04-18 08:49:15.897 PDT [9300] LOG:  redirecting log output to logging collector process
+2024-04-18 08:49:15.897 PDT [9300] HINT:  Future log output will appear in directory "log".

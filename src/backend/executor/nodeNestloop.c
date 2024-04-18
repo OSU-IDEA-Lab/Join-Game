@@ -70,30 +70,8 @@
 #define OSL_FLAG 1 // Will work as a default Page Wise Nested loop if set to 0
 #define OSL_NO_LEARN_FLAG 0 // Will work as a no learning if set to 1
 
-static TimestampTz timing_start(void);
-static void log_timing_diff(TimestampTz start);
-static TimestampTz timing_start(void) {
-    return GetCurrentTimestamp();
-}
-
-static double timing_diff_millis(TimestampTz start) {
-    TimestampTz end = GetCurrentTimestamp();
-    long secs, microsecs;
-    double elapsed_millis;
-
-    // Calculate the difference
-    TimestampDifference(start, end, &secs, &microsecs);
-
-    // Convert to milliseconds
-    elapsed_millis = secs * 1000.0 + microsecs / 1000.0;
-
-    return elapsed_millis;
-}
-
 void
 InitializeRightTableCache(PlanState *pstate){
-	TimestampTz startTimeRight;
-	double elapsedRight;
 	NestLoopState *node = castNode(NestLoopState, pstate);
 	NestLoop   *nl;
 	PlanState  *innerPlan;
@@ -134,40 +112,15 @@ InitializeRightTableCache(PlanState *pstate){
 	elog(INFO, "Right init Start ----------------------------------------");
 	while (outerPlan->oslBnd8RightTableCacheHead<OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE){
 		// Fill Table
-		if(outerPlan->oslBnd8RightTableCacheHead < 10) {
-			startTimeRight = timing_start();
-		}
 		innerTupleSlot = ExecProcNode(innerPlan);
-		if(outerPlan->oslBnd8RightTableCacheHead < 10) {
-			elapsedRight = timing_diff_millis(startTimeRight);
-			elog(LOG, "Time for ExecProcNode:outerPlan->oslBnd8RightTableCacheHead is %u: %.6f ms", outerPlan->oslBnd8RightTableCacheHead, elapsedRight);
-		}
-		
 		if (TupIsNull(innerTupleSlot)) {
 			break;
 		}
-		
 		// Add the tuple to the list
-		if(outerPlan->oslBnd8RightTableCacheHead < 10) {
-			startTimeRight = timing_start();
-		}
 		if (TupIsNull(outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead])) {
 			outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
 		}
-		if(outerPlan->oslBnd8RightTableCacheHead < 10) {
-			elapsedRight = timing_diff_millis(startTimeRight);
-			elog(LOG, "Time for MakeSingleTupleTableSlot:outerPlan->oslBnd8RightTableCacheHead is %u: %.6f ms", outerPlan->oslBnd8RightTableCacheHead, elapsedRight);
-		}
-
-		if(outerPlan->oslBnd8RightTableCacheHead < 10) {
-			startTimeRight = timing_start();
-		}
 		ExecCopySlot(outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead], innerTupleSlot);
-		if(outerPlan->oslBnd8RightTableCacheHead < 10) {
-			elapsedRight = timing_diff_millis(startTimeRight);
-			elog(LOG, "Time for ExecCopySlot:outerPlan->oslBnd8RightTableCacheHead is %u: %.6f ms", outerPlan->oslBnd8RightTableCacheHead, elapsedRight);
-		}
-		
 		outerPlan->oslBnd8RightTableCacheHead++;
 		outerPlan->oslBnd8RightTableCacheSize++;
 	}
@@ -181,8 +134,6 @@ InitializeRightTableCache(PlanState *pstate){
 
 static TupleTableSlot *
 seedToExploitLeftPage(PlanState *pstate){
-	TimestampTz startTime;
-	double elapsed;
 	NestLoopState *node = castNode(NestLoopState, pstate);
 	NestLoop   *nl;
 	PlanState  *innerPlan;
@@ -262,39 +213,14 @@ seedToExploitLeftPage(PlanState *pstate){
 			ENL1_printf("getting new outer tuple");
 			if(DEBUG_FLAG){elog(INFO, "outerPlan-> Disk Read Tuple");}
 			
-			if(outerPlan->pgNst8LeftPageHead < 10) {
-				startTime = timing_start();
-			}
 			outerTupleSlot = ExecProcNode(outerPlan);
-			if(outerPlan->pgNst8LeftPageHead < 10) {
-				elapsed = timing_diff_millis(startTime);
-				elog(LOG, "Time for ExecProcNode:outerPlan->pgNst8LeftPageHead is %u: %.6f ms", outerPlan->pgNst8LeftPageHead, elapsed);
-			}
-			
 			if (TupIsNull(outerTupleSlot)) { 
 				elog(INFO, "Finished Parsing left table: %u", outerPlan->pgNst8LeftPageHead);
 				outerPlan->pgNst8LeftParsedFully = true;
 				break;
 			}
-
-			if(outerPlan->pgNst8LeftPageHead < 10) {
-				startTime = timing_start();
-			}
 			if (TupIsNull(outerPlan->oslBnd8_currExploreTuple)) { outerPlan->oslBnd8_currExploreTuple = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);}
-			if(outerPlan->pgNst8LeftPageHead < 10) {
-				elapsed = timing_diff_millis(startTime);
-				elog(LOG, "Time for MakeSingleTupleTableSlot:outerPlan->pgNst8LeftPageHead is %u: %.6f ms", outerPlan->pgNst8LeftPageHead, elapsed);
-			}
-			
-			if(outerPlan->pgNst8LeftPageHead < 10) {
-				startTime = timing_start();
-			}
 			if (!TupIsNull(outerTupleSlot)){ ExecCopySlot(outerPlan->oslBnd8_currExploreTuple, outerTupleSlot);}
-			if(outerPlan->pgNst8LeftPageHead < 10) {
-				elapsed = timing_diff_millis(startTime);
-				elog(LOG, "Time for ExecCopySlot:outerPlan->pgNst8LeftPageHead is %u: %.6f ms", outerPlan->pgNst8LeftPageHead, elapsed);
-			}
-			
 			outerPlan->oslBnd8_currExploreTupleReward = 0;
 			outerPlan->oslBnd8RightTableCacheHead=outerPlan->oslBnd8RightTableCacheSize;
 			outerPlan->oslBnd8_numTuplesExplored++;
@@ -427,8 +353,6 @@ seedToExploitLeftPage(PlanState *pstate){
 
 void
 seedNextLeftPage(PlanState *pstate){
-	TimestampTz startTime;
-	double elapsed;
 	NestLoopState *node = castNode(NestLoopState, pstate);
 	NestLoop   *nl;
 	PlanState  *innerPlan;
@@ -490,8 +414,6 @@ seedNextLeftPage(PlanState *pstate){
 static TupleTableSlot *
 ExecNestLoop(PlanState *pstate)
 {
-	TimestampTz startTimeNest;
-	double elapsedNest;
 	NestLoopState *node = castNode(NestLoopState, pstate);
 	NestLoop   *nl;
 	PlanState  *innerPlan;

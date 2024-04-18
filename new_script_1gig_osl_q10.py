@@ -8,7 +8,7 @@ def main():
     # Define the range of k values and the sigma for weighted timing calculations
     ks = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 650, 700, 750, 800, 850, 900, 950, 1000, 1050, 1100, 1150, 1200, 2000, 3000, 4000, 5000, 10000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000]
     sigma = .99
-    vals = ['1', '1_5']
+    vals = ['0', '1', '1_5']
     # Establish database connection
     conn = psycopg2.connect(host="/tmp/", database="srikhakb", user="srikhakb", port="5447")
     cur = conn.cursor()
@@ -163,7 +163,7 @@ def measureTimeForKs(conn, joinQuery, ks, sigma, data_filename, iteration):
                 f.write("%d, %f, %f\n" % (fetched, joinTime, weightedTime))
             if fetched in ks:
                 res.append([fetched, joinTime, weightedTime])
-            if joinTime >= 180: #900 = 15 min, 1500 = 25 min
+            if joinTime >= 60: #900 = 15 min, 1500 = 25 min
                 break
         
         # Log total joined tuples and current query run time
