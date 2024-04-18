@@ -658,6 +658,7 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 								node->join.jointype == JOIN_SEMI);
 
 	/* set up null tuples for outer joins, if needed */
+	elog(INFO, "nodeHashjoin.c:Hash Join is getting executed");
 	switch (node->join.jointype)
 	{
 		case JOIN_INNER:

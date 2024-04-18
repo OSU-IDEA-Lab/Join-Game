@@ -113,6 +113,7 @@ InitializeRightTableCache(PlanState *pstate){
 	elog(INFO, "Right init Start ----------------------------------------");
 	while (outerPlan->oslBnd8RightTableCacheHead<OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE){
 		// Fill Table
+<<<<<<< Updated upstream
 		innerTupleSlot = ExecProcNode(innerPlan);
 		if (TupIsNull(innerTupleSlot)) {
 			break;
@@ -122,36 +123,40 @@ InitializeRightTableCache(PlanState *pstate){
 			outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
 		}
 		ExecCopySlot(outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead], innerTupleSlot);
-		outerPlan->oslBnd8RightTableCacheHead++;
-		outerPlan->oslBnd8RightTableCacheSize++;
-	}
+=======
+		
+		if(outerPlan->oslBnd8RightTableCacheHead < 10) {
+			startTimeRight = timing_start();
+		}
+		innerTupleSlot = ExecProcNode(innerPlan);
+		if(outerPlan->oslBnd8RightTableCacheHead < 10) {
+			elapsedRight = timing_diff_millis(startTimeRight);
+			elog(LOG, "Time for ExecProcNode:outerPlan->oslBnd8RightTableCacheHead is %u: %.6f ms", outerPlan->oslBnd8RightTableCacheHead, elapsedRight);
+		}
+		
+		if (TupIsNull(innerTupleSlot)) {
+			break;
+		}
+		
+		// Add the tuple to the list
+		if(outerPlan->oslBnd8RightTableCacheHead < 10) {
+			startTimeRight = timing_start();
+		}
+		if (TupIsNull(outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead])) {
+			outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
+		}
+		if(outerPlan->oslBnd8RightTableCacheHead < 10) {
+			elapsedRight = timing_diff_millis(startTimeRight);
+			elog(LOG, "Time for MakeSingleTupleTableSlot:outerPlan->oslBnd8RightTableCacheHead is %u: %.6f ms", outerPlan->oslBnd8RightTableCacheHead, elapsedRight);
 
-	elog(INFO, "Initialization Complete for inner table cache, current head: %u", outerPlan->oslBnd8RightTableCacheHead);
-	outerPlan->oslBnd8RightTableCacheInitialized = true;
-	elog(INFO, "rescanning inner plan");
-	ExecReScan(innerPlan);
-	elog(INFO, "Right Init End ----------------------------------------\n");
-}
-
-static TupleTableSlot *
-seedToExploitLeftPage(PlanState *pstate){
-	NestLoopState *node = castNode(NestLoopState, pstate);
-	NestLoop   *nl;
-	PlanState  *innerPlan;
-	PlanState  *outerPlan;
-	TupleTableSlot *outerTupleSlot;
-	TupleTableSlot *innerTupleSlot;
-	TupleTableSlot *returnTupleSlot;
-	ExprState  *joinqual;
-	ExprState  *otherqual;
-	ExprContext *econtext;
-	ListCell   *lc;
-	
-	CHECK_FOR_INTERRUPTS();
-
-	/*
-	 * get information from the node
-	 */
+		if(outerPlan->oslBnd8RightTableCacheHead < 10) {
+			startTimeRight = timing_start();
+		}
+		ExecCopySlot(outerPlan->oslBnd8RightTableCache[outerPlan->oslBnd8RightTableCacheHead], innerTupleSlot);
+		if(outerPlan->oslBnd8RightTableCacheHead < 10) {
+			elapsedRight = timing_diff_millis(startTimeRight);
+			elog(LOG, "Time for ExecCopySlot:outerPlan->oslBnd8RightTableCacheHead is %u: %.6f ms", outerPlan->oslBnd8RightTableCacheHead, elapsedRight);
+		}
 	ENL1_printf("getting info from node");
 
 	nl = (NestLoop *) node->js.ps.plan;
@@ -192,18 +197,29 @@ seedToExploitLeftPage(PlanState *pstate){
 	}
 
 	/* Read a page such that They can be exploited*/
+<<<<<<< Updated upstream
 	while (!outerPlan->pgNst8LeftParsedFully & outerPlan->pgNst8LeftPageHead < PGNST8_LEFT_PAGE_MAX_SIZE){
+=======
+	//while (!outerPlan->pgNst8LeftParsedFully & outerPlan->pgNst8LeftPageHead < PGNST8_LEFT_PAGE_MAX_SIZE){
+	while (!outerPlan->pgNst8LeftParsedFully & outerPlan->pgNst8LeftPageHead < PGNST8_LEFT_PAGE_MAX_SIZE || (outerPlan->pgNst8LeftPageHead ==0) ){
+>>>>>>> Stashed changes
 		/*
 		* If we don't have an outer tuple, get the next one and reset the
 		* inner scan.
 		*/
 		if (node->nl_NeedNewOuter)
 		{
+<<<<<<< Updated upstream
 			if (outerPlan->oslBnd8_numTuplesExplored > MUST_EXPLORE_TUPLE_COUNT_N){
+=======
+			//if (outerPlan->oslBnd8_numTuplesExplored > MUST_EXPLORE_TUPLE_COUNT_N){
+			if ( (outerPlan->oslBnd8_numTuplesExplored > MUST_EXPLORE_TUPLE_COUNT_N) & (outerPlan->pgNst8LeftPageHead > 0) ){
+>>>>>>> Stashed changes
 				if(DEBUG_FLAG){elog(INFO, "num_tuples_explored greater than N, num_tuples_explored: %u", outerPlan->oslBnd8_numTuplesExplored);}
 				break;
 			}
 
+<<<<<<< Updated upstream
 			// if (outerPlan->oslBnd8_currExploreTupleFailureCount > FAILURE_COUNT_N){
 			// 	if(DEBUG_FLAG){elog(INFO, "failure_count greater than FAILURE_COUNT_N, failure_count: %u", outerPlan->oslBnd8_currExploreTupleFailureCount);}
 			// 	break;
@@ -212,13 +228,54 @@ seedToExploitLeftPage(PlanState *pstate){
 			ENL1_printf("getting new outer tuple");
 			if(DEBUG_FLAG){elog(INFO, "outerPlan-> Disk Read Tuple");}
 			outerTupleSlot = ExecProcNode(outerPlan);
+=======
+			//if (outerPlan->oslBnd8_currExploreTupleFailureCount > FAILURE_COUNT_N){
+			//	if(DEBUG_FLAG){elog(INFO, "failure_count greater than FAILURE_COUNT_N, failure_count: %u", outerPlan->oslBnd8_currExploreTupleFailureCount);}
+			//	break;
+			//}
+
+			ENL1_printf("getting new outer tuple");
+			if(DEBUG_FLAG){elog(INFO, "outerPlan-> Disk Read Tuple");}
+			
+			if(outerPlan->pgNst8LeftPageHead < 10) {
+				startTime = timing_start();
+			}
+			outerTupleSlot = ExecProcNode(outerPlan);
+			if(outerPlan->pgNst8LeftPageHead < 10) {
+				elapsed = timing_diff_millis(startTime);
+				elog(LOG, "Time for ExecProcNode:outerPlan->pgNst8LeftPageHead is %u: %.6f ms", outerPlan->pgNst8LeftPageHead, elapsed);
+			}
+			
+>>>>>>> Stashed changes
 			if (TupIsNull(outerTupleSlot)) { 
 				elog(INFO, "Finished Parsing left table: %u", outerPlan->pgNst8LeftPageHead);
 				outerPlan->pgNst8LeftParsedFully = true;
 				break;
 			}
+<<<<<<< Updated upstream
 			if (TupIsNull(outerPlan->oslBnd8_currExploreTuple)) { outerPlan->oslBnd8_currExploreTuple = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);}
 			if (!TupIsNull(outerTupleSlot)){ ExecCopySlot(outerPlan->oslBnd8_currExploreTuple, outerTupleSlot);}
+=======
+
+			if(outerPlan->pgNst8LeftPageHead < 10) {
+				startTime = timing_start();
+			}
+			if (TupIsNull(outerPlan->oslBnd8_currExploreTuple)) { outerPlan->oslBnd8_currExploreTuple = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);}
+			if(outerPlan->pgNst8LeftPageHead < 10) {
+				elapsed = timing_diff_millis(startTime);
+				elog(LOG, "Time for MakeSingleTupleTableSlot:outerPlan->pgNst8LeftPageHead is %u: %.6f ms", outerPlan->pgNst8LeftPageHead, elapsed);
+			}
+			
+			if(outerPlan->pgNst8LeftPageHead < 10) {
+				startTime = timing_start();
+			}
+			if (!TupIsNull(outerTupleSlot)){ ExecCopySlot(outerPlan->oslBnd8_currExploreTuple, outerTupleSlot);}
+			if(outerPlan->pgNst8LeftPageHead < 10) {
+				elapsed = timing_diff_millis(startTime);
+				elog(LOG, "Time for ExecCopySlot:outerPlan->pgNst8LeftPageHead is %u: %.6f ms", outerPlan->pgNst8LeftPageHead, elapsed);
+			}
+			
+>>>>>>> Stashed changes
 			outerPlan->oslBnd8_currExploreTupleReward = 0;
 			outerPlan->oslBnd8RightTableCacheHead=outerPlan->oslBnd8RightTableCacheSize;
 			outerPlan->oslBnd8_numTuplesExplored++;
@@ -318,8 +375,13 @@ seedToExploitLeftPage(PlanState *pstate){
 	if(DEBUG_FLAG){
 		elog(INFO, "Exploration Complete with pgNst8LeftPageSize: %u", outerPlan->pgNst8LeftPageSize);
 	}
+<<<<<<< Updated upstream
 
 	/* Just select any next outer tuples if page is not filled*/
+=======
+/*
+	// Just select any next outer tuples if page is not filled
+>>>>>>> Stashed changes
 	while (!outerPlan->pgNst8LeftParsedFully & outerPlan->pgNst8LeftPageHead < PGNST8_LEFT_PAGE_MAX_SIZE) {
 		outerTupleSlot = ExecProcNode(outerPlan);
 		if (TupIsNull(outerTupleSlot)) { 
@@ -341,7 +403,49 @@ seedToExploitLeftPage(PlanState *pstate){
 		// elog(INFO, "Tuple inserted in left page, Current pgNst8LeftPageHead: %u", outerPlan->pgNst8LeftPageHead);
 	}
 	if(DEBUG_FLAG){elog(INFO, "Seed Complete with: %u", outerPlan->pgNst8LeftPageSize);}
+<<<<<<< Updated upstream
 
+=======
+*/
+/*
+//bha-start
+	bool hasStoredAnyTuple = false;  // Flag to track if any tuple has been stored
+	
+	// Process tuples with selective storing based on rewards 
+	while (!outerPlan->pgNst8LeftParsedFully & (outerPlan->pgNst8LeftPageHead < PGNST8_LEFT_PAGE_MAX_SIZE) ) {
+		outerTupleSlot = ExecProcNode(outerPlan);
+		if (TupIsNull(outerTupleSlot)) {
+			outerPlan->pgNst8LeftParsedFully = true;
+			break;
+		}
+	
+		// Store tuple if it has a positive reward
+		if (outerPlan->oslBnd8_currExploreTupleReward > 0) {
+			if (TupIsNull(outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead])) {
+				outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+			}
+			ExecCopySlot(outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead], outerTupleSlot);
+			outerPlan->pgNst8LeftPageHead++;
+			outerPlan->pgNst8LeftPageSize++;
+			hasStoredAnyTuple = true;
+		}
+	}
+	
+	// Fallback: Store at least one tuple if none have been stored
+	if (!hasStoredAnyTuple & (outerPlan->pgNst8LeftPageSize == 0) ) {
+		outerTupleSlot = ExecProcNode(outerPlan);  // Try fetching another tuple
+		if (!TupIsNull(outerTupleSlot)) {
+			if (TupIsNull(outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead])) {
+				outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+			}
+			ExecCopySlot(outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead], outerTupleSlot);
+			outerPlan->pgNst8LeftPageHead++;
+			outerPlan->pgNst8LeftPageSize++;
+		}
+	}
+//bha-end
+*/
+>>>>>>> Stashed changes
 	outerPlan->oslBnd8_ExplorationStarted = false;
 	if(DEBUG_FLAG){elog(INFO, "Exploration Completed, Seeding Left Page Complete");}
 	return returnTupleSlot;
@@ -350,6 +454,11 @@ seedToExploitLeftPage(PlanState *pstate){
 
 void
 seedNextLeftPage(PlanState *pstate){
+<<<<<<< Updated upstream
+=======
+	TimestampTz startTime;
+	double elapsed;
+>>>>>>> Stashed changes
 	NestLoopState *node = castNode(NestLoopState, pstate);
 	NestLoop   *nl;
 	PlanState  *innerPlan;
@@ -411,6 +520,11 @@ seedNextLeftPage(PlanState *pstate){
 static TupleTableSlot *
 ExecNestLoop(PlanState *pstate)
 {
+<<<<<<< Updated upstream
+=======
+	TimestampTz startTimeNest;
+	double elapsedNest;
+>>>>>>> Stashed changes
 	NestLoopState *node = castNode(NestLoopState, pstate);
 	NestLoop   *nl;
 	PlanState  *innerPlan;
@@ -462,6 +576,13 @@ ExecNestLoop(PlanState *pstate)
 					if(DEBUG_FLAG){elog(INFO, "Returning tuple. outerPlan->pgNst8LeftPageHead: %u", outerPlan->pgNst8LeftPageHead);}
 					return returnTupleSlot;
 				}
+<<<<<<< Updated upstream
+=======
+				else {
+					return NULL;
+				}
+				elog(INFO, "Exploration Completed, Seeding Left Page Complete");
+>>>>>>> Stashed changes
 				if(DEBUG_FLAG){elog(INFO, "Exploration Completed, Seeding Left Page Complete");}
 			}
 			else{

@@ -1240,6 +1240,7 @@ tuplestore_rescan(Tuplestorestate *state)
 	switch (state->status)
 	{
 		case TSS_INMEM:
+			elog(LOG, "utils/tuplestore: Reading from Memory");
 			readptr->eof_reached = false;
 			readptr->current = 0;
 			break;
@@ -1249,6 +1250,7 @@ tuplestore_rescan(Tuplestorestate *state)
 			readptr->offset = 0L;
 			break;
 		case TSS_READFILE:
+			elog(LOG, "utils/tuplestore: Reading from Disk");
 			readptr->eof_reached = false;
 			if (BufFileSeek(state->myfile, 0, 0L, SEEK_SET) != 0)
 				ereport(ERROR,

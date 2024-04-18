@@ -921,8 +921,13 @@ typedef struct DummyBanditState
 }DummyBanditState;
 
 
+<<<<<<< Updated upstream
 #define PGNST8_LEFT_PAGE_MAX_SIZE 4096
 #define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 4096
+=======
+#define PGNST8_LEFT_PAGE_MAX_SIZE 5000
+#define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 500
+>>>>>>> Stashed changes
 typedef struct PlanState
 {
 	

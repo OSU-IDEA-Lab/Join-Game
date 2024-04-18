@@ -351,6 +351,7 @@ MultiExecParallelHash(HashState *node)
 HashState *
 ExecInitHash(Hash *node, EState *estate, int eflags)
 {
+	elog(INFO, "nodeHash.c: Hash Join is getting executed");
 	HashState  *hashstate;
 
 	/* check for unsupported flags */
