@@ -319,7 +319,6 @@ seedToExploitLeftPage(PlanState *pstate){
 		elog(INFO, "Exploration Complete with pgNst8LeftPageSize: %u", outerPlan->pgNst8LeftPageSize);
 	}
 
-/*
 	// Just select any next outer tuples if page is not filled
 	while (!outerPlan->pgNst8LeftParsedFully & outerPlan->pgNst8LeftPageHead < PGNST8_LEFT_PAGE_MAX_SIZE) {
 		outerTupleSlot = ExecProcNode(outerPlan);
@@ -341,7 +340,7 @@ seedToExploitLeftPage(PlanState *pstate){
 		outerPlan->pgNst8LeftPageSize++;
 		// elog(INFO, "Tuple inserted in left page, Current pgNst8LeftPageHead: %u", outerPlan->pgNst8LeftPageHead);
 	}
-*/
+
 	if(DEBUG_FLAG){elog(INFO, "Seed Complete with: %u", outerPlan->pgNst8LeftPageSize);}
 	outerPlan->oslBnd8_ExplorationStarted = false;
 	if(DEBUG_FLAG){elog(INFO, "Exploration Completed, Seeding Left Page Complete");}

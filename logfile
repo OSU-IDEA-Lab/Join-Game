@@ -54,3 +54,10 @@
 2024-04-18 08:55:53.260 PDT [11479] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5447"
 2024-04-18 08:55:53.265 PDT [11479] LOG:  redirecting log output to logging collector process
 2024-04-18 08:55:53.265 PDT [11479] HINT:  Future log output will appear in directory "log".
+2024-04-18 09:00:53.960 PDT [13385] FATAL:  lock file "postmaster.pid" already exists
+2024-04-18 09:00:53.960 PDT [13385] HINT:  Is another postmaster (PID 11479) running in data directory "/data/bharghav-psql/bandit/Join-Game/DemoDir"?
+2024-04-18 09:01:02.285 PDT [13435] LOG:  listening on IPv4 address "0.0.0.0", port 5447
+2024-04-18 09:01:02.285 PDT [13435] LOG:  listening on IPv6 address "::", port 5447
+2024-04-18 09:01:02.286 PDT [13435] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5447"
+2024-04-18 09:01:02.292 PDT [13435] LOG:  redirecting log output to logging collector process
+2024-04-18 09:01:02.292 PDT [13435] HINT:  Future log output will appear in directory "log".
