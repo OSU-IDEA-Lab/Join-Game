@@ -240,14 +240,16 @@ seedToExploitLeftPage(PlanState *pstate){
 	}
 
 	/* Read a page such that They can be exploited*/
-	while (!outerPlan->pgNst8LeftParsedFully & outerPlan->pgNst8LeftPageHead < PGNST8_LEFT_PAGE_MAX_SIZE){
+	//while (!outerPlan->pgNst8LeftParsedFully & outerPlan->pgNst8LeftPageHead < PGNST8_LEFT_PAGE_MAX_SIZE){
+	while ( (!outerPlan->pgNst8LeftParsedFully & outerPlan->pgNst8LeftPageHead < PGNST8_LEFT_PAGE_MAX_SIZE) || (outerPlan->pgNst8LeftPageHead ==0) ){
 		/*
 		* If we don't have an outer tuple, get the next one and reset the
 		* inner scan.
 		*/
 		if (node->nl_NeedNewOuter)
 		{
-			if (outerPlan->oslBnd8_numTuplesExplored > MUST_EXPLORE_TUPLE_COUNT_N){
+			//if (outerPlan->oslBnd8_numTuplesExplored > MUST_EXPLORE_TUPLE_COUNT_N){
+			if ( (outerPlan->oslBnd8_numTuplesExplored > MUST_EXPLORE_TUPLE_COUNT_N) & (outerPlan->pgNst8LeftPageHead > 0) ){
 				if(DEBUG_FLAG){elog(INFO, "num_tuples_explored greater than N, num_tuples_explored: %u", outerPlan->oslBnd8_numTuplesExplored);}
 				break;
 			}
@@ -540,6 +542,9 @@ ExecNestLoop(PlanState *pstate)
 				if (!TupIsNull(returnTupleSlot)){
 					if(DEBUG_FLAG){elog(INFO, "Returning tuple. outerPlan->pgNst8LeftPageHead: %u", outerPlan->pgNst8LeftPageHead);}
 					return returnTupleSlot;
+				}
+				else {
+					return NULL;
 				}
 				if(DEBUG_FLAG){elog(INFO, "Exploration Completed, Seeding Left Page Complete");}
 			}
