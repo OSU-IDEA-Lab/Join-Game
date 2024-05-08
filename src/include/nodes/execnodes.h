@@ -921,8 +921,8 @@ typedef struct DummyBanditState
 }DummyBanditState;
 
 
-#define PGNST8_LEFT_PAGE_MAX_SIZE 5000
-#define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 500
+#define PGNST8_LEFT_PAGE_MAX_SIZE 100
+#define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 2000
 typedef struct PlanState
 {
 	

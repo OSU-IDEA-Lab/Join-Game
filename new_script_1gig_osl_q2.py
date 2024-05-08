@@ -102,8 +102,8 @@ def constructQueries(vals):
     for val in vals:
         for sch_val in sch_vals:
             # Constructs and appends the query, val, and sch_val as a tuple to the result list
-            # Q10 - TPCH
-            result.append(("select * from customer1%s%s, order1%s%s where c_custkey = o_custkey limit 100000;" % (sch_val, val, sch_val, val), val, sch_val))
+            # Q2 - TPCH
+            result.append(("select * from part1%s%s, supplier1%s%s, partsupp1%s%s where p_partkey = ps_partkey and s_suppkey = ps_suppkey limit 100000;" % (sch_val, val, sch_val, val, sch_val, val), val, sch_val))
     return result
 
 # Measures the running time of a join query for a given value of k

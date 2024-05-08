@@ -61,3 +61,13 @@
 2024-04-18 09:01:02.286 PDT [13435] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5447"
 2024-04-18 09:01:02.292 PDT [13435] LOG:  redirecting log output to logging collector process
 2024-04-18 09:01:02.292 PDT [13435] HINT:  Future log output will appear in directory "log".
+2024-05-07 17:20:01.646 PDT [14565] LOG:  listening on IPv4 address "0.0.0.0", port 5447
+2024-05-07 17:20:01.646 PDT [14565] LOG:  listening on IPv6 address "::", port 5447
+2024-05-07 17:20:01.647 PDT [14565] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5447"
+2024-05-07 17:20:01.654 PDT [14565] LOG:  redirecting log output to logging collector process
+2024-05-07 17:20:01.654 PDT [14565] HINT:  Future log output will appear in directory "log".
+2024-05-07 17:36:06.706 PDT [16024] LOG:  listening on IPv4 address "0.0.0.0", port 5447
+2024-05-07 17:36:06.706 PDT [16024] LOG:  listening on IPv6 address "::", port 5447
+2024-05-07 17:36:06.707 PDT [16024] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5447"
+2024-05-07 17:36:06.714 PDT [16024] LOG:  redirecting log output to logging collector process
+2024-05-07 17:36:06.714 PDT [16024] HINT:  Future log output will appear in directory "log".
