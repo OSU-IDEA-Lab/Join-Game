@@ -9,8 +9,8 @@ def main():
     zvals = ['0', '1', '1_5']
     shuffles = ['1','2','3']
     # Open connection
-    conn = psycopg2.connect(host="/tmp/", database="srikhakb", user="srikhakb",
-                             port="5447")
+    conn = psycopg2.connect(host="/tmp/", database="xxxxxx", user="xxxxxx",
+                             port="xxxx")
     cur = conn.cursor()
     # If only one argument, clean is provided, drop and remake tables, then exit
     if (len(sys.argv) == 2 and sys.argv[1] == "clean"):
@@ -20,6 +20,7 @@ def main():
 def makeCopyString(scf, val, table):
     print("Time of data reload start: " + str(datetime.datetime.now()) + '\n')
     table_with_1 = table + "1"
+    ##### If you cannot access the below path, then download the data from the source https://github.com/sbharghav/1gig and change the below copy path accordingly
     return "copy %s%s%s from '/data/bharghav-psql/data/1_gig_data/shuffle_data_%s/z%s/%s.tbl' WITH DELIMITER AS '|';" % (
     table_with_1, scf, val, scf, val, table)
 
