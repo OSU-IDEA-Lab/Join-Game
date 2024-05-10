@@ -11,7 +11,7 @@ def main():
     sigma = .99
     vals = ['0', '1', '1_5']
     # Establish database connection
-    conn = psycopg2.connect(host="/tmp/", database="srikhakb", user="srikhakb", port="5447")
+    conn = psycopg2.connect(host="/tmp/", database="xxxxxx", user="xxxxxx", port="xxxx")
     cur = conn.cursor()
 
     # Expecting two command-line arguments for output filenames
