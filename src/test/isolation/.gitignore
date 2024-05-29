@@ -1,0 +1,8 @@
+# Local binaries
+/isolationtester
+/pg_isolation_regress
+
+# Generated subdirectories
+/results/
+/output_iso/
+/tmp_check_iso/

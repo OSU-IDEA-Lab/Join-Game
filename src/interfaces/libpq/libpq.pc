@@ -1,0 +1,9 @@
+Name: libpq
+Description: PostgreSQL libpq library
+Url: http://www.postgresql.org/
+Version: 11.5
+Requires: 
+Requires.private: 
+Cflags: -I/postgres/leeyongh-psql/execu/include
+Libs: -L/postgres/leeyongh-psql/execu/lib -lpq
+Libs.private:  -lcrypt
