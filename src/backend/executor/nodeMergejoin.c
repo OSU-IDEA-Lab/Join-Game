@@ -1,95 +1,3 @@
-/*-------------------------------------------------------------------------
- *
- * nodeMergejoin.c
- *	  routines supporting merge joins
- *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
- * Portions Copyright (c) 1994, Regents of the University of California
- *
- *
- * IDENTIFICATION
- *	  src/backend/executor/nodeMergejoin.c
- *
- *-------------------------------------------------------------------------
- */
-/*
- * INTERFACE ROUTINES
- *		ExecMergeJoin			mergejoin outer and inner relations.
- *		ExecInitMergeJoin		creates and initializes run time states
- *		ExecEndMergeJoin		cleans up the node.
- *
- * NOTES
- *
- *		Merge-join is done by joining the inner and outer tuples satisfying
- *		join clauses of the form ((= outerKey innerKey) ...).
- *		The join clause list is provided by the query planner and may contain
- *		more than one (= outerKey innerKey) clause (for composite sort key).
- *
- *		However, the query executor needs to know whether an outer
- *		tuple is "greater/smaller" than an inner tuple so that it can
- *		"synchronize" the two relations. For example, consider the following
- *		relations:
- *
- *				outer: (0 ^1 1 2 5 5 5 6 6 7)	current tuple: 1
- *				inner: (1 ^3 5 5 5 5 6)			current tuple: 3
- *
- *		To continue the merge-join, the executor needs to scan both inner
- *		and outer relations till the matching tuples 5. It needs to know
- *		that currently inner tuple 3 is "greater" than outer tuple 1 and
- *		therefore it should scan the outer relation first to find a
- *		matching tuple and so on.
- *
- *		Therefore, rather than directly executing the merge join clauses,
- *		we evaluate the left and right key expressions separately and then
- *		compare the columns one at a time (see MJCompare).  The planner
- *		passes us enough information about the sort ordering of the inputs
- *		to allow us to determine how to make the comparison.  We may use the
- *		appropriate btree comparison function, since Postgres' only notion
- *		of ordering is specified by btree opfamilies.
- *
- *
- *		Consider the above relations and suppose that the executor has
- *		just joined the first outer "5" with the last inner "5". The
- *		next step is of course to join the second outer "5" with all
- *		the inner "5's". This requires repositioning the inner "cursor"
- *		to point at the first inner "5". This is done by "marking" the
- *		first inner 5 so we can restore the "cursor" to it before joining
- *		with the second outer 5. The access method interface provides
- *		routines to mark and restore to a tuple.
- *
- *
- *		Essential operation of the merge join algorithm is as follows:
- *
- *		Join {
- *			get initial outer and inner tuples				INITIALIZE
- *			do forever {
- *				while (outer != inner) {					SKIP_TEST
- *					if (outer < inner)
- *						advance outer						SKIPOUTER_ADVANCE
- *					else
- *						advance inner						SKIPINNER_ADVANCE
- *				}
- *				mark inner position							SKIP_TEST
- *				do forever {
- *					while (outer == inner) {
- *						join tuples							JOINTUPLES
- *						advance inner position				NEXTINNER
- *					}
- *					advance outer position					NEXTOUTER
- *					if (outer == mark)						TESTOUTER
- *						restore inner position to mark		TESTOUTER
- *					else
- *						break	// return to top of outer loop
- *				}
- *			}
- *		}
- *
- *		The merge join operation is coded in the fashion
- *		of a state machine.  At each state, we do something and then
- *		proceed to another state.  This state is stored in the node's
- *		execution state information and is preserved across calls to
- *		ExecMergeJoin. -cim 10/31/89
- */
 #include "postgres.h"
 
 #include "access/nbtree.h"
@@ -99,6 +7,114 @@
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 
+//HERE NEW
+
+#include <math.h>
+#include "executor/nodeNestloop.h"
+#include "utils/guc.h"
+#include "storage/bufmgr.h"
+#include "utils/tuplestore.h"
+#include "access/heapam.h"   // Include for heap access methods
+#include "access/genam.h"
+#include "nodes/plannodes.h"     // Include for plan nodes
+#include "executor/execdesc.h"   // Include for execution state
+#include "executor/nodeBitmapHeapscan.h"   // Include for bitmap heap scan methods
+#include "executor/nodeBitmapIndexscan.h"  // Include for bitmap index scan methods
+#include "foreign/fdwapi.h"
+#include "executor/executor.h"
+#include "nodes/execnodes.h"
+#include "access/htup_details.h" 
+#include "catalog/pg_type.h"  
+
+
+/* ----------------------------------------------------------------
+ *		ExecNestLoop(node)
+ *
+ * old comments
+ *		Returns the tuple joined from inner and outer tuples which
+ *		satisfies the qualification clause.
+ *
+ *		It scans the inner relation to join with current outer tuple.
+ *
+ *		If none is found, next tuple from the outer relation is retrieved
+ *		and the inner relation is scanned from the beginning again to join
+ *		with the outer tuple.
+ *
+ *		NULL is returned if all the remaining outer tuples are tried and
+ *		all fail to join with the inner tuples.
+ *
+ *		NULL is also returned if there is no tuple from inner relation.
+ *
+ *		Conditions:
+ *		  -- outerTuple contains current tuple from outer relation and
+ *			 the right son(inner relation) maintains "cursor" at the tuple
+ *			 returned previously.
+ *				This is achieved by maintaining a scan position on the outer * relation.
+ *
+ *		Initial States:
+ *		  -- the outer child and the inner child
+ *			   are prepared to return the first tuple.
+ * ----------------------------------------------------------------
+ */
+//HERE NEW
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
+
+static RelationPage* CreateRelationPage() {
+	int i;
+	RelationPage *relationPage = palloc(sizeof(RelationPage));
+	relationPage->index = 0;
+	relationPage->tupleCount = 0;
+	for (i = 0; i < PAGE_SIZE; i++) {
+		relationPage->tuples[i] = NULL;
+	}
+	return relationPage;
+}
+
+static void RemoveRelationPage(RelationPage **relationPageAdr) {
+	int i;
+	RelationPage *relationPage;
+	relationPage = *relationPageAdr;
+	if (relationPage == NULL) {
+		return;
+	}
+	for (i = 0; i < PAGE_SIZE; i++) {
+		if (!TupIsNull(relationPage->tuples[i])) {
+			ExecDropSingleTupleTableSlot(relationPage->tuples[i]);
+			relationPage->tuples[i] = NULL;
+		}
+	}
+	pfree(relationPage);
+	(*relationPageAdr) = NULL;
+}
+
+static int LoadNextPage(PlanState *planState, RelationPage *relationPage) {
+	int i;
+	if (relationPage == NULL) {
+		elog(ERROR, "LoadNextPage: null page");
+	}
+	relationPage->index = 0;
+	relationPage->tupleCount = 0;
+	// Remove the old stored tuples
+	for (i = 0; i < PAGE_SIZE; i++) {
+		if (!TupIsNull(relationPage->tuples[i])) {
+			ExecDropSingleTupleTableSlot(relationPage->tuples[i]);
+			relationPage->tuples[i] = NULL;
+		}
+	}
+	for (i = 0; i < PAGE_SIZE; i++) {
+		TupleTableSlot *tts = ExecProcNode(planState);
+		if (TupIsNull(tts)) {
+			relationPage->tuples[i] = NULL;
+			break;
+		} else {
+			relationPage->tuples[i] = MakeSingleTupleTableSlot(tts->tts_tupleDescriptor);
+			ExecCopySlot(relationPage->tuples[i], tts);
+			relationPage->tupleCount++;
+		}
+	}
+	return relationPage->tupleCount;
+}
+//HERE
 
 /*
  * States of the ExecMergeJoin state machine
@@ -114,6 +130,36 @@
 #define EXEC_MJ_SKIPINNER_ADVANCE		9
 #define EXEC_MJ_ENDOUTER				10
 #define EXEC_MJ_ENDINNER				11
+
+
+// THis is all the counter to make the this algortihm for 3 join works
+int query_count = 0;
+int number_of_outer = 0;
+int number_of_inner = 0;
+int counting_outer = 0;
+int counting_inner = 0;
+int number_of_same = 0;
+int number_of_last_same = 0;
+int last_same_counter = 0;
+int left_left = 0;
+int right_right = 0;
+int left = 0;
+int right = 0;
+
+// This is all the flag to make this algorithm works
+bool isouterinner = 1;
+bool once = 1;
+bool finising_once = 1;
+bool going_outer_inside = 1;
+bool recording_last_same = 1;
+bool run_equality = 1;
+bool going_inside_inside = 0;
+bool last_run = 0;
+bool inside_inside_finished = 0;
+bool last_outer_is_0 = 0;
+bool last_inner_is_0 = 0;
+bool same = 0;
+bool test = 0;
 
 /*
  * Runtime data for each mergejoin clause
@@ -151,6 +197,30 @@ typedef enum
 
 #define MarkInnerTuple(innerTupleSlot, mergestate) \
 	ExecCopySlot((mergestate)->mj_MarkedTupleSlot, (innerTupleSlot))
+
+
+
+static int 
+GetArgLocation(Node *arg)
+{
+    if (IsA(arg, RelabelType))
+    {
+        RelabelType *relabel = (RelabelType *) arg;
+        if (IsA(relabel->arg, Var))
+        {
+            Var *var = (Var *) relabel->arg;
+            return var->location;
+        }
+    }
+    else if (IsA(arg, Var))
+    {
+        Var *var = (Var *) arg;
+        return var->location;
+    }
+
+    elog(ERROR, "Unsupported argument type for location extraction");
+    return -1; // Should never reach here due to elog(ERROR)
+}
 
 
 /*
@@ -203,6 +273,20 @@ MJExamineQuals(List *mergeclauses,
 
 		if (!IsA(qual, OpExpr))
 			elog(ERROR, "mergejoin clause is not an OpExpr");
+
+		int leftArgLocation = GetArgLocation((Node *) linitial(qual->args));
+		int rightArgLocation = GetArgLocation((Node *) lsecond(qual->args));
+		if (test!=0)
+		{
+			left_left = leftArgLocation;
+			right_right = rightArgLocation;
+		}
+		else
+		{
+			left = leftArgLocation;
+			right = rightArgLocation;
+			test = 1;
+		}
 
 		/*
 		 * Prepare the input expressions for execution.
@@ -327,9 +411,52 @@ MJEvalOuterValues(MergeJoinState *mergestate)
 	}
 
 	MemoryContextSwitchTo(oldContext);
-
+	
 	return result;
 }
+
+// This will be used to calculate the number of tuple of the inner and outer for 3 join purposes
+
+// START HERE
+
+static PlanState *ClonePlanState(PlanState *originalPlanState, EState *estate) {
+    Plan *plan = originalPlanState->plan;
+    PlanState *clonedPlanState = ExecInitNode(plan, estate, 0);
+    return clonedPlanState;
+}
+
+/* Function to count tuples using a cloned plan state */
+static int CountTuplesUsingClone(PlanState *originalPlanState, EState *estate) {
+    PlanState *clonedPlanState = ClonePlanState(originalPlanState, estate);
+    TupleTableSlot *slot;
+    int tupleCount = 0;
+
+    /* Perform the scan on the cloned plan state */
+    while ((slot = ExecProcNode(clonedPlanState)) != NULL && !TupIsNull(slot)) {
+        tupleCount++;
+    }
+
+    /* Clean up the cloned plan state */
+    ExecEndNode(clonedPlanState);
+
+    return tupleCount;
+}
+
+/* Function to calculate the number of tuples in the outer relation */
+static int CalculateOuterTuples(MergeJoinState *node) {
+    PlanState *outerPlanState = outerPlanState(node);
+    EState *estate = outerPlanState->state;
+    return CountTuplesUsingClone(outerPlanState, estate);
+}
+
+/* Function to calculate the number of tuples in the inner relation */
+static int CalculateInnerTuples(MergeJoinState *node) {
+    PlanState *innerPlanState = innerPlanState(node);
+    EState *estate = innerPlanState->state;
+    return CountTuplesUsingClone(innerPlanState, estate);
+}
+
+// END HERE
 
 /*
  * MJEvalInnerValues
@@ -374,7 +501,7 @@ MJEvalInnerValues(MergeJoinState *mergestate, TupleTableSlot *innerslot)
 	}
 
 	MemoryContextSwitchTo(oldContext);
-
+	
 	return result;
 }
 
@@ -597,8 +724,9 @@ ExecMergeTupleDump(MergeJoinState *mergestate)
  * ----------------------------------------------------------------
  */
 static TupleTableSlot *
-ExecMergeJoin(PlanState *pstate)
+ExecMergeJoinOld(PlanState *pstate)
 {
+	//elog(LOG, "inside ExecMergeJoinOld, start point");
 	MergeJoinState *node = castNode(MergeJoinState, pstate);
 	ExprState  *joinqual;
 	ExprState  *otherqual;
@@ -634,8 +762,7 @@ ExecMergeJoin(PlanState *pstate)
 	/*
 	 * ok, everything is setup.. let's go to work
 	 */
-	for (;;)
-	{
+	for (;;){	
 		MJ_dump(node);
 
 		/*
@@ -786,7 +913,9 @@ ExecMergeJoin(PlanState *pstate)
 				 */
 				outerTupleSlot = node->mj_OuterTupleSlot;
 				econtext->ecxt_outertuple = outerTupleSlot;
+
 				innerTupleSlot = node->mj_InnerTupleSlot;
+
 				econtext->ecxt_innertuple = innerTupleSlot;
 
 				qualResult = (joinqual == NULL ||
@@ -817,8 +946,7 @@ ExecMergeJoin(PlanState *pstate)
 								  ExecQual(otherqual, econtext));
 					MJ_DEBUG_QUAL(otherqual, qualResult);
 
-					if (qualResult)
-					{
+					if (qualResult){
 						/*
 						 * qualification succeeded.  now form the desired
 						 * projection tuple and return the slot containing it.
@@ -874,8 +1002,7 @@ ExecMergeJoin(PlanState *pstate)
 				node->mj_MatchedInner = false;
 
 				/* Compute join values and check for unmatchability */
-				switch (MJEvalInnerValues(node, innerTupleSlot))
-				{
+				switch (MJEvalInnerValues(node, innerTupleSlot)){
 					case MJEVAL_MATCHABLE:
 
 						/*
@@ -947,8 +1074,7 @@ ExecMergeJoin(PlanState *pstate)
 			case EXEC_MJ_NEXTOUTER:
 				MJ_printf("ExecMergeJoin: EXEC_MJ_NEXTOUTER\n");
 
-				if (doFillOuter && !node->mj_MatchedOuter)
-				{
+				if (doFillOuter && !node->mj_MatchedOuter){
 					/*
 					 * Generate a fake join tuple with nulls for the inner
 					 * tuple, and return it if it passes the non-join quals.
@@ -1191,11 +1317,13 @@ ExecMergeJoin(PlanState *pstate)
 
 					node->mj_JoinState = EXEC_MJ_JOINTUPLES;
 				}
-				else if (compareResult < 0)
+				else if (compareResult < 0){
 					node->mj_JoinState = EXEC_MJ_SKIPOUTER_ADVANCE;
-				else
+				}
+				else{
 					/* compareResult > 0 */
 					node->mj_JoinState = EXEC_MJ_SKIPINNER_ADVANCE;
+				}
 				break;
 
 				/*
@@ -1428,6 +1556,450 @@ ExecMergeJoin(PlanState *pstate)
 	}
 }
 
+// Takes node and calls execprocnode until it returns NULL
+void ExhaustSortNode(PlanState *pstate) {
+	TupleTableSlot *temp;
+	temp = ExecProcNode(pstate);
+	for (;;) {
+		if (TupIsNull(temp)) break;
+		temp = ExecProcNode(pstate);
+	}
+	return;
+}
+//HERE NEW
+// Not actually merge join - progressive join
+static TupleTableSlot* ExecProgressiveJoin(PlanState *pstate) {
+
+	// This is for 3 join comparison
+	if (query_count >=2 && same ==1){
+		MergeJoinState *node = castNode(MergeJoinState, pstate);
+	 
+		// Checks phase of sort and calls MergeJoin once progressive join
+		// is finished and all expected setup is finalized
+
+		if (node->phaseTwo) 
+		{ 	
+			return ExecMergeJoinOld(pstate);
+		}
+
+		PlanState *innerPlan;
+		PlanState *outerPlan;
+		TupleTableSlot *outerTupleSlot;
+		TupleTableSlot *innerTupleSlot;
+		ExprContext *econtext;
+
+		CHECK_FOR_INTERRUPTS();
+
+		/*
+		* get information from the node
+		*/
+		ENL1_printf("getting info from node");
+
+		outerPlan = outerPlanState(node);
+		innerPlan = innerPlanState(node);
+		econtext = node->js.ps.ps_ExprContext;
+
+		/*
+		* Reset per-tuple memory context to free any expression evaluation
+		* storage allocated in the previous tuple cycle.
+		*/
+		ResetExprContext(econtext);
+
+		/*
+		* Ok, everything is setup for the join so now loop until we return a
+		* qualifying join tuple.
+		*/
+		ENL1_printf("entering main loop");
+
+		for (;;){
+			if (node->phaseTwo)
+			{ 	
+				return ExecMergeJoinOld(pstate);
+			}
+			// Logic for aquiring new outer relation block 
+
+			if (node->needOuterPage) {
+				if (!node->reachedEndOfOuter) {
+					// Load new block if the next page is not null or at inside_inside
+					if (counting_outer != number_of_outer || going_inside_inside == 1){
+						LoadNextPage(outerPlan, node->outerPage);
+					}
+					/*
+						if at not at the inside_inside but the number of real outer and the counting the same, that means we reach the end of the outer, change the last run to 1
+						because we dont want to load extra page that is not null. NEED TO FIX IF NUMBER OF TUPPLE MOD PAGE SIZE != 0 due to multiple 
+					*/
+					else{
+						//elog(INFO, "Reached end of outer HERE");
+
+						last_outer_is_0 = 1;
+						last_run = 1; // We run the last inner inner, this if the last tuple going to the very inner
+						node->reachedEndOfOuter = true;
+						continue;
+					}
+
+					// caluclate the number of outer if inside the outer inside, if inside inside, we dont care yet
+					if (going_outer_inside == 1){
+						counting_outer++;
+					}
+
+					// Incomplete block indicates end of relation
+					if (node->outerPage->tupleCount < PAGE_SIZE) {
+						//elog(INFO, "Reached end of outer");
+						node->reachedEndOfOuter = true;
+						if (node->outerPage->tupleCount == 0)
+							continue;
+					}
+				} 
+				else {
+					/*
+						If we inside here, that means that the outer is done and phase 1 should finish normally. If we still have leftover of the same, 
+						we should deal with that first and run ExecProject(node->js.ps.ps_ProjInfo) equal to PAGE_SIZE - num_of_same times, to go to the inside
+						inside to activate the ExecMergeJoinOld for the last inner inner
+					*/
+					// Phase 1 progressive join is done
+					//elog(INFO, "Phase 1 finished normally");
+
+					// Make sure inner relation is also at its end
+
+					/*
+						Here we record the number of the last same, so we dont get take duplicate during checking for equality. We change the recording_last_same
+						to 0 so it could only run once only. if the number of same is 0, that means there are no match at the last. Change the run_equality to 0,
+						we dont want to match anything, otherwise it will give you garbage data.
+					*/
+					if (recording_last_same == 1){
+						if (number_of_same == 0){
+							run_equality = 0;
+						}
+						// record the number of last same and change recording_last_same to 0 so we dont run this anymore.
+						number_of_last_same = number_of_same;
+						recording_last_same = 0;
+					}
+
+					/*
+						if we are at outside inside and at the finishing state, go inside the if. if the number of same == PAGE_SIZE, it will be our last run here
+						change the finishing once to 0, so we dont run it again. If the algorithm already go inside and run the inside inside ExecMergeJoinOld,
+						dont run this algorithm again, because we are done with this. no need to run it, just go straight to execute outer inner ExecMergeJoinOld 
+					*/
+
+					if (going_inside_inside == 0 && finising_once == 1){
+							number_of_same++;
+							if (number_of_same == PAGE_SIZE){
+								last_run = 1;
+								finising_once = 0;
+								going_inside_inside = 1;
+								going_outer_inside = 0;
+							}
+							return ExecProject(node->js.ps.ps_ProjInfo);
+						}
+					
+					node->phaseTwo = true;
+					if (!node->reachedEndOfInner) {
+						ExhaustSortNode(innerPlan);
+					}
+					
+					if (last_outer_is_0 == 1){
+						LoadNextPage(outerPlan, node->outerPage);
+					}
+					return ExecMergeJoinOld(pstate);
+
+				}
+				node->needOuterPage = false;
+			}
+
+			// Logic for aquiring new inner relation block
+			if (node->needInnerPage) {
+				if (!node->reachedEndOfInner) {
+					if (counting_inner != number_of_inner || going_inside_inside == 1){
+						LoadNextPage(innerPlan, node->innerPage);
+					}
+					else{
+						//elog(INFO, "Reached end of inner HERE");
+						last_inner_is_0 = 1;
+						last_run = 1; // We run the last inner inner, this if the last tuple going to the very inner
+						node->reachedEndOfOuter = true;
+						continue;
+					}
+					// Load new block
+					
+					if (going_outer_inside == 1){
+						counting_inner ++;
+					}
+					// Incomplete block indicates end of relation
+					if (node->innerPage->tupleCount < PAGE_SIZE) {
+						node->reachedEndOfInner = true;
+						if (node->innerPage->tupleCount == 0)
+							continue;
+					}
+				} else {
+					// Phase 1 progressive join is done
+					//elog(INFO, "Phase 1 (new inner) finished normally");
+					if (recording_last_same == 1){
+						if (number_of_same == 0){
+							run_equality = 0;
+						}
+						number_of_last_same = number_of_same;
+						recording_last_same = 0;
+					}
+					
+					if (going_inside_inside == 0 && finising_once == 1){
+							number_of_same++;
+							if (number_of_same == PAGE_SIZE){
+								last_run = 1;
+								finising_once = 0;
+								going_inside_inside = 1;
+								going_outer_inside = 0; 
+							}
+							return ExecProject(node->js.ps.ps_ProjInfo);
+					}
+
+					node->phaseTwo = true;
+					// Make sure outer relation is also at its end
+					if (!node->reachedEndOfOuter) { 
+						ExhaustSortNode(outerPlan);
+					}
+					
+					if (last_inner_is_0 == 1){
+						LoadNextPage(innerPlan, node->innerPage);
+					}
+					return ExecMergeJoinOld(pstate);
+
+				}
+				node->needInnerPage = false;
+			}
+			// End of inner block: loop or flag to load new blocks
+			if (node->innerPage->index == node->innerPage->tupleCount) {
+				//PUT HERE FOR COUNTING THE LAST TUPLE INSERT
+				if (finising_once == 0 && run_equality == 1){
+					last_same_counter++;
+					if (last_same_counter == number_of_last_same){
+						run_equality = 0;
+					}
+				}
+
+				/* 
+					The very inner inner of the progressive merge is completed, therefore we need to execute the ExecMergeJoinOld. After this we need to
+					return to the outside inner progressive and execute the outside inner ExecMergeJoinOld, dont forget to exhaust the outer and inner or load the 
+					next page
+				*/
+
+				/*
+					This if join can only be run if we finish get the outer page index and it is the last run and it is at the inside_inside and can be only run once
+					The variable once is the safeguard
+				*/
+				if (last_run == 1 && node->outerPage->index == node->outerPage->tupleCount - 1 && once == 1 && going_inside_inside == 1){
+					once = 0;
+					last_run = 0;
+					node->phaseTwo = true;
+					inside_inside_finished = 1;
+					finising_once = 0;
+					if (node->innerPage->tupleCount < PAGE_SIZE){
+						ResetExprContext(econtext);
+						return ExecMergeJoinOld(pstate);
+					}
+					else{
+						ExhaustSortNode(innerPlan); 
+						ResetExprContext(econtext);
+						return ExecMergeJoinOld(pstate);
+					}
+				}
+
+				if (node->outerPage->index < node->outerPage->tupleCount - 1) {
+					node->outerPage->index++;
+					node->innerPage->index = 0;
+				} 
+				else if(node->outerPage->index == node->outerPage->tupleCount - 1) {
+					node->needInnerPage = true;
+					node->needOuterPage = true;
+
+					if (going_inside_inside == 1){
+						going_inside_inside = 0;
+						going_outer_inside = 1;
+
+						if(counting_outer == number_of_outer || counting_inner == number_of_inner){
+							node->phaseTwo = true;
+							once = 0;
+							finising_once = 0;
+							ExhaustSortNode(innerPlan);
+							ResetExprContext(econtext);
+							return ExecMergeJoinOld(pstate);
+						}
+					}
+				} else {
+					elog(ERROR, "Problem with handling end of block.");
+				}
+
+				continue;
+			}
+
+			// Prepare for join comparison
+			outerTupleSlot = node->outerPage->tuples[node->outerPage->index];
+			econtext->ecxt_outertuple = outerTupleSlot;
+			node->mj_OuterTupleSlot = outerTupleSlot;
+
+			innerTupleSlot = node->innerPage->tuples[node->innerPage->index];
+			econtext->ecxt_innertuple = innerTupleSlot;
+			node->mj_InnerTupleSlot = innerTupleSlot;
+
+			node->innerPage->index++;
+			
+			if (TupIsNull(innerTupleSlot)) {
+				elog(WARNING, "inner tuple is null");
+				return NULL;
+			}
+			if (TupIsNull(outerTupleSlot)) {
+				return NULL;
+			}
+
+			// Check join predicates
+			if (MJEvalOuterValues(node) == MJEVAL_MATCHABLE && MJEvalInnerValues(node, innerTupleSlot) == MJEVAL_MATCHABLE) {
+				if (MJCompare(node) == 0) {
+					if (going_outer_inside == 1){
+						number_of_same++;
+					}
+
+					if (number_of_same == PAGE_SIZE){
+						number_of_same = 0;
+						going_outer_inside = 0;
+						going_inside_inside = 1;
+					}
+
+					if (run_equality==1){
+						return ExecProject(node->js.ps.ps_ProjInfo);	
+					}
+				}
+			}
+			ResetExprContext(econtext); ENL1_printf("qualification failed, looping");
+		}
+	}
+
+	// This is for 2 join comparison only 
+	else{
+		MergeJoinState *node = castNode(MergeJoinState, pstate);
+		// Checks phase of sort and calls MergeJoin once progressive join
+		// is finished and all expected setup is finalized
+		if (node->phaseTwo) return ExecMergeJoinOld(pstate);
+
+		PlanState *innerPlan;
+		PlanState *outerPlan;
+		TupleTableSlot *outerTupleSlot;
+		TupleTableSlot *innerTupleSlot;
+		ExprContext *econtext;
+
+		CHECK_FOR_INTERRUPTS();
+
+		/*
+		* get information from the node
+		*/
+		ENL1_printf("getting info from node");
+
+		outerPlan = outerPlanState(node);
+		innerPlan = innerPlanState(node);
+		econtext = node->js.ps.ps_ExprContext;
+
+		/*
+		* Reset per-tuple memory context to free any expression evaluation
+		* storage allocated in the previous tuple cycle.
+		*/
+		ResetExprContext(econtext);
+
+		/*
+		* Ok, everything is setup for the join so now loop until we return a
+		* qualifying join tuple.
+		*/
+		ENL1_printf("entering main loop");
+
+		for (;;) {
+			// Logic for aquiring new outer relation block 
+			if (node->needOuterPage) {
+				if (!node->reachedEndOfOuter) {
+					// Load new block
+					LoadNextPage(outerPlan, node->outerPage);
+
+					// Incomplete block indicates end of relation
+					if (node->outerPage->tupleCount < PAGE_SIZE) {
+						//elog(INFO, "Reached end of outer");
+						node->reachedEndOfOuter = true;
+						if (node->outerPage->tupleCount == 0)
+							continue;
+					}
+				} else {
+					// Phase 1 progressive join is done
+					//elog(INFO, "Phase 1 finished normally");
+					node->phaseTwo = true;
+					// Make sure inner relation is also at its end
+					if (!node->reachedEndOfInner) ExhaustSortNode(innerPlan);
+					return ExecMergeJoinOld(pstate);
+				}
+				node->needOuterPage = false;
+			}
+
+			// Logic for aquiring new inner relation block
+			if (node->needInnerPage) {
+				if (!node->reachedEndOfInner) {
+					// Load new block
+					LoadNextPage(innerPlan, node->innerPage);
+
+					// Incomplete block indicates end of relation
+					if (node->innerPage->tupleCount < PAGE_SIZE) {
+						node->reachedEndOfInner = true;
+						if (node->innerPage->tupleCount == 0)
+							continue;
+					}
+				} else {
+					// Phase 1 progressive join is done
+					//elog(INFO, "Phase 1 finished normally");
+					node->phaseTwo = true;
+					// Make sure outer relation is also at its end
+					if (!node->reachedEndOfOuter) ExhaustSortNode(outerPlan);
+					return ExecMergeJoinOld(pstate);
+				}
+				node->needInnerPage = false;
+			}
+
+			// End of inner block: loop or flag to load new blocks
+			if (node->innerPage->index == node->innerPage->tupleCount) {
+				if (node->outerPage->index < node->outerPage->tupleCount - 1) {
+					node->outerPage->index++;
+					node->innerPage->index = 0;
+				} else if(node->outerPage->index == node->outerPage->tupleCount-1) {
+					node->needInnerPage = true;
+					node->needOuterPage = true;
+				} else {
+					elog(ERROR, "Problem with handling end of block.");
+				}
+				continue;
+			}
+
+			// Prepare for join comparison
+			outerTupleSlot = node->outerPage->tuples[node->outerPage->index];
+			econtext->ecxt_outertuple = outerTupleSlot;
+			node->mj_OuterTupleSlot = outerTupleSlot;
+
+			innerTupleSlot = node->innerPage->tuples[node->innerPage->index];
+			econtext->ecxt_innertuple = innerTupleSlot;
+			node->mj_InnerTupleSlot = innerTupleSlot;
+
+			node->innerPage->index++;
+			
+			if (TupIsNull(innerTupleSlot)) {
+				elog(WARNING, "inner tuple is null");
+				return NULL;
+			}
+			if (TupIsNull(outerTupleSlot)) {
+				return NULL;
+			}
+
+			// Check join predicates
+			if (MJEvalOuterValues(node) == MJEVAL_MATCHABLE && MJEvalInnerValues(node, innerTupleSlot) == MJEVAL_MATCHABLE) {
+				if (MJCompare(node) == 0) {
+					return ExecProject(node->js.ps.ps_ProjInfo);
+				}
+			}
+			ResetExprContext(econtext); ENL1_printf("qualification failed, looping");
+		}
+	}
+}
+//HERE 
 /* ----------------------------------------------------------------
  *		ExecInitMergeJoin
  * ----------------------------------------------------------------
@@ -1435,10 +2007,13 @@ ExecMergeJoin(PlanState *pstate)
 MergeJoinState *
 ExecInitMergeJoin(MergeJoin *node, EState *estate, int eflags)
 {
+	query_count++;
 	MergeJoinState *mergestate;
 	TupleDesc	outerDesc,
 				innerDesc;
-
+	int test_inner=0;
+	int test_outer=0;
+	
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
 
@@ -1449,9 +2024,10 @@ ExecInitMergeJoin(MergeJoin *node, EState *estate, int eflags)
 	 * create state structure
 	 */
 	mergestate = makeNode(MergeJoinState);
+
 	mergestate->js.ps.plan = (Plan *) node;
 	mergestate->js.ps.state = estate;
-	mergestate->js.ps.ExecProcNode = ExecMergeJoin;
+	mergestate->js.ps.ExecProcNode = ExecProgressiveJoin;
 	mergestate->js.jointype = node->join.jointype;
 	mergestate->mj_ConstFalseJoin = false;
 
@@ -1469,7 +2045,7 @@ ExecInitMergeJoin(MergeJoin *node, EState *estate, int eflags)
 	 */
 	mergestate->mj_OuterEContext = CreateExprContext(estate);
 	mergestate->mj_InnerEContext = CreateExprContext(estate);
-
+	
 	/*
 	 * initialize child nodes
 	 *
@@ -1482,12 +2058,18 @@ ExecInitMergeJoin(MergeJoin *node, EState *estate, int eflags)
 
 	outerPlanState(mergestate) = ExecInitNode(outerPlan(node), estate, eflags);
 	outerDesc = ExecGetResultType(outerPlanState(mergestate));
+
 	innerPlanState(mergestate) = ExecInitNode(innerPlan(node), estate,
 											  mergestate->mj_SkipMarkRestore ?
 											  eflags :
 											  (eflags | EXEC_FLAG_MARK));
-	innerDesc = ExecGetResultType(innerPlanState(mergestate));
 
+	if (query_count>=2){
+		test_inner = CalculateInnerTuples(mergestate);
+	}
+
+	innerDesc = ExecGetResultType(innerPlanState(mergestate));
+	
 	/*
 	 * For certain types of inner child nodes, it is advantageous to issue
 	 * MARK every time we advance past an inner tuple we will never return to.
@@ -1600,6 +2182,7 @@ ExecInitMergeJoin(MergeJoin *node, EState *estate, int eflags)
 											node->mergeNullsFirst,
 											(PlanState *) mergestate);
 
+	
 	/*
 	 * initialize join state
 	 */
@@ -1608,6 +2191,52 @@ ExecInitMergeJoin(MergeJoin *node, EState *estate, int eflags)
 	mergestate->mj_MatchedInner = false;
 	mergestate->mj_OuterTupleSlot = NULL;
 	mergestate->mj_InnerTupleSlot = NULL;
+
+	/*
+	 * NEW
+	 * Initialize progressive join state
+	 */
+	 //HERE IS NEW
+	mergestate->needOuterPage = true;
+	mergestate->needInnerPage = true;
+	mergestate->innerPageNumber = innerPlan(node)->plan_rows / PAGE_SIZE + 1;;
+	mergestate->outerPageNumber = outerPlan(node)->plan_rows / PAGE_SIZE + 1;;
+	mergestate->reachedEndOfOuter = false;
+	mergestate->reachedEndOfInner = false;
+	mergestate->phaseTwo = false;
+
+	mergestate->outerPage = CreateRelationPage();
+	mergestate->innerPage = CreateRelationPage();
+
+	// CAlculate the number of tupple for inner and outer. Only work for 3 join, no need for 2 join
+	if (isouterinner==1 && query_count>=2){
+		test_outer= CalculateOuterTuples(mergestate);
+
+		if (test_outer%PAGE_SIZE !=0 ){
+			number_of_outer = test_outer/PAGE_SIZE+1;
+		}
+		else
+			number_of_outer = test_outer/PAGE_SIZE;
+
+		if (test_inner%PAGE_SIZE !=0 ){
+			number_of_inner = test_inner/PAGE_SIZE+1;
+		}
+		else
+			number_of_inner = test_inner/PAGE_SIZE;	
+
+	}
+	isouterinner = 0;
+
+	if (query_count>=2)
+	{			  
+		if (right == right_right || right == left_left){
+			same = 1;
+		}
+		if (left == left_left || left == right_right){
+			same = 1;
+		}
+	}
+
 
 	/*
 	 * initialization successful
@@ -1647,6 +2276,38 @@ ExecEndMergeJoin(MergeJoinState *node)
 	 */
 	ExecEndNode(innerPlanState(node));
 	ExecEndNode(outerPlanState(node));
+
+	RemoveRelationPage(&(node->outerPage));
+	RemoveRelationPage(&(node->innerPage));
+
+
+	//RESETING ALL THE COUNTER AND BOOLEAN TO TEH ORIGINAL STATE
+	query_count = 0;
+	number_of_outer = 0;
+	number_of_inner = 0;
+	counting_outer = 0;
+	counting_inner = 0;
+	number_of_same = 0;
+	number_of_last_same = 0;
+	last_same_counter = 0;
+	left_left = 0;
+	right_right = 0;
+	left = 0;
+	right = 0;
+
+	isouterinner = 1;
+	once = 1;
+	finising_once = 1;
+	going_outer_inside = 1;
+	recording_last_same = 1;
+	run_equality = 1;
+	going_inside_inside = 0;
+	last_run = 0;
+	inside_inside_finished = 0;
+	last_outer_is_0 = 0;
+	last_inner_is_0 = 0;
+	same = 0;
+	test = 0;
 
 	MJ1_printf("ExecEndMergeJoin: %s\n",
 			   "node processing ended");

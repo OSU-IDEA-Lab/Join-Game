@@ -85,33 +85,42 @@ ExecSort(PlanState *pstate)
 
 		outerNode = outerPlanState(node);
 		tupDesc = ExecGetResultType(outerNode);
-
-		tuplesortstate = tuplesort_begin_heap(tupDesc,
-											  plannode->numCols,
-											  plannode->sortColIdx,
-											  plannode->sortOperators,
-											  plannode->collations,
-											  plannode->nullsFirst,
-											  work_mem,
-											  NULL, node->randomAccess);
-		if (node->bounded)
-			tuplesort_set_bound(tuplesortstate, node->bound);
-		node->tuplesortstate = (void *) tuplesortstate;
-
+ 		// NEW -- Check to ensure that that the heap is only initialized once
+		if (node->init_state == 0)
+		{
+			tuplesortstate = tuplesort_begin_heap(tupDesc,
+												plannode->numCols,
+												plannode->sortColIdx,
+												plannode->sortOperators,
+												plannode->collations,
+												plannode->nullsFirst,
+												work_mem,
+												NULL, node->randomAccess);
+			if (node->bounded)
+				tuplesort_set_bound(tuplesortstate, node->bound);
+			node->tuplesortstate = (void *) tuplesortstate;
+			// NEW -- State change
+			node->init_state = 1;
+		}
 		/*
 		 * Scan the subplan and feed all the tuples to tuplesort.
 		 */
-
-		for (;;)
+		// NEW -- Check to ensure that after the final tuple has been returned
+		// no more tuples will be returned from the sorting block
+		if  (node->init_state < 2)
 		{
 			slot = ExecProcNode(outerNode);
 
-			if (TupIsNull(slot))
-				break;
+			// NEW -- Returns final null tuple and modifies state
+			if (TupIsNull(slot)) {
+				node->init_state = 2;
+				return slot;
+			}
 
 			tuplesort_puttupleslot(tuplesortstate, slot);
+			// NEW -- returns each tuple after it is added to the sort struct
+			return slot;
 		}
-
 		/*
 		 * Complete the sort.
 		 */
@@ -190,7 +199,11 @@ ExecInitSort(Sort *node, EState *estate, int eflags)
 	sortstate->bounded = false;
 	sortstate->sort_Done = false;
 	sortstate->tuplesortstate = NULL;
-
+	
+	// NEW 
+	sortstate->init_state = 0;
+	
+	// OLD
 	/*
 	 * Miscellaneous initialization
 	 *

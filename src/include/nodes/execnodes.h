@@ -1709,7 +1709,7 @@ typedef struct JoinState
  * ----------------
  */
 
-#define PAGE_SIZE 16
+#define PAGE_SIZE 32
 typedef struct RelationPage {
 	TupleTableSlot* tuples[PAGE_SIZE];
 	int index;
@@ -1811,6 +1811,18 @@ typedef struct MergeJoinState
 	TupleTableSlot *mj_NullInnerTupleSlot;
 	ExprContext *mj_OuterEContext;
 	ExprContext *mj_InnerEContext;
+
+	// NEW
+	RelationPage *outerPage;
+	RelationPage *innerPage;
+	bool needOuterPage;
+	bool needInnerPage;
+
+	long innerPageNumber;
+	long outerPageNumber;
+	bool reachedEndOfOuter;
+	bool reachedEndOfInner;
+	bool phaseTwo;
 } MergeJoinState;
 
 /* ----------------
@@ -1915,6 +1927,9 @@ typedef struct SortState
 	void	   *tuplesortstate; /* private state of tuplesort.c */
 	bool		am_worker;		/* are we a worker? */
 	SharedSortInfo *shared_info;	/* one entry per worker */
+
+	/* --NEW-- 0: Init, 1: First pass completed, 2: Last pass completed*/
+	int		init_state;
 } SortState;
 
 /* ---------------------
