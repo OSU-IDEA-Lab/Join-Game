@@ -43,6 +43,11 @@
 #define LEFT_TO_RIGHT		1
 #define RIGHT_TO_LEFT		2
 
+/*
+ * Maximum memory allowed.
+ */
+#define MEMORY_MAX 			4751070
+
 
 /* ----------------------------------------------------------------
  *		ExecNestLoop(node)
@@ -169,21 +174,24 @@ ExecNestLoop(PlanState *pstate)
 							/*
 							 * If the outer page has available memory,
 							 */							
-							if (TupIsNull(outerPlan->rippleLeftPage[node->rippleLeftSize]))
+							if ((TupIsNull(outerPlan->rippleLeftPage[node->rippleLeftSize])) &&
+								(node->usedMemory < MEMORY_MAX))
 							{
 								// elog(INFO, "store new outer tuple into left page");
 								outerPlan->rippleLeftPage[node->rippleLeftSize] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+								ExecCopySlot(outerPlan->rippleLeftPage[node->rippleLeftSize], outerTupleSlot);
+								node->rippleLeftSize++;
+								node->usedMemory++;
 							}
 							/*
 							 * In case if the outer page does not have available memory, stop.
 							 */
 							else
 							{
-								elog(ERROR, "The left cache exceeds, stopping the join process.");
+								// elog(ERROR, "The left cache exceeds, stopping the join process.");
 								return NULL;
 							}
-							ExecCopySlot(outerPlan->rippleLeftPage[node->rippleLeftSize], outerTupleSlot);
-							node->rippleLeftSize++;
+
 						}
 						node->rippleRightHead = 0;
 						node->nl_NeedNewOuter = false;
@@ -200,7 +208,6 @@ ExecNestLoop(PlanState *pstate)
 					node->rippleLeftHead = node->rippleLeftSize - 1;
 					//outerTupleSlot = outerPlan->rippleLeftPage[node->rippleLeftHead];
 					//econtext->ecxt_outertuple = outerTupleSlot;
-					
 				}
 				
 				/*
@@ -279,21 +286,23 @@ ExecNestLoop(PlanState *pstate)
 							/*
 							 * If the inner page has available memory,
 							 */											
-							if (TupIsNull(innerPlan->rippleRightPage[node->rippleRightSize]))
+							if ((TupIsNull(innerPlan->rippleRightPage[node->rippleRightSize])) &&
+								(node->usedMemory < MEMORY_MAX))
 							{
 								// elog(INFO, "store new inner tuple into right page");
 								innerPlan->rippleRightPage[node->rippleRightSize] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
+								ExecCopySlot(innerPlan->rippleRightPage[node->rippleRightSize], innerTupleSlot);
+								node->rippleRightSize++;									
+								node->usedMemory++;
 							}
 							/*
 							 * In case if the inner page does not have available memory, stop.
 							 */							
 							else
 							{
-								elog(ERROR, "The right cache exceeds, stopping the join process.");
+								// elog(ERROR, "The right cache exceeds, stopping the join process.");
 								return NULL;
 							}
-							ExecCopySlot(innerPlan->rippleRightPage[node->rippleRightSize], innerTupleSlot);
-							node->rippleRightSize++;
 						}
 						node->rippleLeftHead = 0;
 						node->nl_NeedNewInner = false;
@@ -355,12 +364,19 @@ ExecNestLoop(PlanState *pstate)
 				/*
 				 * If memory is available for an outer table
 				 */
-				if (TupIsNull(outerPlan->rippleLeftPage[node->rippleLeftSize]))
+				if ((TupIsNull(outerPlan->rippleLeftPage[node->rippleLeftSize])) &&
+					(node->usedMemory < MEMORY_MAX))
 				{
 					outerPlan->rippleLeftPage[node->rippleLeftSize] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+					ExecCopySlot(outerPlan->rippleLeftPage[node->rippleLeftSize], outerTupleSlot);
+					node->rippleLeftSize++;
+					node->usedMemory++;
 				}
-				ExecCopySlot(outerPlan->rippleLeftPage[node->rippleLeftSize], outerTupleSlot);
-				node->rippleLeftSize++;
+				else
+				{
+					// elog(ERROR, "The left cache exceeds, stopping the join process.");
+					return NULL;
+				}
 
 				// elog(INFO, "saving new outer tuple information");
 				econtext->ecxt_outertuple = outerTupleSlot;
@@ -378,12 +394,19 @@ ExecNestLoop(PlanState *pstate)
 				/*
 				 * If memory is available for an inner table
 				 */
-				if (TupIsNull(innerPlan->rippleRightPage[node->rippleRightSize]))
+				if ((TupIsNull(innerPlan->rippleRightPage[node->rippleRightSize])) &&
+					(node->usedMemory < MEMORY_MAX))
 				{
 					innerPlan->rippleRightPage[node->rippleRightSize] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
+					ExecCopySlot(innerPlan->rippleRightPage[node->rippleRightSize], innerTupleSlot);
+					node->rippleRightSize++;					
+					node->usedMemory++;
 				}
-				ExecCopySlot(innerPlan->rippleRightPage[node->rippleRightSize], innerTupleSlot);
-				node->rippleRightSize++;
+				else
+				{
+					// elog(ERROR, "The right cache exceeds, stopping the join process.");
+					return NULL;
+				}
 
 				// elog(INFO, "saving new inner tuple information");
 				econtext->ecxt_innertuple = innerTupleSlot;
@@ -574,7 +597,7 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 			   "node initialized");
 	
 	/*
-	 * Hash Ripple join initialization
+	 * Ripple join initialization
 	 */
 	nlstate->direction = 0;
 	nlstate->nl_NeedNewInner = false;
@@ -586,6 +609,8 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
     nlstate->rippleRightHead = 0;
     nlstate->rippleLeftSize = 0;
     nlstate->rippleRightSize = 0;
+
+	nlstate->usedMemory = 0;
 	
 	return nlstate;
 }

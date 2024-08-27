@@ -913,15 +913,9 @@ typedef TupleTableSlot *(*ExecProcNodeMtd) (struct PlanState *pstate);
  * abstract superclass for all PlanState-type nodes.
  * ----------------
  */
+#define RIPPLE_LEFT_PAGE_SIZE 8388608
+#define RIPPLE_RIGHT_PAGE_SIZE 8388608
 
-typedef struct DummyBanditState 
-{
-    unsigned int tupMatchCount;
-    unsigned int flag1;
-}DummyBanditState;
-
-#define RIPPLE_LEFT_PAGE_SIZE 524288
-#define RIPPLE_RIGHT_PAGE_SIZE 524288
 typedef struct PlanState
 {
 
@@ -1727,60 +1721,6 @@ typedef struct JoinState
  *		NullInnerTupleSlot prepared null tuple for left outer joins
  * ----------------
  */
-
-#define PAGE_SIZE 320
-#define N_FAILURE 10
-typedef struct RelationPage {
-	TupleTableSlot* tuples[PAGE_SIZE];
-	int index;
-	int tupleCount;
-} RelationPage;
-
-struct tupleRewards {
-    int reward;
-    int size;
-	int outpgnum;
-	double rewardRatio;
-    HeapTupleData tuples[PAGE_SIZE];
-};
-
-struct tupleInfo {
-    int explore_num_trails;
-	int explore_success_count;
-	double explore_reward_ratio;
-	double h_explore;
-	double p_r;
-    int exploit_num_trails;
-	int exploit_success_count;
-	double exploit_reward_ratio;
-	double h_exploit;
-	double tuple_mean;
-	double tuple_mean_num;
-	double tuple_mean_den;
-	double mean_explore;
-	double mean_exploit;
-	double tuple_variance;
-	double tuple_var_num;
-	double tuple_var_den;
-};
-
-struct outerTupleNum {
-    struct tupleInfo* outertupleinfo;
-};
-
-struct outerPgNum {
-    struct outerTupleNum* outertupnum;
-	double explore_page_reward_ratio;
-	double explore_p_r;
-	int explore_n_value;
-};
-
-struct indexedReward {
-	double rwrd;
-	int orig_idx;
-	double rwrdratio;
-};
-
 typedef struct NestLoopState
 {
 	JoinState	js;				/* its first field is NodeTag */
@@ -1788,57 +1728,6 @@ typedef struct NestLoopState
 	bool		nl_MatchedOuter;
 	TupleTableSlot *nl_NullInnerTupleSlot;
     ScanState*  ss;
-
-	int activeRelationPages;
-	RelationPage *outerPage;
-	RelationPage *innerPage;
-
-	int lastReward;
-	int reward;
-	bool isExploring;
-	long innerPageNumber;
-	long outerPageNumber;
-	int sqrtOfInnerPages;
-
-	bool needOuterPage;
-	bool needInnerPage;
-	int exploreStepCounter;
-	int exploitStepCounter;
-	int innerPageCounter;
-	int innerPageCounterTotal;
-	int outerPageCounter;
-	bool reachedEndOfOuter;
-	bool reachedEndOfInner;
-	unsigned long innerTupleCounter;
-	unsigned long outerTupleCounter;
-	int nestloopInstance;
-	int generatedJoins;
-	int rescanCount;
-
-    struct tupleRewards* tidRewards;
-	struct outerPgNum* outerpages;
-	struct outerTupleNum* outertupnum;
-	struct tupleInfo* outertupleinfo;
-	struct indexedReward* idxreward;
-	int* xids;
-	int* rewards;
-	int pageIndex;
-	int lastPageIndex;
-	ScanKey xidScanKey;
-	int nFailure;
-	int genExploit;
-	int genExplore;
-	int pageNum;
-	unsigned long long T;
-	double reRatio;
-	int numOuterTuples;
-	int numInnerTuples;
-	int currentCount;
-	int numOuterPages;
-	int remOuterPages;
-	int outerAttrNum;
-	int innerAttrNum;
-	int pageSuccessCounter;
 
 	/*
 	 * Ripple join variables
@@ -1854,10 +1743,8 @@ typedef struct NestLoopState
     unsigned int rippleLeftSize;
 	unsigned int rippleRightHead;
     unsigned int rippleRightSize;
-
-	unsigned int memoryLeftHead;
-	unsigned int memoryRightHead;
-
+	
+	unsigned int usedMemory;
 } NestLoopState;
 
 /* ----------------
@@ -1905,21 +1792,6 @@ typedef struct MergeJoinState
 	TupleTableSlot *mj_NullInnerTupleSlot;
 	ExprContext *mj_OuterEContext;
 	ExprContext *mj_InnerEContext;
-	/*SMS*/
-	
-	// NEW
-	RelationPage *outerPage;
-	RelationPage *innerPage;
-	bool needOuterPage;
-	bool needInnerPage;
-
-	long innerPageNumber;
-	long outerPageNumber;
-	bool reachedEndOfOuter;
-	bool reachedEndOfInner;
-	bool phaseTwo;
-	
-	/*SMS*/
 } MergeJoinState;
 
 /* ----------------
