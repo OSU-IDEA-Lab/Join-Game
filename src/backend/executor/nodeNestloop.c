@@ -39,12 +39,13 @@
 /*
  * Online ripple join hyper-parameters
  */
-#define N_FAIL				200
+#define N_FAIL				500
 
 /*
  * Memory specification.
  */
-#define MEMORY_MIN			5000
+#define MEMORY_L_MIN		500
+#define MEMORY_R_MIN		500
 #define MEMORY_MAX 			4751070
 
 /*
@@ -138,20 +139,6 @@ ExecNestLoop(PlanState *pstate)
 				// elog(INFO, "Left to Right");
 				if (node->nl_NeedNewOuter && !node->ripple_outerEnd)
 				{
-					/*
-					 * Drop the most recent inner tuple
-					 */
-					if (node->rippleRightSize > MEMORY_MIN)
-					{
-						if (innerPlan->RightReward[node->rippleRightSize - 1] != -1)
-						{
-							ExecDropSingleTupleTableSlot(innerPlan->rippleRightPage[node->rippleRightSize - 1]);
-							innerPlan->rippleRightPage[node->rippleRightSize - 1] = NULL;
-							innerPlan->RightReward[node->rippleRightSize - 1] = 0;
-							node->rippleRightSize--;
-						}
-					}
-
 					// elog(INFO, "getting new outer tuple");
 					outerTupleSlot = ExecProcNode(outerPlan);
 					node->nl_MatchedOuter = false;
@@ -269,22 +256,14 @@ ExecNestLoop(PlanState *pstate)
 			 */
 			case RIGHT_TO_LEFT:
 				// elog(INFO, "Right to Left");
+				if (node->rippleLeftSize == 0)
+				{
+					elog(ERROR, "No left table exists.");
+					return NULL;
+				}
+
 				if (node->nl_NeedNewInner && !node->ripple_innerEnd)
 				{
-					/*
-					 * Drop the most recent outer tuple
-					 */
-					if (node->rippleLeftSize > MEMORY_MIN)
-					{
-						if (outerPlan->LeftReward[node->rippleLeftSize - 1] != 0)
-						{
-							ExecDropSingleTupleTableSlot(outerPlan->rippleLeftPage[node->rippleLeftSize - 1]);
-							outerPlan->rippleLeftPage[node->rippleLeftSize - 1] = NULL;
-							outerPlan->LeftReward[node->rippleLeftSize - 1] = 0;
-							node->rippleLeftSize--;
-						}
-					}
-
 					// elog(INFO, "getting new inner tuple");
 					innerTupleSlot = ExecProcNode(innerPlan);
 					node->nl_MatchedInner = false;
@@ -576,7 +555,7 @@ ExecNestLoop(PlanState *pstate)
 						/*
 						 * If the tuple failed to join for N times, drop the tuple from the left cache if N fails.
 						 */
-						if ((outerPlan->LeftReward[node->RLeftHead] >= N_FAIL))
+						if ((outerPlan->LeftReward[node->RLeftHead] >= N_FAIL) && (node->rippleLeftSize > MEMORY_L_MIN))
 						{
 							/*
 							 * Drop the current slot, then fill the slot with the bottom tuple.
@@ -618,7 +597,7 @@ ExecNestLoop(PlanState *pstate)
 						/*
 						 * If the tuple failed to join for N times, drop the tuple from the right cache if N fails.
 						 */
-						if ((innerPlan->RightReward[node->RRightHead] >= N_FAIL))
+						if ((innerPlan->RightReward[node->RRightHead] >= N_FAIL) && (node->rippleRightSize > MEMORY_R_MIN))
 						{
 							/*
 							 * Drop the current slot, then fill the slot with the bottom tuple.
@@ -657,8 +636,8 @@ ExecNestLoop(PlanState *pstate)
 					elog(ERROR, "join direction should be either L2R or R2L.");
 					return NULL;	
 			}
-		}
 
+		}
 	}
 }
 
