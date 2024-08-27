@@ -1754,6 +1754,8 @@ typedef struct NestLoopState
 	 */
 	unsigned int RLeftHead;
 	unsigned int RRightHead;
+
+	unsigned int usedMemory;
 } NestLoopState;
 
 /* ----------------
