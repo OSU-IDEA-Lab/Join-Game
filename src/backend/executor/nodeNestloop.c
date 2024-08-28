@@ -44,8 +44,7 @@
 /*
  * Memory specification.
  */
-#define MEMORY_L_MIN		500
-#define MEMORY_R_MIN		500
+#define MEMORY_MIN			500
 #define MEMORY_MAX 			4751070
 
 /*
@@ -555,7 +554,7 @@ ExecNestLoop(PlanState *pstate)
 						/*
 						 * If the tuple failed to join for N times, drop the tuple from the left cache if N fails.
 						 */
-						if ((outerPlan->LeftReward[node->RLeftHead] >= N_FAIL) && (node->rippleLeftSize > MEMORY_L_MIN))
+						if ((outerPlan->LeftReward[node->RLeftHead] >= N_FAIL) && (node->rippleLeftSize >= MEMORY_MIN))
 						{
 							/*
 							 * Drop the current slot, then fill the slot with the bottom tuple.
@@ -597,7 +596,7 @@ ExecNestLoop(PlanState *pstate)
 						/*
 						 * If the tuple failed to join for N times, drop the tuple from the right cache if N fails.
 						 */
-						if ((innerPlan->RightReward[node->RRightHead] >= N_FAIL) && (node->rippleRightSize > MEMORY_R_MIN))
+						if ((innerPlan->RightReward[node->RRightHead] >= N_FAIL) && (node->rippleRightSize >= MEMORY_MIN))
 						{
 							/*
 							 * Drop the current slot, then fill the slot with the bottom tuple.
