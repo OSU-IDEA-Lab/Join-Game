@@ -530,8 +530,8 @@ ExecNestLoop(PlanState *pstate)
 		/*
 		 * If the tuples have succeeded before, do not need to drop.
 		 */
-		if ((outerPlan->LeftReward[node->RLeftHead] < 0) &&
-			(innerPlan->RightReward[node->RRightHead] < 0))
+		if ((outerPlan->LeftReward[node->RLeftHead] == -1) &&
+			(innerPlan->RightReward[node->RRightHead] == -1))
 		{
 			continue;
 		}
@@ -544,7 +544,7 @@ ExecNestLoop(PlanState *pstate)
 			switch (direction)
 			{
 				case RIGHT_TO_LEFT:
-					if (outerPlan->LeftReward[node->RLeftHead] >= 0)
+					if (outerPlan->LeftReward[node->RLeftHead] != -1)
 					{
 						/*
 						 * Failure count up for the outer tuple
@@ -586,7 +586,7 @@ ExecNestLoop(PlanState *pstate)
 					break;
 				
 				case LEFT_TO_RIGHT:
-					if (innerPlan->RightReward[node->RRightHead] >= 0)
+					if (innerPlan->RightReward[node->RRightHead] != -1)
 					{
 						/*
 						 * Failure count up for the inner tuple
