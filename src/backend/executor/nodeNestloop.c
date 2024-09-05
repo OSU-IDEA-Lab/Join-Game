@@ -199,7 +199,7 @@ ExecNestLoop(PlanState *pstate)
 							else
 							{
 								// elog(ERROR, "The left cache exceeds, stopping the join process.");
-								// return NULL;
+								return NULL;
 							}
 						}
 
@@ -324,7 +324,7 @@ ExecNestLoop(PlanState *pstate)
 							else
 							{
 								// elog(ERROR, "The right cache exceeds, stopping the join process.");
-								// return NULL;
+								return NULL;
 							}
 						}
 
