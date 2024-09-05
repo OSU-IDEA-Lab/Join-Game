@@ -37,7 +37,7 @@
 
 
 /*
- * States of ripple join state machine
+ * States of ripple join
  */
 #define BI_DIRECTION		0
 #define LEFT_TO_RIGHT		1
