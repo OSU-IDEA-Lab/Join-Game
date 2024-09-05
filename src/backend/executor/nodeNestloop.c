@@ -180,20 +180,18 @@ ExecNestLoop(PlanState *pstate)
 							/*
 							 * If the outer page has available memory,
 							 */
-							if (node->usedMemory < MEMORY_MAX)
+							if ((TupIsNull(outerPlan->rippleLeftPage[node->rippleLeftSize])) &&
+								(node->usedMemory < MEMORY_MAX))
 							{
-								if (TupIsNull(outerPlan->rippleLeftPage[node->rippleLeftSize]))
-								{
-									// elog(INFO, "store new outer tuple into left page");
-									outerPlan->rippleLeftPage[node->rippleLeftSize] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
-									ExecCopySlot(outerPlan->rippleLeftPage[node->rippleLeftSize], outerTupleSlot);
-									node->rippleLeftSize++;
+								// elog(INFO, "store new outer tuple into left page");
+								outerPlan->rippleLeftPage[node->rippleLeftSize] = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+								ExecCopySlot(outerPlan->rippleLeftPage[node->rippleLeftSize], outerTupleSlot);
+								node->rippleLeftSize++;
 
-									node->rippleLeftHead = node->rippleLeftSize - 1;
-									node->RLeftHead = node->rippleLeftHead;
-									
-									node->usedMemory++;
-								}
+								node->rippleLeftHead = node->rippleLeftSize - 1;
+								node->RLeftHead = node->rippleLeftHead;
+								
+								node->usedMemory++;
 							}
 							/*
 							 * In case if the outer page does not have available memory, stop.
@@ -307,20 +305,18 @@ ExecNestLoop(PlanState *pstate)
 							/*
 							 * If the inner page has available memory,
 							 */										
-							if (node->usedMemory < MEMORY_MAX)
+							if ((TupIsNull(innerPlan->rippleRightPage[node->rippleRightSize])) &&
+								(node->usedMemory < MEMORY_MAX))
 							{
-								if (TupIsNull(innerPlan->rippleRightPage[node->rippleRightSize]))
-								{
-									// elog(INFO, "store new inner tuple into right page");
-									innerPlan->rippleRightPage[node->rippleRightSize] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
-									ExecCopySlot(innerPlan->rippleRightPage[node->rippleRightSize], innerTupleSlot);
-									node->rippleRightSize++;
+								// elog(INFO, "store new inner tuple into right page");
+								innerPlan->rippleRightPage[node->rippleRightSize] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
+								ExecCopySlot(innerPlan->rippleRightPage[node->rippleRightSize], innerTupleSlot);
+								node->rippleRightSize++;
 
-									node->rippleRightHead = node->rippleRightSize - 1;
-									node->RRightHead = node->rippleRightHead;
+								node->rippleRightHead = node->rippleRightSize - 1;
+								node->RRightHead = node->rippleRightHead;
 
-									node->usedMemory++;
-								}
+								node->usedMemory++;
 							}
 							/*
 							 * In case if the inner page does not have available memory, stop.
