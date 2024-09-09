@@ -1,0 +1,405 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" /><title>E.3. Release 11.3</title><link rel="stylesheet" type="text/css" href="stylesheet.css" /><link rev="made" href="pgsql-docs@lists.postgresql.org" /><meta name="generator" content="DocBook XSL Stylesheets V1.79.1" /><link rel="prev" href="release-11-4.html" title="E.2. Release 11.4" /><link rel="next" href="release-11-2.html" title="E.4. Release 11.2" /></head><body><div xmlns="http://www.w3.org/TR/xhtml1/transitional" class="navheader"><table width="100%" summary="Navigation header"><tr><th colspan="5" align="center">E.3. Release 11.3</th></tr><tr><td width="10%" align="left"><a accesskey="p" href="release-11-4.html" title="E.2. Release 11.4">Prev</a> </td><td width="10%" align="left"><a accesskey="u" href="release.html" title="Appendix E. Release Notes">Up</a></td><th width="60%" align="center">Appendix E. Release Notes</th><td width="10%" align="right"><a accesskey="h" href="index.html" title="PostgreSQL 11.5 Documentation">Home</a></td><td width="10%" align="right"> <a accesskey="n" href="release-11-2.html" title="E.4. Release 11.2">Next</a></td></tr></table><hr></hr></div><div class="sect1" id="RELEASE-11-3"><div class="titlepage"><div><div><h2 class="title" style="clear: both">E.3. Release 11.3</h2></div></div></div><div class="toc"><dl class="toc"><dt><span class="sect2"><a href="release-11-3.html#id-1.11.6.7.4">E.3.1. Migration to Version 11.3</a></span></dt><dt><span class="sect2"><a href="release-11-3.html#id-1.11.6.7.5">E.3.2. Changes</a></span></dt></dl></div><p><strong>Release date: </strong>2019-05-09</p><p>
+   This release contains a variety of fixes from 11.2.
+   For information about new features in major release 11, see
+   <a class="xref" href="release-11.html" title="E.6. Release 11">Section E.6</a>.
+  </p><div class="sect2" id="id-1.11.6.7.4"><div class="titlepage"><div><div><h3 class="title">E.3.1. Migration to Version 11.3</h3></div></div></div><p>
+    A dump/restore is not required for those running 11.X.
+   </p><p>
+    However, if you are upgrading from a version earlier than 11.1,
+    see <a class="xref" href="release-11-1.html" title="E.5. Release 11.1">Section E.5</a>.
+   </p></div><div class="sect2" id="id-1.11.6.7.5"><div class="titlepage"><div><div><h3 class="title">E.3.2. Changes</h3></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+      Prevent row-level security policies from being bypassed via
+      selectivity estimators (Dean Rasheed)
+     </p><p>
+      Some of the planner's selectivity estimators apply user-defined
+      operators to values found in <code class="structname">pg_statistic</code>
+      (e.g., most-common values).  A leaky operator therefore can disclose
+      some of the entries in a data column, even if the calling user lacks
+      permission to read that column.  In CVE-2017-7484 we added
+      restrictions to forestall that, but we failed to consider the
+      effects of row-level security.  A user who has SQL permission to
+      read a column, but who is forbidden to see certain rows due to RLS
+      policy, might still learn something about those rows' contents via a
+      leaky operator.  This patch further tightens the rules, allowing
+      leaky operators to be applied to statistics data only when there is
+      no relevant RLS policy.  (CVE-2019-10130)
+     </p></li><li class="listitem"><p>
+      Avoid access to already-freed memory during partition routing error
+      reports (Michael Paquier)
+     </p><p>
+      This mistake could lead to a crash, and in principle it might be
+      possible to use it to disclose server memory contents.
+      (CVE-2019-10129)
+     </p></li><li class="listitem"><p>
+      Avoid catalog corruption when an <code class="command">ALTER TABLE</code> on a
+      partitioned table finds that a partitioned index is reusable (Amit
+      Langote, Tom Lane)
+     </p><p>
+      This occurs, for example, when <code class="command">ALTER COLUMN TYPE</code>
+      finds that no physical table rewrite is required.
+     </p></li><li class="listitem"><p>
+      Avoid catalog corruption when a temporary table with <code class="literal">ON
+      COMMIT DROP</code> and an identity column is created in a
+      single-statement transaction (Peter Eisentraut)
+     </p><p>
+      This hazard was overlooked because the case is not actually useful,
+      since the temporary table would be dropped immediately after
+      creation.
+     </p></li><li class="listitem"><p>
+      Fix failure in <code class="command">ALTER INDEX ... ATTACH PARTITION</code>
+      if the partitioned table contains more dropped columns than its
+      partition does (Álvaro Herrera)
+     </p></li><li class="listitem"><p>
+      Fix failure to attach a partition's existing index to a newly-created
+      partitioned index in some cases (Amit Langote, Álvaro Herrera)
+     </p><p>
+      This would lead to errors such as <span class="quote">“<span class="quote">index ... not found in
+      partition</span>”</span> in subsequent DDL that uses the partitioned index.
+     </p></li><li class="listitem"><p>
+      Avoid crash when an EPQ recheck is performed for a partitioned query
+      result relation (Amit Langote)
+     </p><p>
+      This occurs when using <code class="literal">READ COMMITTED</code> isolation
+      level and another session has concurrently updated some of the
+      target row(s).
+     </p></li><li class="listitem"><p>
+      Fix tuple routing in multi-level partitioned tables that have dropped
+      attributes (Amit Langote, Michael Paquier)
+     </p></li><li class="listitem"><p>
+      Fix failure when the slow path of foreign key constraint initial
+      validation is applied to partitioned tables (Hadi Moshayedi, Tom
+      Lane, Andres Freund)
+     </p><p>
+      This didn't manifest except in the uncommon cases where the fast
+      path can't be used (such as permissions problems).
+     </p></li><li class="listitem"><p>
+      Fix behavior for an <code class="command">UPDATE</code>
+      or <code class="command">DELETE</code> on an inheritance tree or partitioned
+      table in which every table can be excluded (Amit Langote, Tom Lane)
+     </p><p>
+      In such cases, the query did not report the correct set of output
+      columns when a <code class="literal">RETURNING</code> clause was present, and
+      if there were any statement-level triggers that should be fired, it
+      didn't fire them.
+     </p></li><li class="listitem"><p>
+      When accessing a partition directly,
+      and <code class="varname">constraint_exclusion</code> is set
+      to <code class="literal">on</code>, use the partition's partition constraint
+      as well as any <code class="literal">CHECK</code> constraints for exclusion
+      checking (Amit Langote, Tom Lane)
+     </p><p>
+      This change restores the behavior to what it was in v10.
+     </p></li><li class="listitem"><p>
+      Avoid server crash when an error occurs while trying to persist
+      a cursor query across a transaction commit (Tom Lane)
+     </p><p>
+      If a procedure attempts to commit while it has an open explicit or
+      implicit cursor (for example, a PL/pgSQL <code class="command">FOR</code>-loop
+      query), the cursor must be executed to completion and its results
+      saved before the transaction commit can be performed.  An error
+      occurring during such execution led to a crash.
+     </p></li><li class="listitem"><p>
+      Avoid throwing incorrect errors for updates of temporary tables and
+      unlogged tables when a <code class="literal">FOR ALL TABLES</code> publication
+      exists (Peter Eisentraut)
+     </p><p>
+      Such tables should be ignored for publication purposes, but some
+      parts of the code failed to do so.
+     </p></li><li class="listitem"><p>
+      Fix handling of explicit <code class="literal">DEFAULT</code> items in
+      an <code class="command">INSERT ... VALUES</code> command with
+      multiple <code class="literal">VALUES</code> rows, if the target relation is
+      an updatable view (Amit Langote, Dean Rasheed)
+     </p><p>
+      When the updatable view has no default for the column but its
+      underlying table has one, a single-row <code class="command">INSERT
+      ... VALUES</code> will use the underlying table's default.
+      In the multi-row case, however, NULL was always used.  Correct it to
+      act like the single-row case.
+     </p></li><li class="listitem"><p>
+      Fix <code class="command">CREATE VIEW</code> to allow zero-column views
+      (Ashutosh Sharma)
+     </p><p>
+      We should allow this for consistency with allowing zero-column
+      tables.  Since a table can be converted to a view, zero-column views
+      could be created even with the restriction in place, leading to
+      dump/reload failures.
+     </p></li><li class="listitem"><p>
+      Add missing support for <code class="command">CREATE TABLE IF NOT EXISTS ... AS
+      EXECUTE ...</code> (Andreas Karlsson)
+     </p><p>
+      The combination of <code class="literal">IF NOT EXISTS</code>
+      and <code class="literal">EXECUTE</code> should work, but the grammar omitted
+      it.
+     </p></li><li class="listitem"><p>
+      Ensure that sub-<code class="command">SELECT</code>s appearing in
+      row-level-security policy expressions are executed with the correct
+      user's permissions (Dean Rasheed)
+     </p><p>
+      Previously, if the table having the RLS policy was accessed via a
+      view, such checks might be executed as the user calling the view,
+      not as the view owner as they should be.
+     </p></li><li class="listitem"><p>
+      Accept XML documents as valid values of type <code class="type">xml</code>
+      when <code class="varname">xmloption</code> is set
+      to <code class="literal">content</code>, as required by SQL:2006 and later
+      (Chapman Flack)
+     </p><p>
+      Previously <span class="productname">PostgreSQL</span> followed the
+      SQL:2003 definition, which doesn't allow this.  But that creates a
+      serious problem for dump/restore: there is no setting
+      of <code class="varname">xmloption</code> that will accept all valid XML data.
+      Hence, switch to the 2006 definition.
+     </p><p>
+      <span class="application">pg_dump</span> is also modified to emit
+      <code class="literal">SET xmloption = content</code> while restoring data,
+      ensuring that dump/restore works even if the prevailing
+      setting is <code class="literal">document</code>.
+     </p></li><li class="listitem"><p>
+      Improve server's startup-time checks for whether a pre-existing
+      shared memory segment is still in use (Noah Misch)
+     </p><p>
+      The postmaster is now more likely to detect that there are still
+      active processes from a previous postmaster incarnation, even if
+      the <code class="filename">postmaster.pid</code> file has been removed.
+     </p></li><li class="listitem"><p>
+      Avoid possible division-by-zero in btree index vacuum logic
+      (Piotr Stefaniak, Alexander Korotkov)
+     </p><p>
+      This could lead to incorrect decisions about whether index cleanup is
+      needed.
+     </p></li><li class="listitem"><p>
+      Avoid counting parallel workers' transactions as separate
+      transactions (Haribabu Kommi)
+     </p></li><li class="listitem"><p>
+      Fix incompatibility of GIN-index WAL records (Alexander Korotkov)
+     </p><p>
+      A fix applied in February's minor releases was not sufficiently
+      careful about backwards compatibility, leading to problems if a
+      standby server of that vintage reads GIN page-deletion WAL records
+      generated by a primary server of a previous minor release.
+     </p></li><li class="listitem"><p>
+      Fix possible crash while executing a <code class="command">SHOW</code> command
+      in a replication connection (Michael Paquier)
+     </p></li><li class="listitem"><p>
+      Avoid server memory leak when fetching rows from a portal one at a
+      time (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Avoid memory leak when a partition's relation cache entry is rebuilt
+      (Amit Langote, Tom Lane)
+     </p></li><li class="listitem"><p>
+      Tolerate <code class="literal">EINVAL</code> and <code class="literal">ENOSYS</code>
+      error results, where appropriate, for <code class="function">fsync</code>
+      and <code class="function">sync_file_range</code> calls
+      (Thomas Munro, James Sewell)
+     </p><p>
+      The previous change to panic on file synchronization failures turns
+      out to have been excessively paranoid for certain cases where a
+      failure is predictable and essentially means <span class="quote">“<span class="quote">operation not
+      supported</span>”</span>.
+     </p></li><li class="listitem"><p>
+      Report correct relation name in
+      autovacuum's <code class="structname">pg_stat_activity</code> display
+      during BRIN summarize operations (Álvaro Herrera)
+     </p></li><li class="listitem"><p>
+      Avoid crash when trying to plan a partition-wise join when GEQO
+      is active (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Fix <span class="quote">“<span class="quote">failed to build any <em class="replaceable"><code>N</code></em>-way
+      joins</span>”</span> planner failures with lateral references leading out
+      of <code class="literal">FULL</code> outer joins (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Fix misplanning of queries in which a set-returning function is
+      applied to a relation that is provably empty (Tom Lane, Julien
+      Rouhaud)
+     </p><p>
+      In v10, this oversight only led to slightly inefficient plans, but
+      in v11 it could cause <span class="quote">“<span class="quote">set-valued function called in context
+      that cannot accept a set</span>”</span> errors.
+     </p></li><li class="listitem"><p>
+      Check the appropriate user's permissions when enforcing rules about
+      letting a leaky operator see <code class="structname">pg_statistic</code>
+      data (Dean Rasheed)
+     </p><p>
+      When an underlying table is being accessed via a view, consider the
+      privileges of the view owner while deciding whether leaky operators
+      may be applied to the table's statistics data, rather than the
+      privileges of the user making the query.  This makes the planner's
+      rules about what data is visible match up with the executor's,
+      avoiding unnecessarily-poor plans.
+     </p></li><li class="listitem"><p>
+      Fix planner's parallel-safety assessment for grouped queries
+      (Etsuro Fujita)
+     </p><p>
+      Previously, target-list evaluation work that could have been
+      parallelized might not be.
+     </p></li><li class="listitem"><p>
+      Fix mishandling of <span class="quote">“<span class="quote">included</span>”</span> index columns in
+      planner's unique-index logic (Tom Lane)
+     </p><p>
+      This could result in failing to recognize that a unique index with
+      included columns proves uniqueness of a query result, leading to a
+      poor plan.
+     </p></li><li class="listitem"><p>
+      Fix incorrect strictness check for array coercion expressions
+      (Tom Lane)
+     </p><p>
+      This might allow, for example, incorrect inlining of a strict SQL
+      function, leading to non-enforcement of the strictness condition.
+     </p></li><li class="listitem"><p>
+      Speed up planning when there are many equality conditions and many
+      potentially-relevant foreign key constraints (David Rowley)
+     </p></li><li class="listitem"><p>
+      Avoid O(N^2) performance issue when rolling back a transaction that
+      created many tables (Tomas Vondra)
+     </p></li><li class="listitem"><p>
+      Fix corner-case server crashes in dynamic shared memory
+      allocation (Thomas Munro, Robert Haas)
+     </p></li><li class="listitem"><p>
+      Fix race conditions in management of dynamic shared memory
+      (Thomas Munro)
+     </p><p>
+      These could lead to <span class="quote">“<span class="quote">dsa_area could not attach to
+      segment</span>”</span> or <span class="quote">“<span class="quote">cannot unpin a segment that is not
+      pinned</span>”</span> errors.
+     </p></li><li class="listitem"><p>
+      Fix race condition in which a hot-standby postmaster could fail to
+      shut down after receiving a smart-shutdown request (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Fix possible crash
+      when <code class="function">pg_identify_object_as_address()</code> is given
+      invalid input (Álvaro Herrera)
+     </p></li><li class="listitem"><p>
+      Fix possible <span class="quote">“<span class="quote">could not access status of transaction</span>”</span>
+      failures in <code class="function">txid_status()</code> (Thomas Munro)
+     </p></li><li class="listitem"><p>
+      Fix authentication failure when attempting to use SCRAM
+      authentication with mixed OpenSSL library versions (Michael Paquier,
+      Peter Eisentraut)
+     </p><p>
+      If <span class="application">libpq</span> is using OpenSSL 1.0.1 or older
+      while the server is using OpenSSL 1.0.2 or newer, the negotiation of
+      which SASL mechanism to use went wrong, leading to a
+      confusing <span class="quote">“<span class="quote">channel binding not supported by this build</span>”</span>
+      error message.
+     </p></li><li class="listitem"><p>
+      Tighten validation of encoded SCRAM-SHA-256 and MD5 passwords
+      (Jonathan Katz)
+     </p><p>
+      A password string that had the right initial characters could be
+      mistaken for one that is correctly hashed into SCRAM-SHA-256 or MD5
+      format.  The password would be accepted but would be unusable later.
+     </p></li><li class="listitem"><p>
+      Fix handling of <code class="varname">lc_time</code> settings that imply an
+      encoding different from the database's encoding (Juan José
+      Santamaría Flecha, Tom Lane)
+     </p><p>
+      Localized month or day names that include non-ASCII characters
+      previously caused unexpected errors or wrong output in such locales.
+     </p></li><li class="listitem"><p>
+      Create the <code class="filename">current_logfiles</code> file with the same
+      permissions as other files in the server's data directory
+      (Haribabu Kommi)
+     </p><p>
+      Previously it used the permissions specified
+      by <code class="varname">log_file_mode</code>, but that can cause problems for
+      backup utilities.
+     </p></li><li class="listitem"><p>
+      Fix incorrect <code class="varname">operator_precedence_warning</code> checks
+      involving unary minus operators (Rikard Falkeborn)
+     </p></li><li class="listitem"><p>
+      Disallow <code class="literal">NaN</code> as a value for floating-point server
+      parameters (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Rearrange <code class="command">REINDEX</code> processing to avoid assertion
+      failures when reindexing individual indexes
+      of <code class="structname">pg_class</code> (Andres Freund, Tom Lane)
+     </p></li><li class="listitem"><p>
+      Fix planner assertion failure for parameterized dummy paths (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Insert correct test function in the result
+      of <code class="function">SnapBuildInitialSnapshot()</code> (Antonin Houska)
+     </p><p>
+      No core code cares about this, but some extensions do.
+     </p></li><li class="listitem"><p>
+      Fix intermittent <span class="quote">“<span class="quote">could not reattach to shared memory</span>”</span>
+      session startup failures on Windows (Noah Misch)
+     </p><p>
+      A previously unrecognized source of these failures is creation of
+      thread stacks for a process's default thread pool.  Arrange for such
+      stacks to be allocated in a different memory region.
+     </p></li><li class="listitem"><p>
+      Fix error detection in directory scanning on Windows (Konstantin
+      Knizhnik)
+     </p><p>
+      Errors, such as lack of permissions to read the directory, were not
+      detected or reported correctly; instead the code silently acted as
+      though the directory were empty.
+     </p></li><li class="listitem"><p>
+      Fix grammar problems in <span class="application">ecpg</span> (Tom Lane)
+     </p><p>
+      A missing semicolon led to mistranslation
+      of <code class="literal">SET <em class="replaceable"><code>variable</code></em> =
+      DEFAULT</code> (but
+      not <code class="literal">SET <em class="replaceable"><code>variable</code></em> TO
+      DEFAULT</code>) in <span class="application">ecpg</span> programs,
+      producing syntactically invalid output that the server would reject.
+      Additionally, in a <code class="command">DROP TYPE</code> or <code class="command">DROP
+      DOMAIN</code> command that listed multiple type names, only the
+      first type name was actually processed.
+     </p></li><li class="listitem"><p>
+      Sync <span class="application">ecpg</span>'s syntax for <code class="command">CREATE
+      TABLE AS</code> with the server's (Daisuke Higuchi)
+     </p></li><li class="listitem"><p>
+      Fix possible buffer overruns in <span class="application">ecpg</span>'s
+      processing of include filenames (Liu Huailing, Fei Wu)
+     </p></li><li class="listitem"><p>
+      Fix <span class="application">pg_rewind</span> failures due to failure to
+      remove some transient files in the target data directory (Michael
+      Paquier)
+     </p></li><li class="listitem"><p>
+      Make <span class="application">pg_verify_checksums</span> verify that the
+      data directory it's pointed at is of the
+      right <span class="productname">PostgreSQL</span> version (Michael Paquier)
+     </p></li><li class="listitem"><p>
+      Avoid crash in <code class="filename">contrib/postgres_fdw</code> when a
+      query using remote grouping or aggregation has
+      a <code class="literal">SELECT</code>-list item that is an uncorrelated
+      sub-select, outer reference, or parameter symbol (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Change <code class="filename">contrib/postgres_fdw</code> to report an error
+      when a remote partition chosen to insert a routed row into is
+      also an <code class="command">UPDATE</code> subplan target that will be
+      updated later in the same command (Amit Langote, Etsuro Fujita)
+     </p><p>
+      Previously, such situations led to server crashes or incorrect
+      results of the <code class="command">UPDATE</code>.  Allowing such cases to
+      work correctly is a matter for future work.
+     </p></li><li class="listitem"><p>
+      In <code class="filename">contrib/pg_prewarm</code>, avoid indefinitely
+      respawning background worker processes if prewarming fails for some
+      reason (Mithun Cy)
+     </p></li><li class="listitem"><p>
+      Avoid crash in <code class="filename">contrib/vacuumlo</code> if
+      an <code class="function">lo_unlink()</code> call failed (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Sync our copy of the timezone library with IANA tzcode release 2019a
+      (Tom Lane)
+     </p><p>
+      This corrects a small bug in <span class="application">zic</span> that
+      caused it to output an incorrect year-2440 transition in
+      the <code class="literal">Africa/Casablanca</code> zone, and adds support
+      for <span class="application">zic</span>'s new <code class="option">-r</code> option.
+     </p></li><li class="listitem"><p>
+      Update time zone data files to <span class="application">tzdata</span>
+      release 2019a for DST law changes in Palestine and Metlakatla,
+      plus historical corrections for Israel.
+     </p><p>
+      <code class="literal">Etc/UCT</code> is now a backward-compatibility link
+      to <code class="literal">Etc/UTC</code>, instead of being a separate zone that
+      generates the abbreviation <code class="literal">UCT</code>, which nowadays is
+      typically a typo.  <span class="productname">PostgreSQL</span> will still
+      accept <code class="literal">UCT</code> as an input zone abbreviation, but it
+      won't output it.
+     </p></li></ul></div></div></div><div class="navfooter"><hr /><table width="100%" summary="Navigation footer"><tr><td width="40%" align="left"><a accesskey="p" href="release-11-4.html">Prev</a> </td><td width="20%" align="center"><a accesskey="u" href="release.html">Up</a></td><td width="40%" align="right"> <a accesskey="n" href="release-11-2.html">Next</a></td></tr><tr><td width="40%" align="left" valign="top">E.2. Release 11.4 </td><td width="20%" align="center"><a accesskey="h" href="index.html">Home</a></td><td width="40%" align="right" valign="top"> E.4. Release 11.2</td></tr></table></div></body></html>

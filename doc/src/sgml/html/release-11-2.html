@@ -1,0 +1,425 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" /><title>E.4. Release 11.2</title><link rel="stylesheet" type="text/css" href="stylesheet.css" /><link rev="made" href="pgsql-docs@lists.postgresql.org" /><meta name="generator" content="DocBook XSL Stylesheets V1.79.1" /><link rel="prev" href="release-11-3.html" title="E.3. Release 11.3" /><link rel="next" href="release-11-1.html" title="E.5. Release 11.1" /></head><body><div xmlns="http://www.w3.org/TR/xhtml1/transitional" class="navheader"><table width="100%" summary="Navigation header"><tr><th colspan="5" align="center">E.4. Release 11.2</th></tr><tr><td width="10%" align="left"><a accesskey="p" href="release-11-3.html" title="E.3. Release 11.3">Prev</a> </td><td width="10%" align="left"><a accesskey="u" href="release.html" title="Appendix E. Release Notes">Up</a></td><th width="60%" align="center">Appendix E. Release Notes</th><td width="10%" align="right"><a accesskey="h" href="index.html" title="PostgreSQL 11.5 Documentation">Home</a></td><td width="10%" align="right"> <a accesskey="n" href="release-11-1.html" title="E.5. Release 11.1">Next</a></td></tr></table><hr></hr></div><div class="sect1" id="RELEASE-11-2"><div class="titlepage"><div><div><h2 class="title" style="clear: both">E.4. Release 11.2</h2></div></div></div><div class="toc"><dl class="toc"><dt><span class="sect2"><a href="release-11-2.html#id-1.11.6.8.4">E.4.1. Migration to Version 11.2</a></span></dt><dt><span class="sect2"><a href="release-11-2.html#id-1.11.6.8.5">E.4.2. Changes</a></span></dt></dl></div><p><strong>Release date: </strong>2019-02-14</p><p>
+   This release contains a variety of fixes from 11.1.
+   For information about new features in major release 11, see
+   <a class="xref" href="release-11.html" title="E.6. Release 11">Section E.6</a>.
+  </p><div class="sect2" id="id-1.11.6.8.4"><div class="titlepage"><div><div><h3 class="title">E.4.1. Migration to Version 11.2</h3></div></div></div><p>
+    A dump/restore is not required for those running 11.X.
+   </p><p>
+    However, if you are upgrading from a version earlier than 11.1,
+    see <a class="xref" href="release-11-1.html" title="E.5. Release 11.1">Section E.5</a>.
+   </p></div><div class="sect2" id="id-1.11.6.8.5"><div class="titlepage"><div><div><h3 class="title">E.4.2. Changes</h3></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+      By default, panic instead of retrying
+      after <code class="function">fsync()</code> failure, to avoid possible data
+      corruption (Craig Ringer, Thomas Munro)
+     </p><p>
+      Some popular operating systems discard kernel data buffers when
+      unable to write them out, reporting this
+      as <code class="function">fsync()</code> failure.  If we reissue
+      the <code class="function">fsync()</code> request it will succeed, but in
+      fact the data has been lost, so continuing risks database
+      corruption.  By raising a panic condition instead, we can replay
+      from WAL, which may contain the only remaining copy of the data in
+      such a situation.  While this is surely ugly and inefficient, there
+      are few alternatives, and fortunately the case happens very rarely.
+     </p><p>
+      A new server parameter <a class="xref" href="runtime-config-error-handling.html#GUC-DATA-SYNC-RETRY">data_sync_retry</a>
+      has been added to control this; if you are certain that your
+      kernel does not discard dirty data buffers in such scenarios,
+      you can set <code class="varname">data_sync_retry</code>
+      to <code class="literal">on</code> to restore the old behavior.
+     </p></li><li class="listitem"><p>
+      Include each major release branch's release notes in the
+      documentation for only that branch, rather than that branch and all
+      later ones (Tom Lane)
+     </p><p>
+      The duplication induced by the previous policy was getting out of
+      hand.  Our plan is to provide a full archive of release notes on
+      the project's web site, but not duplicate it within each release.
+     </p></li><li class="listitem"><p>
+      Fix handling of unique indexes with <code class="literal">INCLUDE</code>
+      columns on partitioned tables (Álvaro Herrera)
+     </p><p>
+      The uniqueness condition was not checked properly in such cases.
+     </p></li><li class="listitem"><p>
+      Ensure that <code class="literal">NOT NULL</code> constraints of a partitioned
+      table are honored within its partitions
+      (Álvaro Herrera, Amit Langote)
+     </p></li><li class="listitem"><p>
+      Update catalog state correctly for partition table constraints when
+      detaching their partition (Amit Langote, Álvaro Herrera)
+     </p><p>
+      Previously, the <code class="structname">pg_constraint</code>.<code class="structfield">conislocal</code>
+      field for such a constraint might improperly be left
+      as <code class="literal">false</code>, rendering it undroppable.
+      A dump/restore or pg_upgrade would cure the problem, but
+      if necessary, the catalog field can be adjusted manually.
+     </p></li><li class="listitem"><p>
+      Create or delete foreign key enforcement triggers correctly when
+      attaching or detaching a partition in a partitioned table that
+      has a foreign-key constraint (Amit Langote, Álvaro Herrera)
+     </p></li><li class="listitem"><p>
+      Avoid useless creation of duplicate foreign key constraints
+      in partitioned tables (Álvaro Herrera)
+     </p></li><li class="listitem"><p>
+      When an index is created on a partitioned table
+      using <code class="literal">ONLY</code>, and there are no partitions yet, mark
+      it valid immediately (Álvaro Herrera)
+     </p><p>
+      Otherwise there is no way to make it become valid.
+     </p></li><li class="listitem"><p>
+      Use a safe table lock level when detaching a partition
+      (Álvaro Herrera)
+     </p><p>
+      The previous locking level was too weak and might allow
+      concurrent DDL on the table, with bad results.
+     </p></li><li class="listitem"><p>
+      Fix problems with applying <code class="literal">ON COMMIT DROP</code>
+      and <code class="literal">ON COMMIT DELETE ROWS</code> to partitioned tables
+      and tables with inheritance children (Michael Paquier)
+     </p></li><li class="listitem"><p>
+      Disallow <code class="command">COPY FREEZE</code> on partitioned tables
+      (David Rowley)
+     </p><p>
+      This should eventually be made to work, but it may require a patch
+      that's too complicated to risk back-patching.
+     </p></li><li class="listitem"><p>
+      Fix possible index corruption when the indexed column has
+      a <span class="quote">“<span class="quote">fast default</span>”</span> (that is, it was added
+      by <code class="literal">ALTER TABLE ADD COLUMN</code> with a constant non-NULL
+      default value specified, after the table already contained some rows)
+      (Andres Freund)
+     </p></li><li class="listitem"><p>
+      Correctly adjust <span class="quote">“<span class="quote">fast default</span>”</span> values
+      during <code class="command">ALTER TABLE ... ALTER COLUMN TYPE</code>
+      (Andrew Dunstan)
+     </p></li><li class="listitem"><p>
+      Avoid possible deadlock when acquiring multiple buffer locks
+      (Nishant Fnu)
+     </p></li><li class="listitem"><p>
+      Avoid deadlock between GIN vacuuming and concurrent index insertions
+      (Alexander Korotkov, Andrey Borodin, Peter Geoghegan)
+     </p><p>
+      This change partially reverts a performance improvement, introduced
+      in version 10.0, that attempted to reduce the number of index pages
+      locked during deletion of a GIN posting tree page.  That's now been
+      found to lead to deadlocks, so we've removed it pending closer
+      analysis.
+     </p></li><li class="listitem"><p>
+      Avoid deadlock between hot-standby queries and replay of GIN index
+      page deletion (Alexander Korotkov)
+     </p></li><li class="listitem"><p>
+      Fix possible crashes in logical replication when index expressions
+      or predicates are in use (Peter Eisentraut)
+     </p></li><li class="listitem"><p>
+      Avoid useless and expensive logical decoding of TOAST data during a
+      table rewrite (Tomas Vondra)
+     </p></li><li class="listitem"><p>
+      Fix logic for stopping a subset of WAL senders when synchronous
+      replication is enabled (Paul Guo, Michael Paquier)
+     </p></li><li class="listitem"><p>
+      Avoid possibly writing an incorrect replica identity field in a
+      tuple deletion WAL record (Stas Kelvich)
+     </p></li><li class="listitem"><p>
+      Prevent incorrect use of WAL-skipping optimization
+      during <code class="command">COPY</code> to a view or foreign table
+      (Amit Langote, Michael Paquier)
+     </p></li><li class="listitem"><p>
+      Make the archiver prioritize WAL history files over WAL data files
+      while choosing which file to archive next (David Steele)
+     </p></li><li class="listitem"><p>
+      Fix possible crash in <code class="command">UPDATE</code> with a
+      multiple <code class="literal">SET</code> clause using a
+      sub-<code class="literal">SELECT</code> as source (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Fix crash when zero rows are fed
+      to <code class="function">json[b]_populate_recordset()</code>
+      or <code class="function">json[b]_to_recordset()</code> (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Avoid crash if <span class="application">libxml2</span> returns a null
+      error message (Sergio Conde Gómez)
+     </p></li><li class="listitem"><p>
+      Fix incorrect JIT tuple deforming code for tables with
+      many columns (more than approximately 800) (Andres Freund)
+     </p></li><li class="listitem"><p>
+      Fix performance and memory leakage issues in hash-based grouping
+      (Andres Freund)
+     </p></li><li class="listitem"><p>
+      Fix spurious grouping-related parser errors caused by inconsistent
+      handling of collation assignment (Andrew Gierth)
+     </p><p>
+      In some cases, expressions that should be considered to match
+      were not seen as matching, if they included operations on collatable
+      data types.
+     </p></li><li class="listitem"><p>
+      Fix parsing of collation-sensitive expressions in the arguments of
+      a <code class="command">CALL</code> statement (Peter Eisentraut)
+     </p></li><li class="listitem"><p>
+      Ensure proper cleanup after detecting an error in the argument list
+      of a <code class="command">CALL</code> statement (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Check whether the comparison function
+      underlying <code class="function">LEAST()</code>
+      or <code class="function">GREATEST()</code> is leakproof, rather than just
+      assuming it is (Tom Lane)
+     </p><p>
+      Actual information leaks from btree comparison functions are
+      typically hard to provoke, but in principle they could happen.
+     </p></li><li class="listitem"><p>
+      Fix incorrect planning of queries involving nested loops both above
+      and below a Gather plan node (Tom Lane)
+     </p><p>
+      If both levels of nestloop needed to pass the same variable into
+      their right-hand sides, an incorrect plan would be generated.
+     </p></li><li class="listitem"><p>
+      Fix incorrect planning of queries in which a lateral reference must
+      be evaluated at a foreign table scan (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Fix planner failure when the first column of a row comparison
+      matches an index column, but later column(s) do not, and the index
+      has included (non-key) columns (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Fix corner-case underestimation of the cost of a merge join (Tom Lane)
+     </p><p>
+      The planner could prefer a merge join when the outer key range is
+      much smaller than the inner key range, even if there are so many
+      duplicate keys on the inner side that this is a poor choice.
+     </p></li><li class="listitem"><p>
+      Avoid O(N^2) planning time growth when a query contains many
+      thousand indexable clauses (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Improve planning speed for large inheritance or partitioning table
+      groups (Amit Langote, Etsuro Fujita)
+     </p></li><li class="listitem"><p>
+      Improve <code class="command">ANALYZE</code>'s handling of
+      concurrently-updated rows (Jeff Janes, Tom Lane)
+     </p><p>
+      Previously, rows deleted by an in-progress transaction were omitted
+      from <code class="command">ANALYZE</code>'s sample, but this has been found to
+      lead to more inconsistency than including them would do.  In effect,
+      the sample now corresponds to an MVCC snapshot as
+      of <code class="command">ANALYZE</code>'s start time.
+     </p></li><li class="listitem"><p>
+      Make <code class="command">TRUNCATE</code> ignore inheritance child tables
+      that are temporary tables of other sessions (Amit Langote, Michael
+      Paquier)
+     </p><p>
+      This brings <code class="command">TRUNCATE</code> into line with the behavior
+      of other commands.  Previously, such cases usually ended in failure.
+     </p></li><li class="listitem"><p>
+      Fix <code class="command">TRUNCATE</code> to update the statistics counters
+      for the right table (Tom Lane)
+     </p><p>
+      If the truncated table had a TOAST table, that table's counters were
+      reset instead.
+     </p></li><li class="listitem"><p>
+      Process <code class="command">ALTER TABLE ONLY ADD COLUMN IF NOT EXISTS</code>
+      correctly (Greg Stark)
+     </p></li><li class="listitem"><p>
+      Allow <code class="command">UNLISTEN</code> in hot-standby mode
+      (Shay Rojansky)
+     </p><p>
+      This is necessarily a no-op, because <code class="command">LISTEN</code>
+      isn't allowed in hot-standby mode; but allowing the dummy operation
+      simplifies session-state-reset logic in clients.
+     </p></li><li class="listitem"><p>
+      Fix missing role dependencies in some schema and data type
+      permissions lists (Tom Lane)
+     </p><p>
+      In some cases it was possible to drop a role to which permissions
+      had been granted.  This caused no immediate problem, but a
+      subsequent dump/reload or upgrade would fail, with symptoms
+      involving attempts to grant privileges to all-numeric role names.
+     </p></li><li class="listitem"><p>
+      Prevent use of a session's temporary schema within a two-phase
+      transaction (Michael Paquier)
+     </p><p>
+      Accessing a temporary table within such a transaction has been
+      forbidden for a long time, but it was still possible to cause
+      problems with other operations on temporary objects.
+     </p></li><li class="listitem"><p>
+      Ensure relation caches are updated properly after adding or removing
+      foreign key constraints (Álvaro Herrera)
+     </p><p>
+      This oversight could result in existing sessions failing to enforce
+      a newly-created constraint, or continuing to enforce a dropped one.
+     </p></li><li class="listitem"><p>
+      Ensure relation caches are updated properly after renaming
+      constraints (Amit Langote)
+     </p></li><li class="listitem"><p>
+      Fix replay of GiST index micro-vacuum operations so that concurrent
+      hot-standby queries do not see inconsistent state (Alexander
+      Korotkov)
+     </p></li><li class="listitem"><p>
+      Prevent empty GIN index pages from being reclaimed too quickly,
+      causing failures of concurrent searches
+      (Andrey Borodin, Alexander Korotkov)
+     </p></li><li class="listitem"><p>
+      Fix edge-case failures in float-to-integer coercions (Andrew
+      Gierth, Tom Lane)
+     </p><p>
+      Values very slightly above the maximum valid integer value might not
+      be rejected, and then would overflow, producing the minimum valid
+      integer instead.  Also, values that should round to the minimum or
+      maximum integer value might be incorrectly rejected.
+     </p></li><li class="listitem"><p>
+      Fix parsing of space-separated lists of host names in
+      the <code class="varname">ldapserver</code> parameter of LDAP authentication
+      entries in <code class="filename">pg_hba.conf</code> (Thomas Munro)
+     </p></li><li class="listitem"><p>
+      When making a PAM authentication request, don't set
+      the <code class="varname">PAM_RHOST</code> variable if the connection is via
+      a Unix socket (Thomas Munro)
+     </p><p>
+      Previously that variable would be set to <code class="literal">[local]</code>,
+      which is at best unhelpful, since it's supposed to be a host name.
+     </p></li><li class="listitem"><p>
+      Disallow setting <code class="varname">client_min_messages</code> higher
+      than <code class="literal">ERROR</code> (Jonah Harris, Tom Lane)
+     </p><p>
+      Previously, it was possible to set this variable
+      to <code class="literal">FATAL</code> or <code class="literal">PANIC</code>, which had
+      the effect of suppressing transmission of ordinary error messages to
+      the client.  However, that's contrary to guarantees that are given
+      in the <span class="productname">PostgreSQL</span> wire protocol
+      specification, and it caused some clients to become very confused.
+      In released branches, fix this by silently treating such settings as
+      meaning <code class="literal">ERROR</code> instead.  Version 12 and later will
+      reject those alternatives altogether.
+     </p></li><li class="listitem"><p>
+      Fix <span class="application">ecpglib</span> to
+      use <code class="function">uselocale()</code>
+      or <code class="function">_configthreadlocale()</code> in preference
+      to <code class="function">setlocale()</code> (Michael Meskes, Tom Lane)
+     </p><p>
+      Since <code class="function">setlocale()</code> is not thread-local, and
+      might not even be thread-safe, the previous coding caused problems
+      in multi-threaded <span class="application">ecpg</span> applications.
+     </p></li><li class="listitem"><p>
+      Fix incorrect results for numeric data passed through
+      an <span class="application">ecpg</span> <acronym class="acronym">SQLDA</acronym>
+      (SQL Descriptor Area) (Daisuke Higuchi)
+     </p><p>
+      Values with leading zeroes were not copied correctly.
+     </p></li><li class="listitem"><p>
+      Fix <span class="application">psql</span>'s <code class="command">\g</code>
+      <em class="replaceable"><code>target</code></em> meta-command to work
+      with <code class="command">COPY TO STDOUT</code>
+      (Daniel Vérité)
+     </p><p>
+      Previously, the <em class="replaceable"><code>target</code></em> option was
+      ignored, so that the copy data always went to the current query
+      output target.
+     </p></li><li class="listitem"><p>
+      Make <span class="application">psql</span>'s LaTeX output formats render
+      special characters properly (Tom Lane)
+     </p><p>
+      Backslash and some other ASCII punctuation characters were not
+      rendered correctly, leading to document syntax errors or wrong
+      characters in the output.
+     </p></li><li class="listitem"><p>
+      Make <span class="application">pgbench</span>'s random number generation
+      fully deterministic and platform-independent
+      when <code class="option">--random-seed=<em class="replaceable"><code>N</code></em></code> is
+      specified (Fabien Coelho, Tom Lane)
+     </p><p>
+      On any specific platform, the sequence obtained with a particular
+      value of <em class="replaceable"><code>N</code></em> will probably be different
+      from what it was before this patch.
+     </p></li><li class="listitem"><p>
+      Fix <span class="application">pg_basebackup</span>
+      and <span class="application">pg_verify_checksums</span> to ignore
+      temporary files appropriately (Michael Banck, Michael Paquier)
+     </p></li><li class="listitem"><p>
+      Fix <span class="application">pg_dump</span>'s handling of materialized
+      views with indirect dependencies on primary keys (Tom Lane)
+     </p><p>
+      This led to mis-labeling of such views' dump archive entries,
+      causing harmless warnings about <span class="quote">“<span class="quote">archive items not in correct
+      section order</span>”</span>; less harmlessly, selective-restore options
+      depending on those labels, such as <code class="option">--section</code>, might
+      misbehave.
+     </p></li><li class="listitem"><p>
+      Make <span class="application">pg_dump</span> include <code class="command">ALTER INDEX
+      SET STATISTICS</code> commands (Michael Paquier)
+     </p><p>
+      When the ability to attach statistics targets to index expressions
+      was added, we forgot to teach <span class="application">pg_dump</span>
+      about it, so that such settings were lost in dump/reload.
+     </p></li><li class="listitem"><p>
+      Fix <span class="application">pg_dump</span>'s dumping of tables that have
+      OIDs (Peter Eisentraut)
+     </p><p>
+      The <code class="literal">WITH OIDS</code> clause was omitted if it needed to
+      be applied to the first table to be dumped.
+     </p></li><li class="listitem"><p>
+      Avoid null-pointer-dereference crash on some platforms
+      when <span class="application">pg_dump</span>
+      or <span class="application">pg_restore</span> tries to report an error
+      (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Prevent false index-corruption reports
+      from <code class="filename">contrib/amcheck</code> caused by
+      inline-compressed data (Peter Geoghegan)
+     </p></li><li class="listitem"><p>
+      Properly disregard <code class="literal">SIGPIPE</code> errors if <code class="command">COPY
+      FROM PROGRAM</code> stops reading the program's output early
+      (Tom Lane)
+     </p><p>
+      This case isn't actually reachable directly
+      with <code class="command">COPY</code>, but it can happen when
+      using <code class="filename">contrib/file_fdw</code>.
+     </p></li><li class="listitem"><p>
+      Fix <code class="filename">contrib/hstore</code> to calculate correct hash
+      values for empty <code class="type">hstore</code> values that were created in
+      version 8.4 or before (Andrew Gierth)
+     </p><p>
+      The previous coding did not give the same result as for an
+      empty <code class="type">hstore</code> value created by a newer version, thus
+      potentially causing wrong results in hash joins or hash
+      aggregation.  It is advisable to reindex any hash indexes
+      built on <code class="type">hstore</code> columns, if the table might contain
+      data that was originally stored as far back as 8.4 and was never
+      dumped/reloaded since then.
+     </p></li><li class="listitem"><p>
+      Avoid crashes and excessive runtime with large inputs
+      to <code class="filename">contrib/intarray</code>'s <code class="literal">gist__int_ops</code>
+      index support (Andrew Gierth)
+     </p></li><li class="listitem"><p>
+      In <span class="application">configure</span>, look
+      for <code class="command">python3</code> and then <code class="command">python2</code>
+      if <code class="command">python</code> isn't found (Peter Eisentraut)
+     </p><p>
+      This allows PL/Python to be configured without explicitly
+      specifying <code class="literal">PYTHON</code> on platforms that no longer
+      provide an unversioned <code class="command">python</code> executable.
+     </p></li><li class="listitem"><p>
+      Include JIT-related headers in the installed set of header files
+      (Donald Dong)
+     </p></li><li class="listitem"><p>
+      Support new Makefile
+      variables <code class="literal">PG_CFLAGS</code>, <code class="literal">PG_CXXFLAGS</code>,
+      and <code class="literal">PG_LDFLAGS</code> in <span class="application">pgxs</span>
+      builds (Christoph Berg)
+     </p><p>
+      This simplifies customization of extension build processes.
+     </p></li><li class="listitem"><p>
+      Fix Perl-coded build scripts to not
+      assume <span class="quote">“<span class="quote"><code class="literal">.</code></span>”</span> is in the search path,
+      since recent Perl versions don't include that (Andrew Dunstan)
+     </p></li><li class="listitem"><p>
+      Fix server command-line option parsing problems on OpenBSD (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Relocate call of <code class="literal">set_rel_pathlist_hook</code> so that
+      extensions can use it to supply partial paths for parallel queries
+      (KaiGai Kohei)
+     </p><p>
+      This is not expected to affect existing use-cases.
+     </p></li><li class="listitem"><p>
+      Update time zone data files to <span class="application">tzdata</span>
+      release 2018i for DST law changes in Kazakhstan, Metlakatla, and Sao
+      Tome and Principe.  Kazakhstan's Qyzylorda zone is split in two,
+      creating a new zone Asia/Qostanay, as some areas did not change UTC
+      offset.  Historical corrections for Hong Kong and numerous Pacific
+      islands.
+     </p></li></ul></div></div></div><div class="navfooter"><hr /><table width="100%" summary="Navigation footer"><tr><td width="40%" align="left"><a accesskey="p" href="release-11-3.html">Prev</a> </td><td width="20%" align="center"><a accesskey="u" href="release.html">Up</a></td><td width="40%" align="right"> <a accesskey="n" href="release-11-1.html">Next</a></td></tr><tr><td width="40%" align="left" valign="top">E.3. Release 11.3 </td><td width="20%" align="center"><a accesskey="h" href="index.html">Home</a></td><td width="40%" align="right" valign="top"> E.5. Release 11.1</td></tr></table></div></body></html>

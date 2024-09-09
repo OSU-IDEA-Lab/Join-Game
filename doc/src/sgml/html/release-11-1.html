@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" /><title>E.5. Release 11.1</title><link rel="stylesheet" type="text/css" href="stylesheet.css" /><link rev="made" href="pgsql-docs@lists.postgresql.org" /><meta name="generator" content="DocBook XSL Stylesheets V1.79.1" /><link rel="prev" href="release-11-2.html" title="E.4. Release 11.2" /><link rel="next" href="release-11.html" title="E.6. Release 11" /></head><body><div xmlns="http://www.w3.org/TR/xhtml1/transitional" class="navheader"><table width="100%" summary="Navigation header"><tr><th colspan="5" align="center">E.5. Release 11.1</th></tr><tr><td width="10%" align="left"><a accesskey="p" href="release-11-2.html" title="E.4. Release 11.2">Prev</a> </td><td width="10%" align="left"><a accesskey="u" href="release.html" title="Appendix E. Release Notes">Up</a></td><th width="60%" align="center">Appendix E. Release Notes</th><td width="10%" align="right"><a accesskey="h" href="index.html" title="PostgreSQL 11.5 Documentation">Home</a></td><td width="10%" align="right"> <a accesskey="n" href="release-11.html" title="E.6. Release 11">Next</a></td></tr></table><hr></hr></div><div class="sect1" id="RELEASE-11-1"><div class="titlepage"><div><div><h2 class="title" style="clear: both">E.5. Release 11.1</h2></div></div></div><div class="toc"><dl class="toc"><dt><span class="sect2"><a href="release-11-1.html#id-1.11.6.9.4">E.5.1. Migration to Version 11.1</a></span></dt><dt><span class="sect2"><a href="release-11-1.html#id-1.11.6.9.5">E.5.2. Changes</a></span></dt></dl></div><p><strong>Release date: </strong>2018-11-08</p><p>
+   This release contains a variety of fixes from 11.0.
+   For information about new features in major release 11, see
+   <a class="xref" href="release-11.html" title="E.6. Release 11">Section E.6</a>.
+  </p><div class="sect2" id="id-1.11.6.9.4"><div class="titlepage"><div><div><h3 class="title">E.5.1. Migration to Version 11.1</h3></div></div></div><p>
+    A dump/restore is not required for those running 11.X.
+   </p><p>
+    However, if you use the <code class="filename">pg_stat_statements</code> extension,
+    see the changelog entry below about that.
+   </p></div><div class="sect2" id="id-1.11.6.9.5"><div class="titlepage"><div><div><h3 class="title">E.5.2. Changes</h3></div></div></div><div class="itemizedlist"><ul class="itemizedlist" style="list-style-type: disc; "><li class="listitem"><p>
+      Ensure proper quoting of transition table names
+      when <span class="application">pg_dump</span> emits <code class="command">CREATE TRIGGER
+      ... REFERENCING</code> commands (Tom Lane)
+     </p><p>
+      This oversight could be exploited by an unprivileged user to gain
+      superuser privileges during the next dump/reload
+      or <span class="application">pg_upgrade</span> run.  (CVE-2018-16850)
+     </p></li><li class="listitem"><p>
+      Apply the tablespace specified for a partitioned index when creating a
+      child index (Álvaro Herrera)
+     </p><p>
+      Previously, child indexes were always created in the default
+      tablespace.
+     </p></li><li class="listitem"><p>
+      Fix NULL handling in parallel hashed multi-batch left joins (Andrew
+      Gierth, Thomas Munro)
+     </p><p>
+      Outer-relation rows with null values of the hash key were omitted from
+      the join result.
+     </p></li><li class="listitem"><p>
+      Fix incorrect processing of an array-type coercion expression
+      appearing within a <code class="literal">CASE</code> clause that has a constant
+      test expression (Tom Lane)
+     </p></li><li class="listitem"><p>
+      Fix incorrect expansion of tuples lacking recently-added columns
+      (Andrew Dunstan, Amit Langote)
+     </p><p>
+      This is known to lead to crashes in triggers on tables with
+      recently-added columns, and could have other symptoms as well.
+     </p></li><li class="listitem"><p>
+      Fix bugs with named or defaulted arguments in <code class="command">CALL</code>
+      argument lists (Tom Lane, Pavel Stehule)
+     </p></li><li class="listitem"><p>
+      Fix strictness check for strict aggregates with <code class="literal">ORDER
+      BY</code> columns (Andrew Gierth, Andres Freund)
+     </p><p>
+      The strictness logic incorrectly ignored rows for which
+      the <code class="literal">ORDER BY</code> value(s) were null.
+     </p></li><li class="listitem"><p>
+      Disable <code class="varname">recheck_on_update</code> optimization (Tom Lane)
+     </p><p>
+      This new-in-v11 feature turns out not to have been ready for prime
+      time.  Disable it until something can be done about it.
+     </p></li><li class="listitem"><p>
+      Prevent creation of a partition in a trigger attached to its parent
+      table (Amit Langote)
+     </p><p>
+      Ideally we'd allow that, but for the moment it has to be blocked to
+      avoid crashes.
+     </p></li><li class="listitem"><p>
+      Fix problems with applying <code class="literal">ON COMMIT DELETE ROWS</code> to
+      a partitioned temporary table (Amit Langote)
+     </p></li><li class="listitem"><p>
+      Fix character-class checks to not fail on Windows for Unicode
+      characters above U+FFFF (Tom Lane, Kenji Uno)
+     </p><p>
+      This bug affected full-text-search operations, as well
+      as <code class="filename">contrib/ltree</code>
+      and <code class="filename">contrib/pg_trgm</code>.
+     </p></li><li class="listitem"><p>
+      Ensure that the server will process
+      already-received <code class="literal">NOTIFY</code>
+      and <code class="literal">SIGTERM</code> interrupts before waiting for client
+      input (Jeff Janes, Tom Lane)
+     </p></li><li class="listitem"><p>
+      Fix memory leak in repeated SP-GiST index scans (Tom Lane)
+     </p><p>
+      This is only known to amount to anything significant in cases where
+      an exclusion constraint using SP-GiST receives many new index entries
+      in a single command.
+     </p></li><li class="listitem"><p>
+      Prevent starting the server with <code class="varname">wal_level</code> set
+      to too low a value to support an existing replication slot (Andres
+      Freund)
+     </p></li><li class="listitem"><p>
+      Fix <span class="application">psql</span>, as well as documentation
+      examples, to call <code class="function">PQconsumeInput()</code> before
+      each <code class="function">PQnotifies()</code> call (Tom Lane)
+     </p><p>
+      This fixes cases in which <span class="application">psql</span> would not
+      report receipt of a <code class="literal">NOTIFY</code> message until after the
+      next command.
+     </p></li><li class="listitem"><p>
+      Fix <span class="application">pg_verify_checksums</span>'s determination of
+      which files to check the checksums of (Michael Paquier)
+     </p><p>
+      In some cases it complained about files that are not expected to have
+      checksums.
+     </p></li><li class="listitem"><p>
+      In <code class="filename">contrib/pg_stat_statements</code>, disallow
+      the <code class="literal">pg_read_all_stats</code> role from
+      executing <code class="function">pg_stat_statements_reset()</code>
+      (Haribabu Kommi)
+     </p><p>
+      <code class="literal">pg_read_all_stats</code> is only meant to grant permission
+      to read statistics, not to change them, so this grant was incorrect.
+     </p><p>
+      To cause this change to take effect, run <code class="literal">ALTER EXTENSION
+      pg_stat_statements UPDATE</code> in each database
+      where <code class="filename">pg_stat_statements</code> has been installed.
+      (A database freshly created in 11.0 should not need this, but a
+      database upgraded from a previous release probably still contains
+      the old version of <code class="filename">pg_stat_statements</code>.  The
+      <code class="literal">UPDATE</code> command is harmless if the module was
+      already updated.)
+     </p></li><li class="listitem"><p>
+      Rename red-black tree support functions to use <code class="literal">rbt</code>
+      prefix not <code class="literal">rb</code> prefix (Tom Lane)
+     </p><p>
+      This avoids name collisions with Ruby functions, which broke
+      PL/Ruby.  It's hoped that there are no other affected extensions.
+     </p></li><li class="listitem"><p>
+      Fix build problems on macOS 10.14 (Mojave) (Tom Lane)
+     </p><p>
+      Adjust <span class="application">configure</span> to add
+      an <code class="option">-isysroot</code> switch to <code class="varname">CPPFLAGS</code>;
+      without this, PL/Perl and PL/Tcl fail to configure or build on macOS
+      10.14.  The specific sysroot used can be overridden at configure time
+      or build time by setting the <code class="varname">PG_SYSROOT</code> variable in
+      the arguments of <span class="application">configure</span>
+      or <span class="application">make</span>.
+     </p><p>
+      It is now recommended that Perl-related extensions
+      write <code class="literal">$(perl_includespec)</code> rather
+      than <code class="literal">-I$(perl_archlibexp)/CORE</code> in their compiler
+      flags.  The latter continues to work on most platforms, but not recent
+      macOS.
+     </p><p>
+      Also, it should no longer be necessary to
+      specify <code class="option">--with-tclconfig</code> manually to get PL/Tcl to
+      build on recent macOS releases.
+     </p></li><li class="listitem"><p>
+      Fix MSVC build and regression-test scripts to work on recent Perl
+      versions (Andrew Dunstan)
+     </p><p>
+      Perl no longer includes the current directory in its search path
+      by default; work around that.
+     </p></li><li class="listitem"><p>
+      On Windows, allow the regression tests to be run by an Administrator
+      account (Andrew Dunstan)
+     </p><p>
+      To do this safely, <span class="application">pg_regress</span> now gives up
+      any such privileges at startup.
+     </p></li><li class="listitem"><p>
+      Update time zone data files to <span class="application">tzdata</span>
+      release 2018g for DST law changes in Chile, Fiji, Morocco, and Russia
+      (Volgograd), plus historical corrections for China, Hawaii, Japan,
+      Macau, and North Korea.
+     </p></li></ul></div></div></div><div class="navfooter"><hr /><table width="100%" summary="Navigation footer"><tr><td width="40%" align="left"><a accesskey="p" href="release-11-2.html">Prev</a> </td><td width="20%" align="center"><a accesskey="u" href="release.html">Up</a></td><td width="40%" align="right"> <a accesskey="n" href="release-11.html">Next</a></td></tr><tr><td width="40%" align="left" valign="top">E.4. Release 11.2 </td><td width="20%" align="center"><a accesskey="h" href="index.html">Home</a></td><td width="40%" align="right" valign="top"> E.6. Release 11</td></tr></table></div></body></html>
