@@ -913,6 +913,16 @@ typedef TupleTableSlot *(*ExecProcNodeMtd) (struct PlanState *pstate);
  * abstract superclass for all PlanState-type nodes.
  * ----------------
  */
+
+typedef struct DummyBanditState 
+{
+    unsigned int tupMatchCount;
+    unsigned int flag1;
+}DummyBanditState;
+
+
+#define PGNST8_LEFT_PAGE_MAX_SIZE 100
+#define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 1000
 typedef struct PlanState
 {
 	
@@ -965,6 +975,43 @@ typedef struct PlanState
 	 * descriptor, without encoding knowledge about all executor nodes.
 	 */
 	TupleDesc	scandesc;
+
+	/*
+	* Page Nested Loop Variables 
+	*/
+
+    bool nl_needNewOuterPage;
+	TupleTableSlot* pgNst8LeftPage[PGNST8_LEFT_PAGE_MAX_SIZE];
+    unsigned int pgNst8LeftPageHead;
+    unsigned int pgNst8LeftPageSize;
+	bool pgNst8LeftParsedFully;
+    unsigned int pgNst8InnerTableParseCount;
+
+	TupleTableSlot *pgNst8_innertuple[1];
+
+	unsigned int pgReward[PGNST8_LEFT_PAGE_MAX_SIZE];
+	unsigned int cursorReward;
+
+
+	/*
+	* Bnd8 Variables
+	*/
+	/* Right Table and Trackers */
+	bool oslBnd8RightTableCacheInitialized;
+	TupleTableSlot* oslBnd8RightTableCache[OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE];
+    unsigned int oslBnd8RightTableCacheHead;
+    unsigned int oslBnd8RightTableCacheSize;
+
+	/* Exploration Trackers */
+	// bool oslBnd8InExplorationPhase;
+	// bool oslBnd8InExplorationPhaseInitComplete;
+	TupleTableSlot *oslBnd8_currExploreTuple;
+	unsigned int oslBnd8_currExploreTupleReward;
+	unsigned int oslBnd8_currExploreTupleFailureCount;
+	unsigned int oslBnd8_numTuplesExplored;
+	bool oslBnd8_ExplorationStarted;
+
+
 } PlanState;
 
 /* ----------------
