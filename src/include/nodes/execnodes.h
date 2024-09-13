@@ -921,8 +921,8 @@ typedef struct DummyBanditState
 }DummyBanditState;
 
 
-#define PGNST8_LEFT_PAGE_MAX_SIZE 100
-#define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 1000
+#define PGNST8_LEFT_PAGE_MAX_SIZE 10000
+#define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 10000
 typedef struct PlanState
 {
 	
@@ -1758,60 +1758,6 @@ typedef struct JoinState
  *		NullInnerTupleSlot prepared null tuple for left outer joins
  * ----------------
  */
-
-#define PAGE_SIZE 320
-#define N_FAILURE 10
-typedef struct RelationPage {
-	TupleTableSlot* tuples[PAGE_SIZE];
-	int index;
-	int tupleCount;
-} RelationPage;
-
-struct tupleRewards {
-    int reward;
-    int size;
-	int outpgnum;
-	double rewardRatio;
-    HeapTupleData tuples[PAGE_SIZE];
-};
-
-struct tupleInfo {
-    int explore_num_trails;
-	int explore_success_count;
-	double explore_reward_ratio;
-	double h_explore;
-	double p_r;
-    int exploit_num_trails;
-	int exploit_success_count;
-	double exploit_reward_ratio;
-	double h_exploit;
-	double tuple_mean;
-	double tuple_mean_num;
-	double tuple_mean_den;
-	double mean_explore;
-	double mean_exploit;
-	double tuple_variance;
-	double tuple_var_num;
-	double tuple_var_den;
-};
-
-struct outerTupleNum {
-    struct tupleInfo* outertupleinfo;
-};
-
-struct outerPgNum {
-    struct outerTupleNum* outertupnum;
-	double explore_page_reward_ratio;
-	double explore_p_r;
-	int explore_n_value;
-};
-
-struct indexedReward {
-	double rwrd;
-	int orig_idx;
-	double rwrdratio;
-};
-
 typedef struct NestLoopState
 {
 	JoinState	js;				/* its first field is NodeTag */
@@ -1820,57 +1766,15 @@ typedef struct NestLoopState
 	TupleTableSlot *nl_NullInnerTupleSlot;
     ScanState*  ss;
 
-	int activeRelationPages;
-	RelationPage *outerPage;
-	RelationPage *innerPage;
-
-	int lastReward;
-	int reward;
-	bool isExploring;
-	long innerPageNumber;
-	long outerPageNumber;
-	int sqrtOfInnerPages;
-
-	bool needOuterPage;
-	bool needInnerPage;
-	int exploreStepCounter;
-	int exploitStepCounter;
-	int innerPageCounter;
-	int innerPageCounterTotal;
-	int outerPageCounter;
-	bool reachedEndOfOuter;
-	bool reachedEndOfInner;
-	unsigned long innerTupleCounter;
-	unsigned long outerTupleCounter;
-	int nestloopInstance;
-	int generatedJoins;
-	int rescanCount;
-
-    struct tupleRewards* tidRewards;
-	struct outerPgNum* outerpages;
-	struct outerTupleNum* outertupnum;
-	struct tupleInfo* outertupleinfo;
-	struct indexedReward* idxreward;
-	int* xids;
-	int* rewards;
-	int pageIndex;
-	int lastPageIndex;
-	ScanKey xidScanKey;
-	int nFailure;
-	int genExploit;
-	int genExplore;
-	int pageNum;
-	unsigned long long T;
-	double reRatio;
-	int numOuterTuples;
-	int numInnerTuples;
-	int currentCount;
-	int numOuterPages;
-	int remOuterPages;
-	int outerAttrNum;
-	int innerAttrNum;
-	int pageSuccessCounter;
+	/*
+	 * ICL variables
+	 */
+	unsigned int direction;
+	bool		nl_NeedNewInner;
+	bool		nl_MatchedInner;
+	TupleTableSlot *nl_NullOuterTupleSlot;
 	
+	bool		nl_needNewBest;
 
 } NestLoopState;
 
