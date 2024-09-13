@@ -1823,21 +1823,6 @@ typedef struct MergeJoinState
 	TupleTableSlot *mj_NullInnerTupleSlot;
 	ExprContext *mj_OuterEContext;
 	ExprContext *mj_InnerEContext;
-	/*SMS*/
-	
-	// NEW
-	RelationPage *outerPage;
-	RelationPage *innerPage;
-	bool needOuterPage;
-	bool needInnerPage;
-
-	long innerPageNumber;
-	long outerPageNumber;
-	bool reachedEndOfOuter;
-	bool reachedEndOfInner;
-	bool phaseTwo;
-	
-	/*SMS*/
 } MergeJoinState;
 
 /* ----------------
