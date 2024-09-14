@@ -65,9 +65,9 @@
 /*
  * Hyper-parameters of ICL
  */
-#define PGNST8_LEFT_PAGE_MAX_SIZE 500 // Memory Size for ToExploitBatch after every exploration.
-#define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 500 // In Memory Size Right Table Cache Size, used for exploration. 
-#define MUST_EXPLORE_TUPLE_COUNT_N 5000 // Number of tuples that must be explored before Exploitation can happen. 
+#define PGNST8_LEFT_PAGE_MAX_SIZE 100 // Memory Size for ToExploitBatch after every exploration.
+#define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 1000 // In Memory Size Right Table Cache Size, used for exploration. 
+#define MUST_EXPLORE_TUPLE_COUNT_N 1000 // Number of tuples that must be explored before Exploitation can happen. 
 #define FAILURE_COUNT_N 500 // Number of failures allowed during exploration, before jumping into next outer tuple, for exploration
 #define DEBUG_FLAG 0 // print statements will be activate if set to 1
 
@@ -406,11 +406,13 @@ ExecNestLoop(PlanState *pstate)
 				// Choose the inner tuple
 				innerTupleSlot = innerPlan->oslBnd8RightTableCache[node->maxInnerIndex];
 				econtext->ecxt_innertuple = innerTupleSlot;
+				node->nl_MatchedInner = false;
 				node->direction = RIGHT_TO_LEFT;
 			} else {
 				// Choose the outer tuple
 				outerTupleSlot = outerPlan->pgNst8LeftPage[node->maxOuterIndex];
 				econtext->ecxt_outertuple = outerTupleSlot;
+				node->nl_MatchedOuter = false;
 				node->direction = LEFT_TO_RIGHT;
 			}
 
@@ -420,9 +422,6 @@ ExecNestLoop(PlanState *pstate)
 		switch (node->direction)
 		{
 			case LEFT_TO_RIGHT:
-				//
-				node->nl_MatchedOuter = false;
-
 				/*
 				 * we have an outerTuple, try to get the next inner tuple.
 				 */
@@ -527,9 +526,6 @@ ExecNestLoop(PlanState *pstate)
 
 
 			case RIGHT_TO_LEFT:
-				//
-				node->nl_MatchedInner = false;
-
 				/*
 				 * We have an innerTuple, try to get the next outer tuple.
 				 */
