@@ -67,7 +67,7 @@
  */
 #define PGNST8_LEFT_PAGE_MAX_SIZE 100 // Memory Size for ToExploitBatch after every exploration.
 #define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 1000 // In Memory Size Right Table Cache Size, used for exploration. 
-#define MUST_EXPLORE_TUPLE_COUNT_N 2000 // Number of tuples that must be explored before Exploitation can happen. 
+#define MUST_EXPLORE_TUPLE_COUNT_N 1000 // Number of tuples that must be explored before Exploitation can happen. 
 #define FAILURE_COUNT_N 500 // Number of failures allowed during exploration, before jumping into next outer tuple, for exploration
 #define DEBUG_FLAG 0 // print statements will be activate if set to 1
 
