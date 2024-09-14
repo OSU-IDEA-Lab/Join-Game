@@ -1775,6 +1775,11 @@ typedef struct NestLoopState
 	TupleTableSlot *nl_NullOuterTupleSlot;
 	
 	bool		nl_needNewBest;
+	
+	unsigned int maxOuterReward;
+	unsigned int maxOuterIndex;
+	unsigned int maxInnerReward;
+	unsigned int maxInnerIndex;
 
 } NestLoopState;
 
