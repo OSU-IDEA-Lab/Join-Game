@@ -406,11 +406,13 @@ ExecNestLoop(PlanState *pstate)
 				// Choose the inner tuple
 				innerTupleSlot = innerPlan->oslBnd8RightTableCache[node->maxInnerIndex];
 				econtext->ecxt_innertuple = innerTupleSlot;
+				node->nl_MatchedInner = false;
 				node->direction = RIGHT_TO_LEFT;
 			} else {
 				// Choose the outer tuple
 				outerTupleSlot = outerPlan->pgNst8LeftPage[node->maxOuterIndex];
 				econtext->ecxt_outertuple = outerTupleSlot;
+				node->nl_MatchedOuter = false;
 				node->direction = LEFT_TO_RIGHT;
 			}
 
@@ -420,9 +422,6 @@ ExecNestLoop(PlanState *pstate)
 		switch (node->direction)
 		{
 			case LEFT_TO_RIGHT:
-				//
-				node->nl_MatchedOuter = false;
-
 				/*
 				 * we have an outerTuple, try to get the next inner tuple.
 				 */
@@ -527,9 +526,6 @@ ExecNestLoop(PlanState *pstate)
 
 
 			case RIGHT_TO_LEFT:
-				//
-				node->nl_MatchedInner = false;
-
 				/*
 				 * We have an innerTuple, try to get the next outer tuple.
 				 */
