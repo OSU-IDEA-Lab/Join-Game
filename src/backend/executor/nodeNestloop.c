@@ -335,10 +335,15 @@ seedToExploitLeftPage(PlanState *pstate){
 			return ExecProject(node->js.ps.ps_ProjInfo);
 		}
 		/*
-		* Tuple fails qual, so free per-tuple memory and try again.
-		*/
+		 * Tuple fails qual, so free per-tuple memory and try again.
+		 */
 		ResetExprContext(econtext);
 		ENL1_printf("qualification failed, looping");
+	}
+
+	/* Stopping condition, if explored all outer relation */
+	if (outerPlan->pgNst8LeftParsedFully){
+		return NULL;
 	}
 
 	if(DEBUG_FLAG){
