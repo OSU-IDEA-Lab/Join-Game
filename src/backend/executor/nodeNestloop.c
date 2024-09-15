@@ -253,6 +253,7 @@ seedToExploitLeftPage(PlanState *pstate){
 				// Fill Table
 				innerTupleSlot = ExecProcNode(innerPlan);
 				if (TupIsNull(innerTupleSlot)) {
+					outerPlan->pgNst8LeftParsedFully = true;
 					break;
 				}
 				// Add the tuple to the list
