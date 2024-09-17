@@ -414,12 +414,6 @@ ExecNestLoop(PlanState *pstate)
 				return returnTupleSlot;
 			}
 			if(DEBUG_FLAG){elog(INFO, "Exploration Completed, Seeding Left Page Complete");}
-			
-			/* Explore again if there is no rewarding tuple */
-			if ((node->maxInnerReward == 0) || (node->maxOuterReward == 0)){
-				node->nl_needNewBest = true;
-				continue;
-			}
 
 			if (node->maxOuterReward < node->maxInnerReward) {
 				// Choose the inner tuple
