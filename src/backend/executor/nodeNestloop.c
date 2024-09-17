@@ -67,7 +67,7 @@
  */
 #define PGNST8_LEFT_PAGE_MAX_SIZE 100 // Memory Size for ToExploitBatch after every exploration.
 #define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 1000 // In Memory Size Right Table Cache Size, used for exploration. 
-#define MUST_EXPLORE_TUPLE_COUNT_N 1000 // Number of tuples that must be explored before Exploitation can happen. 
+#define MUST_EXPLORE_TUPLE_COUNT_N 2000 // Number of tuples that must be explored before Exploitation can happen. 
 #define FAILURE_COUNT_N 500 // Number of failures allowed during exploration, before jumping into next outer tuple, for exploration
 #define DEBUG_FLAG 0 // print statements will be activate if set to 1
 
@@ -197,6 +197,12 @@ seedToExploitLeftPage(PlanState *pstate){
 		outerPlan->oslBnd8_ExplorationStarted = true;
 
 		innerPlan->oslBnd8RightTableCacheSize = 0;
+
+		node->nl_NeedNewOuter = true;
+		node->maxInnerReward = 0;
+		node->maxInnerIndex = 0;
+		node->maxOuterReward = 0;
+		node->maxOuterIndex = 0;
 	}
 
 	/* Read a page such that They can be exploited*/
@@ -261,6 +267,7 @@ seedToExploitLeftPage(PlanState *pstate){
 					innerPlan->oslBnd8RightTableCache[innerPlan->oslBnd8RightTableCacheHead] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
 				}
 				ExecCopySlot(innerPlan->oslBnd8RightTableCache[innerPlan->oslBnd8RightTableCacheHead], innerTupleSlot);
+				innerPlan->pgReward[innerPlan->oslBnd8RightTableCacheHead] = 0;
 				innerPlan->oslBnd8RightTableCacheSize++;
 			}
 		}
@@ -408,6 +415,12 @@ ExecNestLoop(PlanState *pstate)
 			}
 			if(DEBUG_FLAG){elog(INFO, "Exploration Completed, Seeding Left Page Complete");}
 			
+			/* Explore again if there is no rewarding tuple */
+			if ((node->maxInnerReward == 0) || (node->maxOuterReward == 0)){
+				node->nl_needNewBest = true;
+				continue;
+			}
+
 			if (node->maxOuterReward < node->maxInnerReward) {
 				// Choose the inner tuple
 				innerTupleSlot = innerPlan->oslBnd8RightTableCache[node->maxInnerIndex];
@@ -808,6 +821,7 @@ ExecEndNestLoop(NestLoopState *node)
 		if (!TupIsNull(innerPlan->oslBnd8RightTableCache[i])) {
 			ExecDropSingleTupleTableSlot(innerPlan->oslBnd8RightTableCache[i]);
 			innerPlan->oslBnd8RightTableCache[i] = NULL;
+			innerPlan->pgReward[i] = 0;
 		}
 	}
 	// Free up the Memory
