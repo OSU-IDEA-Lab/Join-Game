@@ -923,6 +923,7 @@ typedef struct DummyBanditState
 
 #define PGNST8_LEFT_PAGE_MAX_SIZE 10000
 #define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 10000
+#define OSL_BND8_RIGHT_EXP_CACHE_MAX_SIZE 1000
 typedef struct PlanState
 {
 	
@@ -988,6 +989,7 @@ typedef struct PlanState
     unsigned int pgNst8InnerTableParseCount;
 
 	TupleTableSlot *pgNst8_innertuple[1];
+	TupleTableSlot *pgNst8_outertuple[1];
 
 	unsigned int pgReward[PGNST8_LEFT_PAGE_MAX_SIZE];
 	unsigned int cursorReward;
@@ -997,11 +999,15 @@ typedef struct PlanState
 	* Bnd8 Variables
 	*/
 	/* Right Table and Trackers */
-	bool oslBnd8RightTableCacheInitialized;
 	TupleTableSlot* oslBnd8RightTableCache[OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE];
     unsigned int oslBnd8RightTableCacheHead;
     unsigned int oslBnd8RightTableCacheSize;
 
+	TupleTableSlot* oslBnd8RightExpCache[OSL_BND8_RIGHT_EXP_CACHE_MAX_SIZE];
+	unsigned int rightNFailure[OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE];
+    unsigned int oslBnd8RightExpCacheHead;
+    unsigned int oslBnd8RightExpCacheSize;
+	
 	/* Exploration Trackers */
 	// bool oslBnd8InExplorationPhase;
 	// bool oslBnd8InExplorationPhaseInitComplete;
@@ -1777,9 +1783,7 @@ typedef struct NestLoopState
 	bool		nl_needNewBest;
 	
 	unsigned int maxOuterReward;
-	unsigned int maxOuterIndex;
 	unsigned int maxInnerReward;
-	unsigned int maxInnerIndex;
 
 } NestLoopState;
 
