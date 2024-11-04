@@ -993,7 +993,9 @@ typedef struct PlanState
 
 	unsigned int pgReward[PGNST8_LEFT_PAGE_MAX_SIZE];
 	unsigned int cursorReward;
-
+	unsigned int cursorExpReward;
+	
+	bool zeroRewardExists;
 
 	/*
 	* Bnd8 Variables
@@ -1007,10 +1009,9 @@ typedef struct PlanState
 	unsigned int rightNFailure[OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE];
     unsigned int oslBnd8RightExpCacheHead;
     unsigned int oslBnd8RightExpCacheSize;
+	unsigned int rightExpReward[OSL_BND8_RIGHT_EXP_CACHE_MAX_SIZE];
 	
 	/* Exploration Trackers */
-	// bool oslBnd8InExplorationPhase;
-	// bool oslBnd8InExplorationPhaseInitComplete;
 	TupleTableSlot *oslBnd8_currExploreTuple;
 	unsigned int oslBnd8_currExploreTupleReward;
 	unsigned int oslBnd8_currExploreTupleFailureCount;
@@ -1784,7 +1785,12 @@ typedef struct NestLoopState
 	
 	unsigned int maxOuterReward;
 	unsigned int maxInnerReward;
+	
+	unsigned int outerPointer;
+	unsigned int innerPointer;
 
+	unsigned int outerRelCount;
+	unsigned int innerRelCount;
 } NestLoopState;
 
 /* ----------------
