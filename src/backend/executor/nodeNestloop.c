@@ -68,7 +68,7 @@
 #define PGNST8_LEFT_PAGE_MAX_SIZE 100 // Memory Size for ToExploitBatch after every exploration.
 #define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 1000 // In Memory Size Right Table Cache Size, used for exploration. 
 #define OSL_BND8_RIGHT_EXP_CACHE_MAX_SIZE 100 // In Memory Size Right Exploitation Cache Size, used for exploitation. 
-#define MUST_EXPLORE_TUPLE_COUNT_N 1000 // Number of tuples that must be explored before Exploitation can happen. 
+#define MUST_EXPLORE_TUPLE_COUNT_N 5000 // Number of tuples that must be explored before Exploitation can happen. 
 #define FAILURE_COUNT_N 500 // Number of failures allowed during exploration, before jumping into next outer tuple, for exploration
 #define DEBUG_FLAG 0 // print statements will be activate if set to 1
 
@@ -159,7 +159,42 @@ seedToExploitLeftPage(PlanState *pstate){
 				if (innerPlan->chgParam != NULL) {
 					ExecReScan(innerPlan);
 				}
-
+				
+				int j;
+				
+				for (j = 1; j <= node->innerPointer; j++) {
+					innerTupleSlot = ExecProcNode(innerPlan);
+				}
+				
+				for (j = 1; j < innerPlan->oslBnd8RightTableCacheSize; j++) {
+					if (innerPlan->rightNFailure[j] >= FAILURE_COUNT_N){
+						innerTupleSlot = ExecProcNode(innerPlan);
+						node->innerPointer++;
+						if (TupIsNull(innerTupleSlot)) {
+							outerPlan->pgNst8LeftParsedFully = true;
+							break;
+						}
+						// Replace the tuple to the list
+						if (TupIsNull(innerPlan->oslBnd8RightTableCache[j])) {
+							innerPlan->oslBnd8RightTableCache[j] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
+						}
+						ExecCopySlot(innerPlan->oslBnd8RightTableCache[j], innerTupleSlot);
+						innerPlan->pgReward[j] = 0;
+						innerPlan->rightNFailure[j] = 0;
+					}
+				}
+				
+				for (j = 0; j < PGNST8_LEFT_PAGE_MAX_SIZE; j++) {
+					outerPlan->pgReward[j] = 0;
+				}
+				
+				outerPlan->pgNst8LeftPageHead = 0;
+				outerPlan->pgNst8LeftPageSize = 0;
+				innerPlan->oslBnd8RightTableCacheHead = 0;
+				innerPlan->oslBnd8RightExpCacheHead = 0;
+				node->maxOuterReward = 0;
+				outerPlan->zeroRewardExists = true;
+				
 				break;
 
 			case RIGHT_TO_LEFT:
@@ -191,6 +226,29 @@ seedToExploitLeftPage(PlanState *pstate){
 					ExecReScan(outerPlan);
 				}
 				
+				int x;
+				
+				for (x = 1; x <= node->outerPointer; x++) {
+					outerTupleSlot = ExecProcNode(outerPlan);
+				}
+				
+				for (x = 0; x < OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE; x++) {
+					innerPlan->pgReward[x] = 0;
+					innerPlan->rightNFailure[x] = 0;
+				}
+				
+				for (x = 0; x < OSL_BND8_RIGHT_EXP_CACHE_MAX_SIZE; x++) {
+					innerPlan->rightExpReward[x] = 0;
+				}
+
+				outerPlan->pgNst8LeftPageHead = 0;
+				innerPlan->oslBnd8RightTableCacheSize = 0;
+				innerPlan->oslBnd8RightTableCacheHead = 0;				
+				innerPlan->oslBnd8RightExpCacheSize = 0;
+				innerPlan->oslBnd8RightExpCacheHead = 0;
+				node->maxInnerReward = 0;
+				innerPlan->zeroRewardExists = true;
+				
 				break;
 
 			default:
@@ -199,19 +257,25 @@ seedToExploitLeftPage(PlanState *pstate){
 		}
 
 		outerPlan->cursorReward = 0;
+		innerPlan->cursorExpReward = 0;
 		outerPlan->oslBnd8_currExploreTupleFailureCount =0;
 		outerPlan->oslBnd8_numTuplesExplored=0;
-		outerPlan->pgNst8LeftPageHead = 0;
-		outerPlan->pgNst8LeftPageSize = 0;
 		outerPlan->oslBnd8_ExplorationStarted = true;
 
-		innerPlan->oslBnd8RightTableCacheSize = 0;	
-		innerPlan->oslBnd8RightExpCacheSize = 0;
-		innerPlan->oslBnd8RightExpCacheHead = 0;
+		if (node->direction == 2) {
+			outerPlan->pgNst8LeftPageHead = 0;
+			outerPlan->pgNst8LeftPageSize = 0;
+			innerPlan->oslBnd8RightTableCacheSize = 0;
+			innerPlan->oslBnd8RightTableCacheHead = 0;				
+			innerPlan->oslBnd8RightExpCacheSize = 0;
+			innerPlan->oslBnd8RightExpCacheHead = 0;
+			node->maxInnerReward = 0;
+			node->maxOuterReward = 0;
+			outerPlan->zeroRewardExists = true;
+			innerPlan->zeroRewardExists = true;
+		}
 	
 		node->nl_NeedNewOuter = true;
-		node->maxInnerReward = 0;
-		node->maxOuterReward = 0;
 	}
 
 	/* Read a page such that They can be exploited*/
@@ -228,18 +292,17 @@ seedToExploitLeftPage(PlanState *pstate){
 
 			ENL1_printf("getting new outer tuple");
 			if(DEBUG_FLAG){elog(INFO, "outerPlan-> Disk Read Tuple");}
-			
 			outerTupleSlot = ExecProcNode(outerPlan);
+			node->outerPointer++;
 			if (TupIsNull(outerTupleSlot)) { 
 				elog(INFO, "Finished Parsing left table: %u", outerPlan->pgNst8LeftPageHead);
 				outerPlan->pgNst8LeftParsedFully = true;
 				break;
 			}
-			if (TupIsNull(outerPlan->oslBnd8_currExploreTuple)) {outerPlan->oslBnd8_currExploreTuple = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);}
+			if (TupIsNull(outerPlan->oslBnd8_currExploreTuple)) { outerPlan->oslBnd8_currExploreTuple = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);}
 			if (!TupIsNull(outerTupleSlot)){ ExecCopySlot(outerPlan->oslBnd8_currExploreTuple, outerTupleSlot);}
 			outerPlan->oslBnd8_currExploreTupleReward = 0;
 			innerPlan->oslBnd8RightTableCacheHead = 0;
-			outerPlan->oslBnd8_numTuplesExplored++;
 
 			/*
 			 * if there are no more outer tuples, then the join is complete..
@@ -267,6 +330,7 @@ seedToExploitLeftPage(PlanState *pstate){
 			if (innerPlan->oslBnd8RightTableCacheHead < (OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE - 1)){
 				// Fill Table
 				innerTupleSlot = ExecProcNode(innerPlan);
+				node->innerPointer++;
 				if (TupIsNull(innerTupleSlot)) {
 					outerPlan->pgNst8LeftParsedFully = true;
 					break;
@@ -296,23 +360,79 @@ seedToExploitLeftPage(PlanState *pstate){
 		else{
 			outerPlan->oslBnd8_currExploreTupleFailureCount++;
 			innerPlan->rightNFailure[innerPlan->oslBnd8RightTableCacheHead - 1]++;
-			if ( (innerPlan->rightNFailure[innerPlan->oslBnd8RightTableCacheHead - 1] == FAILURE_COUNT_N)
-				&& (innerPlan->pgReward[innerPlan->oslBnd8RightTableCacheHead - 1] > 0) ) {
+			//elog(INFO, "1. inner reward is %u", innerPlan->pgReward[innerPlan->oslBnd8RightTableCacheHead - 1]);
+			if ( (innerPlan->rightNFailure[innerPlan->oslBnd8RightTableCacheHead - 1] == FAILURE_COUNT_N ) ) {
+				if (innerPlan->oslBnd8RightExpCacheSize < OSL_BND8_RIGHT_EXP_CACHE_MAX_SIZE){
+					node->nl_NeedNewInner = true;
+					// Add the tuple to the right (inner) exploitation cache
+					if (TupIsNull(innerPlan->oslBnd8RightExpCache[innerPlan->oslBnd8RightExpCacheHead])) {
+						innerPlan->oslBnd8RightExpCache[innerPlan->oslBnd8RightExpCacheHead] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
+					}
+					ExecCopySlot(innerPlan->oslBnd8RightExpCache[innerPlan->oslBnd8RightExpCacheHead], innerTupleSlot);
+					innerPlan->rightExpReward[innerPlan->oslBnd8RightExpCacheHead] = innerPlan->pgReward[innerPlan->oslBnd8RightTableCacheHead - 1];
+
+					innerPlan->oslBnd8RightExpCacheSize++;
+					innerPlan->oslBnd8RightExpCacheHead++;
 					node->maxInnerReward = node->maxInnerReward + innerPlan->pgReward[innerPlan->oslBnd8RightTableCacheHead - 1];
-					
-					if (innerPlan->oslBnd8RightExpCacheHead >= innerPlan->oslBnd8RightExpCacheSize){
-						if (innerPlan->oslBnd8RightExpCacheHead < (OSL_BND8_RIGHT_EXP_CACHE_MAX_SIZE - 1)){
-							node->nl_NeedNewInner = true;
-							// Add the tuple to the right (inner) exploitation cache
-							if (TupIsNull(innerPlan->oslBnd8RightExpCache[innerPlan->oslBnd8RightExpCacheHead])) {
-								innerPlan->oslBnd8RightExpCache[innerPlan->oslBnd8RightExpCacheHead] = MakeSingleTupleTableSlot(innerTupleSlot->tts_tupleDescriptor);
+				}
+				else {
+					if (innerPlan->pgReward[innerPlan->oslBnd8RightTableCacheHead - 1] > 0) {
+						//int p = 0;
+						//for (p = 0; p < OSL_BND8_RIGHT_EXP_CACHE_MAX_SIZE; p++) {
+						//	if (innerPlan->rightExpReward[p] >= innerPlan->pgReward[innerPlan->oslBnd8RightTableCacheHead - 1]) {
+						//		continue;
+						//	} 
+						//	else {
+						//		ExecCopySlot(innerPlan->oslBnd8RightExpCache[p], innerTupleSlot);
+						//		node->maxInnerReward = node->maxInnerReward - innerPlan->rightExpReward[p];
+						//		node->maxInnerReward = node->maxInnerReward + innerPlan->pgReward[innerPlan->oslBnd8RightTableCacheHead - 1];
+						//		innerPlan->rightExpReward[p] = innerPlan->pgReward[innerPlan->oslBnd8RightTableCacheHead - 1];
+						//		break;
+						//	}
+						//}
+						//new
+						bool replaced = false;
+						
+						if (innerPlan->zeroRewardExists) {
+							while (innerPlan->cursorExpReward < OSL_BND8_RIGHT_EXP_CACHE_MAX_SIZE) {
+								if (innerPlan->rightExpReward[innerPlan->cursorExpReward] == 0) {
+									ExecCopySlot(innerPlan->oslBnd8RightExpCache[innerPlan->cursorExpReward], innerTupleSlot);
+									node->maxInnerReward = node->maxInnerReward + innerPlan->pgReward[innerPlan->oslBnd8RightTableCacheHead - 1];
+									innerPlan->rightExpReward[innerPlan->cursorExpReward] = innerPlan->pgReward[innerPlan->oslBnd8RightTableCacheHead - 1];
+									innerPlan->cursorExpReward++;
+									replaced = true;
+									break;
+								}
+								innerPlan->cursorExpReward++;
 							}
-							ExecCopySlot(innerPlan->oslBnd8RightExpCache[innerPlan->oslBnd8RightExpCacheHead], innerTupleSlot);
-							innerPlan->oslBnd8RightExpCacheSize++;
-							innerPlan->oslBnd8RightExpCacheHead++;
+						
+							if (!replaced) {
+								innerPlan->zeroRewardExists = false;
+							}
 						}
+						
+						if (!replaced) {
+							int lowestIndex = -1;
+							int lowestReward = INT_MAX;
+							int i;
+							for (i = 0; i < OSL_BND8_RIGHT_EXP_CACHE_MAX_SIZE; i++) {
+								if (innerPlan->rightExpReward[i] < lowestReward) {
+									lowestReward = innerPlan->rightExpReward[i];
+									lowestIndex = i;
+								}
+							}
+						
+							if (lowestReward < innerPlan->pgReward[innerPlan->oslBnd8RightTableCacheHead - 1]) {
+								ExecCopySlot(innerPlan->oslBnd8RightExpCache[lowestIndex], innerTupleSlot);
+								node->maxInnerReward = node->maxInnerReward - lowestReward;
+								node->maxInnerReward = node->maxInnerReward + innerPlan->pgReward[innerPlan->oslBnd8RightTableCacheHead - 1];
+								innerPlan->rightExpReward[lowestIndex] = innerPlan->pgReward[innerPlan->oslBnd8RightTableCacheHead - 1];
+							}
+						}
+						//new
 					}
 				}
+			}
 		}
 		
 		if(DEBUG_FLAG){elog(INFO, "node->nl_MatchedOuter: %u", node->nl_MatchedOuter);}
@@ -321,11 +441,10 @@ seedToExploitLeftPage(PlanState *pstate){
 		// Finish exploring for the current outer tuple, determine if it has to be stored into the memory
 		if ((innerPlan->oslBnd8RightTableCacheHead == (OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE - 1)) || 
 			(outerPlan->oslBnd8_currExploreTupleFailureCount > FAILURE_COUNT_N)){
+			outerPlan->oslBnd8_numTuplesExplored++;		
 			node->nl_NeedNewOuter = true;
 			outerPlan->oslBnd8_currExploreTupleFailureCount = 0;
 			innerPlan->oslBnd8RightTableCacheHead = 0;
-			
-			outerPlan->pgReward[outerPlan->pgNst8LeftPageSize] = outerPlan->oslBnd8_currExploreTupleReward;
 			
 			// Allocate Memory if it has not been allocated
 			if (outerPlan->pgNst8LeftPageSize < PGNST8_LEFT_PAGE_MAX_SIZE){
@@ -333,10 +452,8 @@ seedToExploitLeftPage(PlanState *pstate){
 				if(DEBUG_FLAG){elog(INFO, "Adding it to the Left Page, num_tuples_explored: %u", outerPlan->oslBnd8_numTuplesExplored);}
 				if (TupIsNull(outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead])) {outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead] = MakeSingleTupleTableSlot(outerPlan->oslBnd8_currExploreTuple->tts_tupleDescriptor);}
 				ExecCopySlot(outerPlan->pgNst8LeftPage[outerPlan->pgNst8LeftPageHead], outerPlan->oslBnd8_currExploreTuple);
-				
-				//elog(INFO, "outerPlan->pgReward[outerPlan->pgNst8LeftPageSize]: %u", outerPlan->pgReward[outerPlan->pgNst8LeftPageSize]);
+				outerPlan->pgReward[outerPlan->pgNst8LeftPageSize] = outerPlan->oslBnd8_currExploreTupleReward;
 				node->maxOuterReward = node->maxOuterReward + outerPlan->pgReward[outerPlan->pgNst8LeftPageSize];
-				//elog(INFO, "node->maxOuterReward: %u", node->maxOuterReward);
 				
 				outerPlan->pgNst8LeftPageHead++;
 				outerPlan->pgNst8LeftPageSize++;
@@ -345,18 +462,59 @@ seedToExploitLeftPage(PlanState *pstate){
 			// Otherwise, they will be parsed.
 			else{
 				if (outerPlan->oslBnd8_currExploreTupleReward > 0){
-					// Find a slot that has a tuple with zero reward
-					while (outerPlan->cursorReward < PGNST8_LEFT_PAGE_MAX_SIZE){
-						if (outerPlan->pgReward[outerPlan->cursorReward] > 0){
+					//int p = 0;
+					//for (p = 0; p < PGNST8_LEFT_PAGE_MAX_SIZE; p++) {
+					//	if (outerPlan->pgReward[p] >= outerPlan->oslBnd8_currExploreTupleReward) {
+					//		continue;
+					//	} 
+					//	else {
+					//		ExecCopySlot(outerPlan->pgNst8LeftPage[p], outerPlan->oslBnd8_currExploreTuple);
+					//		node->maxOuterReward = node->maxOuterReward - outerPlan->pgReward[p];
+					//		node->maxOuterReward = node->maxOuterReward + outerPlan->oslBnd8_currExploreTupleReward;
+					//		outerPlan->pgReward[p] = outerPlan->oslBnd8_currExploreTupleReward;
+					//		break;
+					//	}
+					//}
+					//new
+					bool replaced = false;
+					
+					if (outerPlan->zeroRewardExists) {
+						while (outerPlan->cursorReward < PGNST8_LEFT_PAGE_MAX_SIZE) {
+							if (outerPlan->pgReward[outerPlan->cursorReward] == 0) {
+								ExecCopySlot(outerPlan->pgNst8LeftPage[outerPlan->cursorReward], outerPlan->oslBnd8_currExploreTuple);
+								node->maxOuterReward = node->maxOuterReward + outerPlan->oslBnd8_currExploreTupleReward;
+								outerPlan->pgReward[outerPlan->cursorReward] = outerPlan->oslBnd8_currExploreTupleReward;
+								outerPlan->cursorReward++;
+								replaced = true;
+								break;
+							}
 							outerPlan->cursorReward++;
 						}
-						else{
-							ExecCopySlot(outerPlan->pgNst8LeftPage[outerPlan->cursorReward], outerPlan->oslBnd8_currExploreTuple);
-							outerPlan->cursorReward++;
-							node->maxOuterReward = node->maxOuterReward + outerPlan->oslBnd8_currExploreTupleReward;
-							break;
+					
+						if (!replaced) {
+							outerPlan->zeroRewardExists = false;
 						}
 					}
+					
+					if (!replaced) {
+						int lowestIndex = -1;
+						int lowestReward = INT_MAX;
+						int i;
+						for (i = 0; i < PGNST8_LEFT_PAGE_MAX_SIZE; i++) {
+							if (outerPlan->pgReward[i] < lowestReward) {
+								lowestReward = outerPlan->pgReward[i];
+								lowestIndex = i;
+							}
+						}
+					
+						if (lowestReward < outerPlan->oslBnd8_currExploreTupleReward) {
+							ExecCopySlot(outerPlan->pgNst8LeftPage[lowestIndex], outerPlan->oslBnd8_currExploreTuple);
+							node->maxOuterReward = node->maxOuterReward - lowestReward;
+							node->maxOuterReward = node->maxOuterReward + outerPlan->oslBnd8_currExploreTupleReward;
+							outerPlan->pgReward[lowestIndex] = outerPlan->oslBnd8_currExploreTupleReward;
+						}
+					}
+					//new
 				}
 			}
 		}
@@ -370,11 +528,6 @@ seedToExploitLeftPage(PlanState *pstate){
 		 */
 		ResetExprContext(econtext);
 		ENL1_printf("qualification failed, looping");
-	}
-
-	/* Stopping condition, if explored all outer relation */
-	if (outerPlan->pgNst8LeftParsedFully){
-		return NULL;
 	}
 
 	if(DEBUG_FLAG){
@@ -423,8 +576,18 @@ ExecNestLoop(PlanState *pstate)
 	 * storage allocated in the previous tuple cycle.
 	 */
 	ResetExprContext(econtext);
+	
+	if (node->innerRelCount == 0){
+		node->innerRelCount = innerPlan->plan->plan_rows;
+	}
+	
+	if (node->outerRelCount == 0){
+		node->outerRelCount = outerPlan->plan->plan_rows;
+	}
 
 	ENL1_printf("entering main loop");
+	
+	int z=0;
 	for (;;)
 	{
 		/*
@@ -441,19 +604,20 @@ ExecNestLoop(PlanState *pstate)
             /*
              * Decide whether to exploit left cache (outer) or right cache (inner)
              */
-			//elog(INFO, "node->maxOuterReward is : %u", node->maxOuterReward);
-			//elog(INFO, "node->maxInnerReward is : %u", node->maxInnerReward);
-			double avgLeftReward = (double)node->maxOuterReward / (double)outerPlan->pgNst8LeftPageSize;
-			double avgRightReward = (double)node->maxInnerReward / (double)innerPlan->oslBnd8RightExpCacheSize;
-			//elog(INFO, "Average Left Reward: %.6f, Average Right Reward: %.6f", avgLeftReward, avgRightReward);
 			
-            //if (node->maxOuterReward < node->maxInnerReward) {
-			if (avgLeftReward < avgRightReward) {
+			//avg reward of left cache per one right cache tuple is as below.
+			double avgLeftReward = (double)node->maxOuterReward / (double)outerPlan->pgNst8LeftPageSize;
+			//avg reward of right cache per one left cache tuple is as below.
+			double avgRightReward = (double)node->maxInnerReward / (double)innerPlan->oslBnd8RightExpCacheSize;
+			
+			if ( (avgRightReward * (node->outerRelCount - node->outerPointer) * innerPlan->oslBnd8RightExpCacheSize ) >
+				(avgLeftReward * (node->innerRelCount - node->innerPointer) * outerPlan->pgNst8LeftPageSize) ){
                 node->direction = RIGHT_TO_LEFT;
+				elog(INFO, "Inner Cache Picked for Exploitation");
             } else {
                 node->direction = LEFT_TO_RIGHT;
+				elog(INFO, "Outer Cache Picked for Exploitation");
             }
-			//elog(INFO, "Starting exploitation phase: outer head: %u, inner head: %u", outerPlan->pgNst8LeftPageHead, innerPlan->oslBnd8RightTableCacheHead);
             node->nl_needNewBest = false;
         }
 		
@@ -468,11 +632,14 @@ ExecNestLoop(PlanState *pstate)
 				* inner scan.
 				*/
 				if (node->nl_NeedNewOuter)
-				{	
+				{
+					if (outerPlan->pgNst8LeftPageHead == 0){
+						outerPlan->pgNst8LeftPageHead = outerPlan->pgNst8LeftPageSize;
+					}
 					ENL1_printf("getting new outer tuple");
 		
 					/* Scan From Page*/
-					if (outerPlan->pgNst8LeftPageSize == 0){
+					if (outerPlan->pgNst8LeftPageSize ==0){
 						outerTupleSlot = NULL;
 					}
 					else{
@@ -622,6 +789,9 @@ ExecNestLoop(PlanState *pstate)
 				*/
 				if (node->nl_NeedNewInner)
 				{
+					if (innerPlan->oslBnd8RightExpCacheHead == 0){
+						innerPlan->oslBnd8RightExpCacheHead = innerPlan->oslBnd8RightExpCacheSize;
+					}
 					ENL1_printf("getting new inner tuple");
 		
 					/* Scan From Page*/
@@ -877,23 +1047,30 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	innerPlan = innerPlanState(nlstate);
 	
 	nlstate->nl_needNewBest = true;
-	//nlstate->nl_NeedNewInner = false;
 	nlstate->nl_MatchedInner = false;
 	
 	outerPlan->pgNst8LeftPageHead = 0;
 	outerPlan->pgNst8LeftPageSize = 0;
 	outerPlan->pgNst8LeftParsedFully = false;
+	outerPlan->zeroRewardExists = true;
 
 	innerPlan->oslBnd8RightTableCacheHead = 0;
+	innerPlan->zeroRewardExists = true;
 
 	outerPlan->oslBnd8_ExplorationStarted = false;
 
-	nlstate->direction = 0;	
+	nlstate->direction = 2;	
 	
 	nlstate->maxOuterReward = 0;
 	nlstate->maxInnerReward = 0;
 	
 	innerPlan->oslBnd8RightExpCacheHead = 0;
+	
+	nlstate->outerPointer = 0;
+	nlstate->innerPointer = 0;
+	
+	nlstate->outerRelCount = 0;
+	nlstate->innerRelCount = 0;
 
 	return nlstate;
 }
@@ -962,6 +1139,7 @@ ExecEndNestLoop(NestLoopState *node)
 		if (!TupIsNull(innerPlan->oslBnd8RightExpCache[i])) {
 			ExecDropSingleTupleTableSlot(innerPlan->oslBnd8RightExpCache[i]);
 			innerPlan->oslBnd8RightExpCache[i] = NULL;
+			innerPlan->rightExpReward[i] = 0;
 		}
 	}
 	
