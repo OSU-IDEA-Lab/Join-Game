@@ -3,7 +3,7 @@ To upload the datasets that have been used for the join game experiment, you jus
 updated database_name, username and port of your PostgreSQL database. You would also need to update the path of the file location 
 that contains all the table data. The path from the data directory is present, any path that preceeds it, needs to be updated.
 
-=====================================================================================================
+=====================================
 
 Installation steps for PostgreSQL:
 
@@ -26,7 +26,7 @@ create database databaseName;
 lsof -i :portNumber
 psql -p portNumber databaseName
 
-=====================================================================================================
+=====================================
 
 To run similarity joins, follow the below steps:
 1. make world
