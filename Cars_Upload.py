@@ -9,34 +9,34 @@ def connect_db(db, db_user, db_port):
 
 a = 1
 
-# def insert_car_models(db, db_user, db_port, csv_filename):
-#     """ Insert car models from a JSON file into the database """
-#     conn = connect_db(db, db_user, db_port)
-#     cur = conn.cursor()
-#     a=1
-#     try:
-#         with open(csv_filename, 'r') as file:
-#             data = json.load(file)  # Load JSON data from file
-#             for item in data:
-#                 cur.execute("""
-#                 INSERT INTO Car_brands (Year, Make, Model, Category)
-#                 VALUES (%s, %s, %s, %s)
-#                 """, (
-#                     item['Year'],
-#                     item['Make'],
-#                     item['Model'],
-#                     item['Category']
-#                 ))
-#                 print(a)
-#                 a+=1
-#         conn.commit()
-#         print("Data inserted successfully.")
-#     except Exception as error:
-#         print("Error: ", error)
-#         conn.rollback()
-#     finally:
-#         cur.close()
-#         conn.close()
+def insert_car_models(db, db_user, db_port, csv_filename):
+    """ Insert car models from a JSON file into the database """
+    conn = connect_db(db, db_user, db_port)
+    cur = conn.cursor()
+    a=1
+    try:
+        with open(csv_filename, 'r') as file:
+            data = json.load(file)  # Load JSON data from file
+            for item in data:
+                cur.execute("""
+                INSERT INTO Car_brands (Year, Make, Model, Category)
+                VALUES (%s, %s, %s, %s)
+                """, (
+                    item['Year'],
+                    item['Make'],
+                    item['Model'],
+                    item['Category']
+                ))
+                print(a)
+                a+=1
+        conn.commit()
+        print("Data inserted successfully.")
+    except Exception as error:
+        print("Error: ", error)
+        conn.rollback()
+    finally:
+        cur.close()
+        conn.close()
 
 def insert_parking_violations(db, db_user, db_port, csv_filename):
     """ Insert parking violations from a CSV file into the database """
@@ -106,7 +106,7 @@ def insert_car_accidents(db, db_user, db_port, csv_filename):
         conn.close()
 
 if __name__ == "__main__":
-    if len(sys.argv) < 5:
+    if len(sys.argv) < 4:
         print("Usage: python script.py <database> <user> <port> <csv_filename>")
         sys.exit(1)
 
@@ -114,7 +114,6 @@ if __name__ == "__main__":
     db = sys.argv[1]
     db_user = sys.argv[2]
     db_port = sys.argv[3]
-    csv_filename = sys.argv[4]
     # insert_car_models(db, db_user, db_port, "/data/Car_Model_List.json")
     insert_parking_violations(db, db_user, db_port, "/data/Parking_Violations_Issued_-_Fiscal_Year_2024_20240903.csv")
     # insert_car_accidents(db, db_user, db_port, "/data/Crash_Reporting_-_Drivers_Data.csv")
