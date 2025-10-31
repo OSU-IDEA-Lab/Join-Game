@@ -922,6 +922,7 @@ typedef struct DummyBanditState
 
 
 #define MEAN_CALCULATION_CACHE_SIZE 10000
+#define PGNST8_LEFT_PAGE_MAX_SIZE 100000
 #define PGNST8_LEFT_REM_EXPLORED 10000
 #define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 10000
 #define OUTER_RELATION_SIZE 800000
@@ -984,7 +985,7 @@ typedef struct PlanState
 	*/
 
     bool nl_needNewOuterPage; // Used to know if we need a new outer page
-	TupleTableSlot* pgNst8LeftPage[MEAN_CALCULATION_CACHE_SIZE]; //Used to store MEAN_CALCULATION_CACHE_SIZE number of outer tuples
+	TupleTableSlot* pgNst8LeftPage[PGNST8_LEFT_PAGE_MAX_SIZE]; //Used to store MEAN_CALCULATION_CACHE_SIZE number of outer tuples
     unsigned long long pgNst8LeftPageHead; // Variable to know on which tuple we are currently working on
     unsigned long long pgNst8LeftPageSize; // Store the size of the left page which contain the tuples.
 	bool pgNst8LeftParsedFully; //Used to know if we have completely gone through the left page
@@ -992,8 +993,9 @@ typedef struct PlanState
 
 	TupleTableSlot *pgNst8_innertuple[1]; // Stores one inner tuple at a time
 
-	unsigned long long pgReward[MEAN_CALCULATION_CACHE_SIZE]; //Stores the reward values of each of the left tuples in the left page
-	unsigned long long outerIndex[MEAN_CALCULATION_CACHE_SIZE]; // Stores the index value of the tuple in the left table and not the index in the left cache
+	unsigned long long pgReward[PGNST8_LEFT_PAGE_MAX_SIZE]; //Stores the reward values of each of the left tuples in the left page
+	unsigned long long outerIndex[PGNST8_LEFT_PAGE_MAX_SIZE]; // Stores the index value of the tuple in the left table and not the index in the left cache
+	bool duplicate[PGNST8_LEFT_PAGE_MAX_SIZE];
 	unsigned long long cursorReward; // Index pointing to where we store the next reward
 	
 	TupleTableSlot* pgNst8LeftRem[PGNST8_LEFT_REM_EXPLORED]; // Cache that stores the tuples with 0 reward

@@ -531,7 +531,6 @@ seedToExploitLeftPage(PlanState *pstate){
 		outerPlan->pgNst8LeftPageHead = 0;
 		outerPlan->pgNst8LeftPageSize = 0;
 		outerPlan->oslBnd8_ExplorationStarted=true;
-		outerPlan->zeroRewardExists = true;
 	}
 
 	/* Read a page such that They can be exploited*/
@@ -667,7 +666,6 @@ seedToExploitLeftPage(PlanState *pstate){
 			node->genExplore++;
 			node->exploreCount++;
 			outerPlan->oslBnd8_currExploreTupleReward++;
-			outerPlan->cur_explore_rewards++;
 		}
 
 		if(node->nl_MatchedOuter){
@@ -1251,7 +1249,6 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	outerPlan->oslBnd8RightTableCacheHead = 0;
 
 	outerPlan->oslBnd8_ExplorationStarted = false;
-	outerPlan->zeroRewardExists = true;
 
 	// outerPlan->oslBnd8InExplorationPhase = true;
 
