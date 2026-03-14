@@ -31,17 +31,23 @@ web site located at https://www.postgresql.org/.
 
 Original Hash Join built into postgres was Hybrid Hash Join. Hash join implementation modified in place to Early Hash Join as described in the [Early Hash Join paper](https://cmps-people.ok.ubc.ca/rlawrenc/research/Papers/EarlyHashJoin.pdf).
 
+## Original Hash Join Inheritance Trees
+
+![riginal Hash Join Inheritance Trees](./postgres_hashjoin_inheritance.svg)
+
+## Early Hash Join Inheritance Trees
+
 ## Plan Tree 
 
 ### Plan Tree Inheritance 
 
 **Node** → **Plan** → **Join** → **HashJoin**
 
-### Planned Changes to Plan Tree Structs
+<!-- ### Planned Changes to Plan Tree Structs
 
 **Name:** **Definition in:** **Significance:** **Overview of Changes:** 
 
-**Name:** **Definition in:** **Significance:** **Overview of Changes:**
+**Name:** **Definition in:** **Significance:** **Overview of Changes:** -->
 
 ## Execution State Tree
 
@@ -53,4 +59,5 @@ Original Hash Join built into postgres was Hybrid Hash Join. Hash join implement
 
 **Name:** `HashJoinState`  
 **Definition in:** `src/include/nodes/execnodes.h`  
-**Significance:** **Overview of Changes:** 
+**Significance:** 
+**Overview of Changes:** `Added 4 ints for reading policy ratios and counts per relation. `

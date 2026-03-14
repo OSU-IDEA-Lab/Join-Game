@@ -1864,6 +1864,11 @@ typedef struct HashJoinState
 	int			hj_JoinState;
 	bool		hj_MatchedOuter;
 	bool		hj_OuterNotEmpty;
+
+	int         read_ratio_inner;       /* A in A:B reading strategy */
+    int         read_ratio_outer;       /* B in A:B reading strategy */
+    int         reads_from_inner;       /* Counter for current reading cycle */
+    int         reads_from_outer;       /* Counter for current reading cycle */
 } HashJoinState;
 
 
