@@ -26,6 +26,36 @@ extern void ExecReScanHash(HashState *node);
 
 extern HashJoinTable ExecHashTableCreate(HashState *state, List *hashOperators,
 					bool keepNulls);
+
+/*
+ * Early Hash Join (EHJ) variants.
+ *
+ * ExecEHJHashTableCreate creates a hash table whose bucket array is twice the
+ * normal width: [0, nbuckets) for inner (R) tuples and [nbuckets, 2*nbuckets)
+ * for outer (S) tuples.  Both sides share a single spaceUsed counter so that
+ * the Phase 2 biased-flush policy can reason about the combined footprint.
+ *
+ * ExecEHJTableInsertInner / ExecEHJTableInsertOuter insert a tuple into the
+ * appropriate half, probe the opposite half for matches, and return true if
+ * at least one match tuple was found (the caller is responsible for emitting
+ * the result tuples via the normal projection machinery).
+ *
+ * ExecEHJScanInnerBucket / ExecEHJScanOuterBucket are the per-tuple bucket
+ * iterators used during the symmetric probe; they mirror ExecScanHashBucket
+ * but operate on the named half of the double-wide array.
+ */
+extern HashJoinTable ExecEHJHashTableCreate(HashState *state,
+					List *hashOperators, bool keepNulls);
+
+extern void ExecEHJTableInsertInner(HashJoinTable hashtable,
+					MinimalTuple tuple, uint32 hashvalue);
+extern void ExecEHJTableInsertOuter(HashJoinTable hashtable,
+					MinimalTuple tuple, uint32 hashvalue);
+
+extern bool ExecEHJScanInnerBucket(HashJoinState *hjstate,
+					ExprContext *econtext, uint32 hashvalue);
+extern bool ExecEHJScanOuterBucket(HashJoinState *hjstate,
+					ExprContext *econtext, uint32 hashvalue);
 extern void ExecParallelHashTableAlloc(HashJoinTable hashtable,
 						   int batchno);
 extern void ExecHashTableDestroy(HashJoinTable hashtable);

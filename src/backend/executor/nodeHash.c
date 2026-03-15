@@ -45,6 +45,9 @@
 
 static void ExecHashIncreaseNumBatches(HashJoinTable hashtable);
 static void ExecHashIncreaseNumBuckets(HashJoinTable hashtable);
+
+/* EHJ helpers (Phase 1 symmetric in-memory join) */
+static void *ehj_dense_alloc(HashJoinTable hashtable, Size size);
 static void ExecParallelHashIncreaseNumBatches(HashJoinTable hashtable);
 static void ExecParallelHashIncreaseNumBuckets(HashJoinTable hashtable);
 static void ExecHashBuildSkewHash(HashJoinTable hashtable, Hash *node,
@@ -3309,4 +3312,458 @@ ExecParallelHashTuplePrealloc(HashJoinTable hashtable, int batchno, size_t size)
 	LWLockRelease(&pstate->lock);
 
 	return true;
+}
+
+
+/* ========================================================================
+ * Early Hash Join (EHJ) — Phase 1: symmetric in-memory join
+ *
+ * Design notes
+ * ------------
+ * We allocate the bucket-pointer array with 2 * nbuckets entries in a single
+ * palloc0 call inside batchCxt, just like the normal single-sided array.
+ *   buckets.unshared[0 .. nbuckets-1]          inner (R) bucket heads
+ *   buckets.unshared[nbuckets .. 2*nbuckets-1]  outer (S) bucket heads
+ *
+ * outer_buckets is set to &buckets.unshared[nbuckets] so that call sites can
+ * use outer_buckets[bucketno] without any arithmetic.
+ *
+ * Both sides share a single spaceUsed counter; spaceAllowed is unchanged
+ * (still work_mem).  The bucket-array itself is twice as wide, so we account
+ * for that in the initial spaceUsed charge (see ExecEHJHashTableCreate).
+ *
+ * All tuple data (both sides) is packed into the same HashMemoryChunk slab
+ * list via ehj_dense_alloc(), which is identical to dense_alloc() but calls
+ * through to the shared chunks list explicitly.
+ *
+ * Phase 1 ends when spaceUsed + bucket_array_overhead >= spaceAllowed.  At
+ * that point ehj_phase1_done is set true and the driver loop in
+ * ExecHashJoinImpl transitions out of HJ_EHJ_SYMMETRIC.  Phase 2 (biased
+ * flush / spill) is not yet implemented; for now the transition falls through
+ * to the standard batch path, which will rebuild the inner side normally.
+ * ======================================================================== */
+
+/*
+ * ehj_dense_alloc — identical to the file-private dense_alloc() but operates
+ * on the shared hashtable->chunks list so that both inner and outer tuples
+ * land in the same slab chain and are counted in the same spaceUsed.
+ */
+static void *
+ehj_dense_alloc(HashJoinTable hashtable, Size size)
+{
+	HashMemoryChunk newChunk;
+	char	   *ptr;
+
+	/* Round up to MAXALIGN boundary */
+	size = MAXALIGN(size);
+
+	/*
+	 * If the tuple is too large for a standard 32 KB chunk, give it its own
+	 * dedicated chunk (same policy as dense_alloc).
+	 */
+	if (size > HASH_CHUNK_THRESHOLD)
+	{
+		newChunk = (HashMemoryChunk) MemoryContextAlloc(hashtable->batchCxt,
+														HASH_CHUNK_HEADER_SIZE + size);
+		newChunk->maxlen = size;
+		newChunk->used = size;
+		newChunk->ntuples = 1;
+		newChunk->next.unshared = hashtable->chunks;
+		hashtable->chunks = newChunk;
+		return HASH_CHUNK_DATA(newChunk);
+	}
+
+	/* Does the current chunk have room? */
+	if ((hashtable->chunks == NULL) ||
+		(hashtable->chunks->maxlen - hashtable->chunks->used) < size)
+	{
+		newChunk = (HashMemoryChunk) MemoryContextAlloc(hashtable->batchCxt,
+														HASH_CHUNK_HEADER_SIZE + HASH_CHUNK_SIZE);
+		newChunk->maxlen = HASH_CHUNK_SIZE;
+		newChunk->used = size;
+		newChunk->ntuples = 1;
+		newChunk->next.unshared = hashtable->chunks;
+		hashtable->chunks = newChunk;
+		return HASH_CHUNK_DATA(newChunk);
+	}
+
+	ptr = HASH_CHUNK_DATA(hashtable->chunks) + hashtable->chunks->used;
+	hashtable->chunks->used += size;
+	hashtable->chunks->ntuples += 1;
+	return ptr;
+}
+
+
+/*
+ * ExecEHJHashTableCreate
+ *		Create an EHJ hash table: same as ExecHashTableCreate except that the
+ *		bucket array is 2x wide (inner half + outer half) and the EHJ flags
+ *		are initialised.
+ *
+ *		Skew optimisation is intentionally disabled for EHJ: skew buckets are
+ *		inner-side only, and supporting them across both sides complicates the
+ *		symmetric probe without providing much benefit during Phase 1.
+ */
+HashJoinTable
+ExecEHJHashTableCreate(HashState *state, List *hashOperators, bool keepNulls)
+{
+	Hash	   *node;
+	HashJoinTable hashtable;
+	Plan	   *outerNode;
+	size_t		space_allowed;
+	int			nbuckets;
+	int			nbatch;
+	double		rows;
+	int			num_skew_mcvs;	/* ignored for EHJ */
+	int			log2_nbuckets;
+	int			nkeys;
+	int			i;
+	ListCell   *ho;
+	MemoryContext oldcxt;
+
+	node = (Hash *) state->ps.plan;
+	outerNode = outerPlan(node);
+	rows = node->plan.parallel_aware ? node->rows_total : outerNode->plan_rows;
+
+	/*
+	 * Use the standard size-selection logic.  We pass useskew=false so that
+	 * skew optimisation is not attempted; we'll use the full space budget for
+	 * the double-wide bucket array.
+	 */
+	ExecChooseHashTableSize(rows, outerNode->plan_width,
+							false,	/* useskew */
+							false,	/* try_combined_work_mem */
+							0,		/* parallel_workers */
+							&space_allowed,
+							&nbuckets, &nbatch, &num_skew_mcvs);
+
+	log2_nbuckets = my_log2(nbuckets);
+	Assert(nbuckets == (1 << log2_nbuckets));
+
+	/*
+	 * Allocate and zero-initialise the control block in the per-query context.
+	 */
+	hashtable = (HashJoinTable) palloc0(sizeof(HashJoinTableData));
+
+	hashtable->nbuckets = nbuckets;
+	hashtable->nbuckets_original = nbuckets;
+	hashtable->nbuckets_optimal = nbuckets;
+	hashtable->log2_nbuckets = log2_nbuckets;
+	hashtable->log2_nbuckets_optimal = log2_nbuckets;
+	hashtable->buckets.unshared = NULL;
+	hashtable->outer_buckets = NULL;
+	hashtable->keepNulls = keepNulls;
+	hashtable->skewEnabled = false;
+	hashtable->skewBucket = NULL;
+	hashtable->skewBucketLen = 0;
+	hashtable->nSkewBuckets = 0;
+	hashtable->skewBucketNums = NULL;
+	hashtable->nbatch = 1;			/* EHJ Phase 1 is always single-batch */
+	hashtable->curbatch = 0;
+	hashtable->nbatch_original = 1;
+	hashtable->nbatch_outstart = 1;
+	hashtable->growEnabled = false;	/* no batch growth in Phase 1 */
+	hashtable->totalTuples = 0;
+	hashtable->partialTuples = 0;
+	hashtable->skewTuples = 0;
+	hashtable->innerBatchFile = NULL;
+	hashtable->outerBatchFile = NULL;
+	hashtable->spaceUsed = 0;
+	hashtable->spacePeak = 0;
+	hashtable->spaceAllowed = space_allowed;
+	hashtable->spaceUsedSkew = 0;
+	hashtable->spaceAllowedSkew = 0;
+	hashtable->chunks = NULL;
+	hashtable->current_chunk = NULL;
+	hashtable->parallel_state = NULL; /* EHJ is serial only for now */
+	hashtable->area = NULL;
+	hashtable->batches = NULL;
+
+	/* EHJ state */
+	hashtable->ehj_enabled = true;
+	hashtable->ehj_phase1_done = false;
+	hashtable->ehj_inner_done = false;
+	hashtable->ehj_outer_done = false;
+
+	/* Hash-function lookup (identical to ExecHashTableCreate) */
+	hashtable->hashCxt = AllocSetContextCreate(CurrentMemoryContext,
+											   "EHJHashTableContext",
+											   ALLOCSET_DEFAULT_SIZES);
+	hashtable->batchCxt = AllocSetContextCreate(hashtable->hashCxt,
+												 "EHJHashBatchContext",
+												 ALLOCSET_DEFAULT_SIZES);
+
+	oldcxt = MemoryContextSwitchTo(hashtable->hashCxt);
+
+	nkeys = list_length(hashOperators);
+	hashtable->outer_hashfunctions =
+		(FmgrInfo *) palloc(nkeys * sizeof(FmgrInfo));
+	hashtable->inner_hashfunctions =
+		(FmgrInfo *) palloc(nkeys * sizeof(FmgrInfo));
+	hashtable->hashStrict = (bool *) palloc(nkeys * sizeof(bool));
+	i = 0;
+	foreach(ho, hashOperators)
+	{
+		Oid			hashop = lfirst_oid(ho);
+		Oid			left_hashfn;
+		Oid			right_hashfn;
+
+		if (!get_op_hash_functions(hashop, &left_hashfn, &right_hashfn))
+			elog(ERROR, "could not find hash function for hash operator %u",
+				 hashop);
+		fmgr_info(left_hashfn, &hashtable->outer_hashfunctions[i]);
+		fmgr_info(right_hashfn, &hashtable->inner_hashfunctions[i]);
+		hashtable->hashStrict[i] = op_strict(hashop);
+		i++;
+	}
+
+	/*
+	 * Allocate the double-wide bucket array in batchCxt.
+	 * Layout: [inner buckets 0..N-1 | outer buckets N..2N-1]
+	 * Both halves are palloc0'd so every head pointer starts NULL.
+	 */
+	MemoryContextSwitchTo(hashtable->batchCxt);
+
+	hashtable->buckets.unshared = (HashJoinTuple *)
+		palloc0(2 * nbuckets * sizeof(HashJoinTuple));
+
+	hashtable->outer_buckets =
+		hashtable->buckets.unshared + nbuckets;
+
+	/*
+	 * Account for the bucket-pointer array in spaceUsed right away.
+	 * (The standard code does this at the end of MultiExecPrivateHash, but
+	 * here we charge it up front so that the memory-full check during
+	 * symmetric insertion is accurate from the first tuple.)
+	 */
+	hashtable->spaceUsed = 2 * nbuckets * sizeof(HashJoinTuple);
+	hashtable->spacePeak = hashtable->spaceUsed;
+
+	MemoryContextSwitchTo(oldcxt);
+
+#ifdef HJDEBUG
+	printf("EHJ %p: nbuckets=%d double-wide array, spaceAllowed=%zu\n",
+		   hashtable, nbuckets, space_allowed);
+#endif
+
+	return hashtable;
+}
+
+
+/*
+ * EHJMemoryFull — inline helper used by both insert functions.
+ * Returns true when adding one more tuple's worth of overhead would push us
+ * over the budget.  We use a small slack constant (one pointer width per
+ * bucket) to avoid issuing the "memory full" signal only after already
+ * overrunning.
+ */
+static inline bool
+EHJMemoryFull(HashJoinTable hashtable, int hashTupleSize)
+{
+	return (hashtable->spaceUsed + (Size) hashTupleSize >
+			hashtable->spaceAllowed);
+}
+
+
+/*
+ * ExecEHJTableInsertInner
+ *		Insert a pre-fetched inner-relation (R) MinimalTuple into the EHJ
+ *		table at buckets.unshared[bucketno].
+ *
+ *		The caller must have already:
+ *		  1. Called ExecFetchSlotMinimalTuple() to obtain `tuple`.
+ *		  2. Called ExecHashGetHashValue() to obtain `hashvalue`.
+ *		Both steps must happen before any ResetExprContext call that could
+ *		invalidate the slot's per-tuple memory.
+ *
+ *		If memory is full, sets hashtable->ehj_phase1_done = true and
+ *		returns without inserting.  The tuple is not lost — it will be
+ *		re-read when Phase 2 rescans the inner plan.
+ */
+void
+ExecEHJTableInsertInner(HashJoinTable hashtable,
+						MinimalTuple tuple,
+						uint32 hashvalue)
+{
+	int			hashTupleSize = MAXALIGN(HJTUPLE_OVERHEAD + tuple->t_len);
+	int			bucketno;
+	int			batchno;
+	HashJoinTuple hashTuple;
+
+	Assert(hashtable->ehj_enabled);
+	Assert(!hashtable->ehj_phase1_done);
+
+	if (EHJMemoryFull(hashtable, hashTupleSize))
+	{
+		hashtable->ehj_phase1_done = true;
+		return;
+	}
+
+	ExecHashGetBucketAndBatch(hashtable, hashvalue, &bucketno, &batchno);
+	Assert(batchno == 0);
+
+	hashTuple = (HashJoinTuple) ehj_dense_alloc(hashtable, hashTupleSize);
+	hashTuple->hashvalue = hashvalue;
+	memcpy(HJTUPLE_MINTUPLE(hashTuple), tuple, tuple->t_len);
+	HeapTupleHeaderClearMatch(HJTUPLE_MINTUPLE(hashTuple));
+
+	hashTuple->next.unshared = hashtable->buckets.unshared[bucketno];
+	hashtable->buckets.unshared[bucketno] = hashTuple;
+
+	hashtable->spaceUsed += hashTupleSize;
+	if (hashtable->spaceUsed > hashtable->spacePeak)
+		hashtable->spacePeak = hashtable->spaceUsed;
+
+	hashtable->totalTuples += 1;
+}
+
+
+/*
+ * ExecEHJTableInsertOuter
+ *		Insert a pre-fetched outer-relation (S) MinimalTuple into
+ *		outer_buckets[bucketno].  Same pre-conditions as InsertInner.
+ */
+void
+ExecEHJTableInsertOuter(HashJoinTable hashtable,
+						MinimalTuple tuple,
+						uint32 hashvalue)
+{
+	int			hashTupleSize = MAXALIGN(HJTUPLE_OVERHEAD + tuple->t_len);
+	int			bucketno;
+	int			batchno;
+	HashJoinTuple hashTuple;
+
+	Assert(hashtable->ehj_enabled);
+	Assert(!hashtable->ehj_phase1_done);
+
+	if (EHJMemoryFull(hashtable, hashTupleSize))
+	{
+		hashtable->ehj_phase1_done = true;
+		return;
+	}
+
+	ExecHashGetBucketAndBatch(hashtable, hashvalue, &bucketno, &batchno);
+	Assert(batchno == 0);
+
+	hashTuple = (HashJoinTuple) ehj_dense_alloc(hashtable, hashTupleSize);
+	hashTuple->hashvalue = hashvalue;
+	memcpy(HJTUPLE_MINTUPLE(hashTuple), tuple, tuple->t_len);
+	HeapTupleHeaderClearMatch(HJTUPLE_MINTUPLE(hashTuple));
+
+	hashTuple->next.unshared = hashtable->outer_buckets[bucketno];
+	hashtable->outer_buckets[bucketno] = hashTuple;
+
+	hashtable->spaceUsed += hashTupleSize;
+	if (hashtable->spaceUsed > hashtable->spacePeak)
+		hashtable->spacePeak = hashtable->spaceUsed;
+}
+
+
+/*
+ * ExecEHJScanInnerBucket
+ *		Scan the inner bucket at hj_CurBucketNo for a match to the current
+ *		outer tuple (stored in econtext->ecxt_outertuple).
+ *
+ *		This mirrors ExecScanHashBucket but reads from buckets.unshared
+ *		(the inner half) and uses hj_CurTuple as the cursor.
+ *
+ *		Returns true and advances hj_CurTuple when a match is found.
+ *		The caller projects and returns the result tuple, then calls again.
+ *		Returns false when the bucket is exhausted.
+ */
+bool
+ExecEHJScanInnerBucket(HashJoinState *hjstate,
+					   ExprContext *econtext,
+					   uint32 hashvalue)
+{
+	ExprState  *hjclauses = hjstate->hashclauses;
+	HashJoinTable hashtable = hjstate->hj_HashTable;
+	HashJoinTuple hashTuple = hjstate->hj_CurTuple;
+
+	if (hashTuple != NULL)
+		hashTuple = hashTuple->next.unshared;
+	else
+		hashTuple = hashtable->buckets.unshared[hjstate->hj_CurBucketNo];
+
+	while (hashTuple != NULL)
+	{
+		if (hashTuple->hashvalue == hashvalue)
+		{
+			/*
+			 * Load the matched inner (R) tuple into hj_HashTupleSlot and
+			 * set ecxt_innertuple so ExecQual and ExecProject can reach it.
+			 * ecxt_outertuple was set by the driver loop before this scan.
+			 */
+			ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(hashTuple),
+								  hjstate->hj_HashTupleSlot,
+								  false); /* do not pfree — lives in slab */
+			econtext->ecxt_innertuple = hjstate->hj_HashTupleSlot;
+
+			if (ExecQualAndReset(hjclauses, econtext))
+			{
+				hjstate->hj_CurTuple = hashTuple;
+				return true;
+			}
+		}
+		hashTuple = hashTuple->next.unshared;
+	}
+
+	return false;
+}
+
+
+/*
+ * ExecEHJScanOuterBucket
+ *		Scan the outer bucket at hj_CurBucketNo for a match to the current
+ *		inner tuple (stored in econtext->ecxt_innertuple).
+ *
+ *		Reads from outer_buckets (the second half of the double-wide array).
+ *		The caller sets econtext->ecxt_innertuple before the first call and
+ *		leaves hj_CurTuple NULL; subsequent calls use hj_CurTuple as a cursor
+ *		into the outer chain.  To avoid colliding with ExecEHJScanInnerBucket,
+ *		the driver loop uses a separate local cursor variable and passes it
+ *		indirectly through hj_CurTuple — see the HJ_EHJ_SCAN_OUTER_BUCKET
+ *		state in nodeHashjoin.c.
+ *
+ *		Returns true when a match is found; false when the bucket is exhausted.
+ */
+bool
+ExecEHJScanOuterBucket(HashJoinState *hjstate,
+					   ExprContext *econtext,
+					   uint32 hashvalue)
+{
+	ExprState  *hjclauses = hjstate->hashclauses;
+	HashJoinTable hashtable = hjstate->hj_HashTable;
+	HashJoinTuple hashTuple = hjstate->hj_CurTuple;
+
+	if (hashTuple != NULL)
+		hashTuple = hashTuple->next.unshared;
+	else
+		hashTuple = hashtable->outer_buckets[hjstate->hj_CurBucketNo];
+
+	while (hashTuple != NULL)
+	{
+		if (hashTuple->hashvalue == hashvalue)
+		{
+			/*
+			 * Load the matched outer (S) tuple into hj_OuterTupleSlot and
+			 * set ecxt_outertuple so ExecQual and ExecProject can reach it.
+			 * ecxt_innertuple was set by the driver loop before entering this
+			 * scan and must not be disturbed here.
+			 */
+			ExecStoreMinimalTuple(HJTUPLE_MINTUPLE(hashTuple),
+								  hjstate->hj_OuterTupleSlot,
+								  false); /* do not pfree — lives in slab */
+			econtext->ecxt_outertuple = hjstate->hj_OuterTupleSlot;
+
+			if (ExecQualAndReset(hjclauses, econtext))
+			{
+				hjstate->hj_CurTuple = hashTuple;
+				return true;
+			}
+		}
+		hashTuple = hashTuple->next.unshared;
+	}
+
+	return false;
 }

@@ -48,3 +48,7 @@ lib*.pc
 *.swp
 src/tags
 /localsave.sh
+/replacement.sh
+/build.sh
+/rebuild.sh
+replacements/

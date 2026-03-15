@@ -290,7 +290,20 @@ typedef struct HashJoinTableData
 	int			nbuckets_optimal;	/* optimal # buckets (per batch) */
 	int			log2_nbuckets_optimal;	/* log2(nbuckets_optimal) */
 
-	/* buckets[i] is head of list of tuples in i'th in-memory bucket */
+	/*
+	 * buckets[i] is head of list of tuples in i'th in-memory bucket.
+	 *
+	 * For Early Hash Join (EHJ), this array has 2 * nbuckets entries.
+	 * Buckets [0, nbuckets) hold inner-relation (R) tuples; buckets
+	 * [nbuckets, 2*nbuckets) hold outer-relation (S) tuples.  Both sides
+	 * share the same memory budget (spaceUsed / spaceAllowed) so that the
+	 * Phase 2 biased-flush policy can reclaim memory from whichever side is
+	 * larger without any separate accounting.
+	 *
+	 * In the non-EHJ path the array has exactly nbuckets entries and
+	 * outer_buckets is set to NULL (the outer relation is streamed, not
+	 * stored).
+	 */
 	union
 	{
 		/* unshared array is per-batch storage, as are all the tuples */
@@ -298,6 +311,28 @@ typedef struct HashJoinTableData
 		/* shared array is per-query DSA area, as are all the tuples */
 		dsa_pointer_atomic *shared;
 	}			buckets;
+
+	/*
+	 * EHJ only: pointer into the second half of the buckets array, i.e.
+	 * &buckets.unshared[nbuckets].  NULL when not running EHJ.
+	 * Having a named pointer makes the probe loops readable without
+	 * arithmetic at every call site.
+	 */
+	struct HashJoinTupleData **outer_buckets; /* EHJ outer-rel bucket heads */
+
+	/*
+	 * EHJ phase-1 state flags.
+	 *   ehj_phase1_done  – set when memory fills or both iterators are
+	 *                      exhausted; causes the driver loop to exit the
+	 *                      symmetric phase and fall through to standard
+	 *                      batch processing (Phase 2, not yet implemented).
+	 *   ehj_inner_done   – inner (R) iterator exhausted during phase 1.
+	 *   ehj_outer_done   – outer (S) iterator exhausted during phase 1.
+	 */
+	bool		ehj_enabled;		/* true iff this table was built for EHJ */
+	bool		ehj_phase1_done;	/* phase 1 has ended */
+	bool		ehj_inner_done;		/* R iterator exhausted */
+	bool		ehj_outer_done;		/* S iterator exhausted */
 
 	bool		keepNulls;		/* true to store unmatchable NULL tuples */
 

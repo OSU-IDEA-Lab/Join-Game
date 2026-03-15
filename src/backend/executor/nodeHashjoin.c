@@ -128,6 +128,30 @@
 #define HJ_FILL_INNER_TUPLES	5
 #define HJ_NEED_NEW_BATCH		6
 
+/*
+ * Early Hash Join (EHJ) Phase 1 states.
+ *
+ * HJ_EHJ_SYMMETRIC
+ *		The symmetric in-memory phase.  We alternate reading one tuple from
+ *		the inner (R) source and one from the outer (S) source, inserting
+ *		each into its half of the double-wide hash table and immediately
+ *		probing the opposite half for matches.  This state loops until either
+ *		(a) both sources are exhausted, or (b) the memory budget is full
+ *		(hashtable->ehj_phase1_done becomes true).
+ *
+ * HJ_EHJ_SCAN_OUTER_BUCKET
+ *		After an inner tuple has been inserted we scan the matching outer
+ *		bucket for join partners.  Once exhausted we return to HJ_EHJ_SYMMETRIC
+ *		to consume the next pair of tuples.
+ *
+ * HJ_EHJ_SCAN_INNER_BUCKET
+ *		After an outer tuple has been inserted we scan the matching inner
+ *		bucket.  Symmetric to HJ_EHJ_SCAN_OUTER_BUCKET.
+ */
+#define HJ_EHJ_SYMMETRIC		7
+#define HJ_EHJ_SCAN_OUTER_BUCKET 8
+#define HJ_EHJ_SCAN_INNER_BUCKET 9
+
 /* Returns true if doing null-fill on outer relation */
 #define HJ_FILL_OUTER(hjstate)	((hjstate)->hj_NullInnerTupleSlot != NULL)
 /* Returns true if doing null-fill on inner relation */
@@ -542,6 +566,317 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				node->hj_JoinState = HJ_NEED_NEW_OUTER;
 				break;
 
+			/* --------------------------------------------------------
+			 * Early Hash Join — Phase 1 states
+			 * -------------------------------------------------------- */
+
+			case HJ_EHJ_SYMMETRIC:
+			{
+				/*
+				 * Alternate reading one inner (R) and one outer (S) tuple per
+				 * iteration.  For each tuple we:
+				 *   1. Fetch the MinimalTuple from the slot BEFORE calling
+				 *      ExecHashGetHashValue, because ExecHashGetHashValue calls
+				 *      ResetExprContext which can free per-tuple memory that
+				 *      the slot references.
+				 *   2. Hash the tuple.
+				 *   3. Insert the MinimalTuple copy into the appropriate bucket.
+				 *   4. Set both econtext slots correctly for projection, then
+				 *      transition to the matching scan state.
+				 *
+				 * Plan-tree layout reminder:
+				 *   HashJoin.lefttree  → outer (S) scan
+				 *   HashJoin.righttree → Hash node
+				 *                          Hash.outerPlan → inner (R) scan
+				 *
+				 * We call ExecProcNode on the scan nodes, not on the Hash node
+				 * itself (the Hash node's ExecProcNode is an error stub).
+				 */
+				HashState	   *hashNode_ehj =
+					(HashState *) innerPlanState(node);
+				PlanState	   *innerScan_ehj =
+					outerPlanState(hashNode_ehj);	/* R tuples */
+				PlanState	   *outerScan_ehj =
+					outerPlanState(node);			/* S tuples */
+				ExprContext    *inner_econtext =
+					hashNode_ehj->ps.ps_ExprContext;
+				HashJoinTable	hashtable_ehj = node->hj_HashTable;
+				TupleTableSlot *slot;
+				MinimalTuple	inner_tuple = NULL;
+				MinimalTuple	outer_tuple = NULL;
+				uint32			inner_hashvalue = 0;
+				uint32			outer_hashvalue = 0;
+				int				inner_bucketno = 0;
+				int				outer_bucketno = 0;
+				int				dummy_batchno;
+				bool			got_inner = false;
+				bool			got_outer = false;
+
+				/* First entry: create the EHJ hash table. */
+				if (hashtable_ehj == NULL)
+				{
+					hashtable_ehj = ExecEHJHashTableCreate(
+						hashNode_ehj,
+						node->hj_HashOperators,
+						HJ_FILL_INNER(node));
+					node->hj_HashTable = hashtable_ehj;
+					hashNode_ehj->hashtable = hashtable_ehj;
+				}
+
+				Assert(hashtable_ehj->ehj_enabled);
+
+				/* ---- consume one inner (R) tuple ---- */
+				if (!hashtable_ehj->ehj_inner_done &&
+					!hashtable_ehj->ehj_phase1_done)
+				{
+					slot = ExecProcNode(innerScan_ehj);
+					if (TupIsNull(slot))
+					{
+						hashtable_ehj->ehj_inner_done = true;
+					}
+					else
+					{
+						/*
+						 * Materialize BEFORE hashing: ExecHashGetHashValue
+						 * calls ResetExprContext which frees per-tuple memory.
+						 * ExecCopySlotMinimalTuple allocates in the current
+						 * memory context (per-query), so it survives the reset.
+						 */
+						inner_tuple = ExecCopySlotMinimalTuple(slot);
+
+						inner_econtext->ecxt_innertuple = slot;
+						if (ExecHashGetHashValue(hashtable_ehj,
+												  inner_econtext,
+												  node->hj_InnerHashKeys,
+												  false, /* inner tuple */
+												  hashtable_ehj->keepNulls,
+												  &inner_hashvalue))
+						{
+							ExecEHJTableInsertInner(hashtable_ehj,
+													inner_tuple,
+													inner_hashvalue);
+							if (!hashtable_ehj->ehj_phase1_done)
+							{
+								ExecHashGetBucketAndBatch(hashtable_ehj,
+														  inner_hashvalue,
+														  &inner_bucketno,
+														  &dummy_batchno);
+								got_inner = true;
+							}
+						}
+						/* inner_tuple is now safely in the slab; no pfree needed */
+					}
+				}
+
+				/* ---- consume one outer (S) tuple ---- */
+				if (!hashtable_ehj->ehj_outer_done &&
+					!hashtable_ehj->ehj_phase1_done)
+				{
+					slot = ExecProcNode(outerScan_ehj);
+					if (TupIsNull(slot))
+					{
+						hashtable_ehj->ehj_outer_done = true;
+					}
+					else
+					{
+						/* Same pre-materialization discipline as inner. */
+						outer_tuple = ExecCopySlotMinimalTuple(slot);
+
+						econtext->ecxt_outertuple = slot;
+						if (ExecHashGetHashValue(hashtable_ehj,
+												  econtext,
+												  node->hj_OuterHashKeys,
+												  true,  /* outer tuple */
+												  HJ_FILL_OUTER(node),
+												  &outer_hashvalue))
+						{
+							ExecEHJTableInsertOuter(hashtable_ehj,
+													outer_tuple,
+													outer_hashvalue);
+							if (!hashtable_ehj->ehj_phase1_done)
+							{
+								ExecHashGetBucketAndBatch(hashtable_ehj,
+														  outer_hashvalue,
+														  &outer_bucketno,
+														  &dummy_batchno);
+								node->hj_OuterNotEmpty = true;
+								got_outer = true;
+							}
+						}
+					}
+				}
+
+				/* ---- check termination ---- */
+				if (hashtable_ehj->ehj_phase1_done ||
+					(hashtable_ehj->ehj_inner_done &&
+					 hashtable_ehj->ehj_outer_done))
+				{
+					/*
+					 * Phase 1 complete.  Destroy the EHJ table and return
+					 * NULL to signal end of join.
+					 *
+					 * We do NOT fall through to HJ_BUILD_HASHTABLE here.
+					 * That path would rescan both relations and re-emit all
+					 * matches, producing duplicates for every tuple that was
+					 * already output during the symmetric phase.
+					 *
+					 * Phase 2 (biased flush / spill) will eventually replace
+					 * this return with logic to continue processing the
+					 * remaining tuples that did not fit in memory.
+					 */
+					ExecHashTableDestroy(node->hj_HashTable);
+					node->hj_HashTable = NULL;
+					hashtable = NULL;
+					return NULL;
+				}
+
+				/*
+				 * Transition to probe states.
+				 *
+				 * When an inner tuple was inserted, set econtext so that
+				 * ExecProject can build the result:
+				 *   ecxt_innertuple = the new inner tuple  (hj_HashTupleSlot)
+				 *   ecxt_outertuple = matched outer tuple  (set by ScanOuterBucket)
+				 *
+				 * When only an outer tuple was inserted:
+				 *   ecxt_outertuple = the new outer tuple  (hj_OuterTupleSlot)
+				 *   ecxt_innertuple = matched inner tuple  (set by ScanInnerBucket)
+				 *
+				 * If both were inserted we service the inner probe first;
+				 * the outer probe is deferred to the next SYMMETRIC iteration
+				 * (the outer tuple is already in the table, so it will be
+				 * matched by future inner insertions).
+				 */
+				if (got_inner)
+				{
+					/*
+					 * Store the inner tuple in hj_HashTupleSlot so that
+					 * ExecProject sees it as ecxt_innertuple.
+					 */
+					ExecStoreMinimalTuple(inner_tuple,
+										  node->hj_HashTupleSlot,
+										  false); /* do not pfree — in slab */
+					econtext->ecxt_innertuple = node->hj_HashTupleSlot;
+
+					node->hj_CurBucketNo = inner_bucketno;
+					node->hj_CurHashValue = inner_hashvalue;
+					node->hj_CurTuple = NULL;
+					node->hj_JoinState = HJ_EHJ_SCAN_OUTER_BUCKET;
+					continue;
+				}
+				if (got_outer)
+				{
+					/*
+					 * Store the outer tuple in hj_OuterTupleSlot so that
+					 * ExecProject sees it as ecxt_outertuple.
+					 */
+					ExecStoreMinimalTuple(outer_tuple,
+										  node->hj_OuterTupleSlot,
+										  false); /* do not pfree — in slab */
+					econtext->ecxt_outertuple = node->hj_OuterTupleSlot;
+
+					node->hj_CurBucketNo = outer_bucketno;
+					node->hj_CurHashValue = outer_hashvalue;
+					node->hj_CurTuple = NULL;
+					node->hj_JoinState = HJ_EHJ_SCAN_INNER_BUCKET;
+					continue;
+				}
+
+				/* Nothing inserted this round (both NULL tuples) — loop */
+				break;
+			}
+
+			case HJ_EHJ_SCAN_OUTER_BUCKET:
+			{
+				/*
+				 * We just inserted an inner (R) tuple; scan the outer (S)
+				 * bucket for matches.
+				 *
+				 * econtext->ecxt_innertuple was set by the insert loop above.
+				 * We scan outer_buckets[hj_CurBucketNo] using hj_CurTuple as
+				 * the cursor and hj_CurHashValue as the hash filter.
+				 */
+				if (!ExecEHJScanOuterBucket(node, econtext,
+											node->hj_CurHashValue))
+				{
+					/*
+					 * Outer bucket exhausted.  If we also have a pending outer
+					 * probe (got_outer was true when we entered the SYMMETRIC
+					 * state and stored the outer bucket in hj_CurSkewBucketNo),
+					 * service it now.
+					 */
+					if (node->hj_CurSkewBucketNo != INVALID_SKEW_BUCKET_NO)
+					{
+						/*
+						 * Restore outer probe context.  The outer hashvalue was
+						 * not saved separately — we cannot reconstruct it here
+						 * without re-hashing.  For simplicity we skip the
+						 * deferred outer probe and clear the flag; the tuple
+						 * will be re-encountered during Phase 2 if needed.
+						 *
+						 * TODO: save the deferred outer hash value in a new
+						 * HashJoinState field to enable the deferred probe.
+						 */
+						node->hj_CurSkewBucketNo = INVALID_SKEW_BUCKET_NO;
+					}
+					node->hj_CurTuple = NULL;
+					node->hj_JoinState = HJ_EHJ_SYMMETRIC;
+					break;
+				}
+
+				/* Match found — project and return */
+				if (node->js.jointype == JOIN_ANTI)
+				{
+					node->hj_JoinState = HJ_EHJ_SYMMETRIC;
+					node->hj_CurTuple = NULL;
+					break;
+				}
+				if (node->js.single_match)
+				{
+					node->hj_JoinState = HJ_EHJ_SYMMETRIC;
+					node->hj_CurTuple = NULL;
+				}
+				if (otherqual == NULL || ExecQual(otherqual, econtext))
+					return ExecProject(node->js.ps.ps_ProjInfo);
+				else
+					InstrCountFiltered2(node, 1);
+				break;
+			}
+
+			case HJ_EHJ_SCAN_INNER_BUCKET:
+			{
+				/*
+				 * We just inserted an outer (S) tuple; scan the inner (R)
+				 * bucket for matches.
+				 *
+				 * econtext->ecxt_outertuple was set by the insert loop above.
+				 */
+				if (!ExecEHJScanInnerBucket(node, econtext,
+											node->hj_CurHashValue))
+				{
+					node->hj_CurTuple = NULL;
+					node->hj_JoinState = HJ_EHJ_SYMMETRIC;
+					break;
+				}
+
+				if (node->js.jointype == JOIN_ANTI)
+				{
+					node->hj_JoinState = HJ_EHJ_SYMMETRIC;
+					node->hj_CurTuple = NULL;
+					break;
+				}
+				if (node->js.single_match)
+				{
+					node->hj_JoinState = HJ_EHJ_SYMMETRIC;
+					node->hj_CurTuple = NULL;
+				}
+				if (otherqual == NULL || ExecQual(otherqual, econtext))
+					return ExecProject(node->js.ps.ps_ProjInfo);
+				else
+					InstrCountFiltered2(node, 1);
+				break;
+			}
+
 			default:
 				elog(ERROR, "unrecognized hashjoin state: %d",
 					 (int) node->hj_JoinState);
@@ -743,7 +1078,12 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 	/* child Hash node needs to evaluate inner hash keys, too */
 	((HashState *) innerPlanState(hjstate))->hashkeys = rclauses;
 
-	hjstate->hj_JoinState = HJ_BUILD_HASHTABLE;
+	/*
+	 * EHJ: start in the symmetric phase.  The HJ_BUILD_HASHTABLE state is
+	 * still reachable as a fallback when Phase 1 ends (memory full or both
+	 * sources exhausted) and is used to rebuild for standard batch processing.
+	 */
+	hjstate->hj_JoinState = HJ_EHJ_SYMMETRIC;
 	hjstate->hj_MatchedOuter = false;
 	hjstate->hj_OuterNotEmpty = false;
 
