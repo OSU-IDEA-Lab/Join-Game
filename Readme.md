@@ -26,27 +26,27 @@ The discrete event is a **single probe** (a join attempt between an $R$ tuple an
 ### Exploration Selection
 The probability of selecting a random tuple for exploration is denoted by $p_R(r)$.
 
-$$p_R(r) = \frac{\text{exploration\_size}}{|R|}$$
+$$p_R(r) = \frac{\text{explorationsize}}{|R|}$$
 
 ### *Discrete Event Case*: Exploration Probe (First N probes)
 The probability that an exploration cache tuple is probed against an opposite relation tuple in the first N probes.
 
 $$
 \begin{aligned}
-e_t = p_R(r) = \frac{\text{exploration\_size}}{|R|}
+e_t = p_R(r) = \frac{\text{explorationsize}}{|R|}
 \end{aligned}
 $$
 
 ### *Discrete Event Case*: Exploration Probe (Additional probes beyond N)
 An exploration cache tuple is only probed against an additional opposite relation tuple after the first N probes if:
-- the tuple was chosen for exploration, with probability $p_R(r) = \frac{\text{exploration\_size}}{|R|}$
+- the tuple was chosen for exploration, with probability $p_R(r) = \frac{\text{explorationsize}}{|R|}$
 - the tuple had at least one success in the first N probes, with probability (where $p_{su}(r)$ denotes the empirical success rate):
 
 $$
 \begin{aligned}
 &1 - (1 - p_{su}(r))^N\\
-= &1 - \left(1 - \frac{\text{total\_rewards}_i}{\text{total\_probes}_i}\right)^N\\
-= &1 - \left(1 - \frac{\text{total\_rewards}_i}{\text{total\_rewards}_i + \text{total\_failures}_i}\right)^N
+= &1 - \left(1 - \frac{\text{totalrewards}_i}{\text{totalprobes}_i}\right)^N\\
+= &1 - \left(1 - \frac{\text{totalrewards}_i}{\text{totalrewards}_i + \text{totalfailures}_i}\right)^N
 \end{aligned}
 $$
 
@@ -55,21 +55,21 @@ Thereby, the probability that an exploration cache tuple is probed against an ad
 $$
 \begin{aligned}
 e_t &= p_R(r) \times \left[1 - (1 - p_{su}(r))^N\right] \\
-&= \frac{\text{exploration\_size}}{|R|} \times \left[1 - \left(1 - \frac{\text{total\_rewards}_i}{\text{total\_rewards}_i + \text{total\_failures}_i}\right)^N\right]
+&= \frac{\text{explorationsize}}{|R|} \times \left[1 - \left(1 - \frac{\text{totalrewards}_i}{\text{totalrewards}_i + \text{totalfailures}_i}\right)^N\right]
 \end{aligned}
 $$
 
 ### Exploitation Selection
 The probability of selecting a tuple from the exploration cache for exploitation, randomly proportional to their exploration reward, is:
 
-$$\frac{\text{total\_rewards}_i}{\sum \text{rewards}}$$
+$$\frac{\text{totalrewards}_i}{\sum \text{rewards}}$$
 
 with zero rewards smoothed to $0.01$ so that all exploration tuples have a non-zero chance of being selected.
 
 ### *Discrete Event Case*: Exploitation Probe
 All exploitation cache tuples will be probed against all remaining opposite relation tuples beyond the last opposite relation tuple tried by any exploration cache tuple in exploration. The probability that an exploitation cache tuple is probed against an opposite relation tuple in exploitation is the same probability that it was selected for exploitation:
 
-$$\frac{\text{total\_rewards}_i}{\sum \text{rewards}}$$
+$$\frac{\text{totalrewards}_i}{\sum \text{rewards}}$$
 
 with zero rewards smoothed to $0.01$ so that all exploration tuples have a non-zero chance of being selected.
 
@@ -79,7 +79,7 @@ For each probe, Inverse-Selection-Probability-Weighting (ISPW) is applied using 
 
 At the end of each phase, per-arm accumulators (`ispw_num[i]`, `ispw_den[i]`) are folded **directly** into a global estimate accumulator (`global_num`, `global_den`) and then zeroed. The final join size is computed entirely from this global mean probability:
 
-$$\hat{J} = \frac{\text{global\_num}}{\text{global\_den}} \times |R| \times |S| \mathbin{/} \text{global\_den}$$
+$$\hat{J} = \frac{\text{globalnum}}{\text{globalden}} \times |R| \times |S| \mathbin{/} \text{globalden}$$
 
 ---
 
@@ -108,13 +108,13 @@ The discrete event is a **single probe** (one $(r_i, s_j)$ join attempt).
 ### Exploration Selection
 The probability of selecting a random tuple for exploration is denoted by $p_R(r)$.
  
-$$p_R(r) = \frac{\text{exploration\_size}}{|R|}$$
+$$p_R(r) = \frac{\text{explorationsize}}{|R|}$$
  
 ### *Discrete Event Case*: Exploration Probe (in First N probes per tuple)
 The dependent probability that a tuple is probed each of the first N times in exploration, given that it was selected for exploration, is 1. 
 
 Thereby, the overall probability of that a tuple is probed the first N times in exploration is
-$$e_t = p_R(r)*1 = \frac{\text{exploration\_size}}{|R|}$$
+$$e_t = p_R(r)*1 = \frac{\text{explorationsize}}{|R|}$$
  
 Since all discrete events are dependent on tuple $r$ being chosen for exploration, we will define $\hat{e_t}$ as conditional probability for discrete events given that the $r$ tuple has already been selected for exploration.
  
@@ -130,8 +130,8 @@ Given these preconditions, an arm continues to be probed beyond N only if it acc
 $$
 \begin{align*}
 e_t &= p_R(r)*1*(1 - (1 - p_{su}(r))^N) \\
-&=  \frac{\text{exploration\_size}}{|R|}*(1 - (1 - \frac{\text{total\_rewards}_i}{\text{total\_probes}_i})^N )\\
-&=  \frac{\text{exploration\_size}}{|R|}*(1 - (1 - \frac{\text{total\_rewards}_i}{\text{total\_rewards}_i + \text{total\_failures}_i})^N )
+&=  \frac{\text{explorationsize}}{|R|}*(1 - (1 - \frac{\text{totalrewards}_i}{\text{totalprobes}_i})^N )\\
+&=  \frac{\text{explorationsize}}{|R|}*(1 - (1 - \frac{\text{totalrewards}_i}{\text{totalrewards}_i + \text{totalfailures}_i})^N )
 \end{align*}
 $$
  
@@ -140,7 +140,7 @@ Thereby, the conditional probability for a $r$ tuple being probed each time beyo
 $$
 \begin{align*}
 \hat{e_t} &= 1* (1 - (1 - p_{su}(r))^N) \\
-&=  1 - (1 - \frac{\text{total\_rewards}_i}{\text{total\_rewards}_i + \text{total\_failures}_i})^N 
+&=  1 - (1 - \frac{\text{totalrewards}_i}{\text{totalrewards}_i + \text{totalfailures}_i})^N 
 \end{align*}
 $$
 
@@ -152,15 +152,15 @@ For $j > 0$, probability for N+$j\text{th}$ probe in exploration is dependent on
 - the tuple was probed the first N times, with probability 1
 - the tuple was accumulated less than $N$ failures, with probability that will be derived below 
 
-Since rewards per probe are in {0,1} for success or failure: $$\text{num\_failures} = \text{num\_probes} - \text{num\_rewards}$$
+Since rewards per probe are in {0,1} for success or failure: $$\text{numfailures} = \text{numprobes} - \text{numrewards}$$
 Thereby the **conditional** probability that the N+$j\text{th}$ exploration probe passes the $N$-Failure condition, given the tuple was chosen for exploration and the tuple was probed the first N times, is: 
 $$
 \begin{aligned}
-\hat{e_t} &= P(\text{total\_failures}_i < N \text{, in } (N+j-1) \text{ probes}) \\
-    &= P(\text{total\_rewards}_i > (N+j-1) - N \text{, in }(N+j-1) \text{ probes}) \\
-    &= P(\text{total\_rewards}_i > (j-1)  \text{, in }(N+j-1) \text{ probes}) \\
-    &= P(\text{total\_rewards}_i \ge j \text{, in }(N+j-1) \text{ probes}) \\
-    &= \sum_{k = j}^{N+j - 1} P(\text{total\_rewards}_i = k \text{, in } (N+j-1) \text{ probes})\\
+\hat{e_t} &= P(\text{totalfailures}_i < N \text{, in } (N+j-1) \text{ probes}) \\
+    &= P(\text{totalrewards}_i > (N+j-1) - N \text{, in }(N+j-1) \text{ probes}) \\
+    &= P(\text{totalrewards}_i > (j-1)  \text{, in }(N+j-1) \text{ probes}) \\
+    &= P(\text{totalrewards}_i \ge j \text{, in }(N+j-1) \text{ probes}) \\
+    &= \sum_{k = j}^{N+j - 1} P(\text{totalrewards}_i = k \text{, in } (N+j-1) \text{ probes})\\
     &= \sum_{k = j}^{N+j - 1} \binom{N+j-1}{k} (p_{su}(r))^k (1 - p_{su}(r))^{(N+j-1)-k}
 \end{aligned}
 $$
@@ -170,8 +170,8 @@ Finally, given the arm's empirical match rate $p_{su}(r)$, the probability of th
  
 $$
 \begin{align*}
-e_t &= p_R(r)*1* P(\text{total\_failures}_i < N \text{, in } (N+j-1) \text{ probes}) \\
-&=  \frac{\text{exploration\_size}}{|R|}*\sum_{k = j}^{N+j - 1} \binom{N+j-1}{k} (p_{su}(r))^k (1 - p_{su}(r))^{(N+j-1)-k}
+e_t &= p_R(r)*1* P(\text{totalfailures}_i < N \text{, in } (N+j-1) \text{ probes}) \\
+&=  \frac{\text{explorationsize}}{|R|}*\sum_{k = j}^{N+j - 1} \binom{N+j-1}{k} (p_{su}(r))^k (1 - p_{su}(r))^{(N+j-1)-k}
 \end{align*}
 $$
 
@@ -188,7 +188,7 @@ Every tuple in the fixed exploitation cache is probed against every remaining op
 $$\hat{e_t} = p_{\text{exploit},i} $$
 
 The probability of this discrete event is as follows:
-$$e_t = p_R(r)*p_{\text{exploit},i}= \frac{\text{exploration\_size}}{|R|}* p_{\text{exploit},i}$$
+$$e_t = p_R(r)*p_{\text{exploit},i}= \frac{\text{explorationsize}}{|R|}* p_{\text{exploit},i}$$
 
  
 ## Estimate Update Procedure
@@ -196,13 +196,13 @@ For every probe in both phases, the arm's per-phase accumulators are updated usi
  
 $$\text{num}[i] \mathrel{+}= \frac{\text{reward}_t}{\hat{e_t}} \qquad \text{den}[i] \mathrel{+}= \frac{1}{\hat{e_t}}$$
  
-At the end of the round, exploration and exploitation accumulators are pooled per arm to compute an unbiased match rate. These rates are summed across all $n$ arms, multiplied by $|S|$ to project onto the full S relation, and scaled by $\frac{|R|}{\text{exploration\_size}}$ to extrapolate from the $n$ sampled arms to the full R relation. Here $n$ is the number of arms actually loaded into the exploration cache in the current round — the lesser of `exploration_size` and the number of tuples remaining in $R$ — which may be smaller than `exploration_size` in the final round when $R$ is exhausted early:
+At the end of the round, exploration and exploitation accumulators are pooled per arm to compute an unbiased match rate. These rates are summed across all $n$ arms, multiplied by $|S|$ to project onto the full S relation, and scaled by $\frac{|R|}{\text{explorationsize}}$ to extrapolate from the $n$ sampled arms to the full R relation. Here $n$ is the number of arms actually loaded into the exploration cache in the current round — the lesser of `exploration_size` and the number of tuples remaining in $R$ — which may be smaller than `exploration_size` in the final round when $R$ is exhausted early:
  
-$$\hat{J}_{\text{round}} = \sum_{i=1}^{n} \frac{\text{num\_explore}[i] + \text{num\_exploit}[i]}{\text{den\_explore}[i] + \text{den\_exploit}[i]} \times |S| \times \frac{|R|}{\text{exploration\_size}}$$
+$$\hat{J}_{\text{round}} = \sum_{i=1}^{n} \frac{\text{numexplore}[i] + \text{numexploit}[i]}{\text{denexplore}[i] + \text{denexploit}[i]} \times |S| \times \frac{|R|}{\text{explorationsize}}$$
 
 **Why we use $\hat{e_t}$ and multiply by $p_R(r)$, instead of using $e_t$:**
 
-Every probe event across phases is dependent on the selection of a tuple from $R$ for exploration with probability $p_R(r)$. Because this probability is identical for every probe, it multiplies every term in both `num[i]` and `den[i]` by the same constant. It therefore cancels exactly in the ratio `num[i] / den[i]`, leaving the pooled rate unchanged regardless of whether $p_R(r)$ is included in $e_t$ or not. The pooled ratio estimates the match probability *given* the tuple was selected for exploration if the first place with probability $p_R(r)$. The multiplier $\frac{|R|}{\text{exploration\_size}}$ scales the estimate for tuples in the round(exploration+exploitation) up to represent the full relation $R$. 
+Every probe event across phases is dependent on the selection of a tuple from $R$ for exploration with probability $p_R(r)$. Because this probability is identical for every probe, it multiplies every term in both `num[i]` and `den[i]` by the same constant. It therefore cancels exactly in the ratio `num[i] / den[i]`, leaving the pooled rate unchanged regardless of whether $p_R(r)$ is included in $e_t$ or not. The pooled ratio estimates the match probability *given* the tuple was selected for exploration if the first place with probability $p_R(r)$. The multiplier $\frac{|R|}{\text{explorationsize}}$ scales the estimate for tuples in the round(exploration+exploitation) up to represent the full relation $R$. 
  
 Across rounds, the join size estimate is the simple average of per-round estimates across all rounds:
  
