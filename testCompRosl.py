@@ -1,5 +1,3 @@
-from ROSLJoinPaperIntent import ROSL as ROSL_PaperIntent
-
 import csv
 import os
 import math
@@ -8,28 +6,28 @@ import matplotlib.pyplot as plt
 from typing import List, Dict
 
 # Import the ROSL variants
-# from HalfRandomActiveStateROSL import ROSL as ROSL_ActiveState
-# from HalfRandomSurvivalWeightingROSL import ROSL as ROSL_Survival
 from ROSLJoinPaper import ROSL as ROSL_Paper
-from ROSLJoinPaperIntent import ROSL as ROSL_PaperIntent
+from PooledEstROSL import ROSL as ROSL_PooledEstimator
 
 from BasicJoin import BasicJoin as StandardHashJoin
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 
-N_FAILURE_CONSTANT    = 100    
-EXPLORATION_SIZE      = 100   
-EXPLOITATION_SIZE     = 100   
+# N_FAILURE_CONSTANT    = [100, 1000]
+N_FAILURE_CONSTANT    = [100, 200]    
 
-CSV_LIMITS            = [1000, 5000, 10000]
+EXPLORATION_SIZE      = 1000   
+EXPLOITATION_SIZE     = [10, 100]   
+
+# CSV_LIMITS            = [5000, 10000]
+CSV_LIMITS            = [1000, 5000]
+
 
 # ─── Run Flags ───────────────────────────────────────────────────────────────
 
 RUN_BASIC_HASH        = True
-# RUN_ROSL_ActiveState  = True
-# RUN_ROSL_SURVIVAL     = True
 RUN_ROSL_PAPER        = True
-RUN_ROSL_PAPER_INTENT = True   # NEW
+RUN_ROSL_POOLED       = True   
 
 PRINT_PHASE_TABLE     = False
 
@@ -61,8 +59,8 @@ def load_csv(filepath, limit=None):
 
 # ─── Instrumentation Logic ───────────────────────────────────────────────────
 
-def run_instrumented_rosl(variant_name, rosl_class, table_r, table_s, kr, ks, true_total):
-    rosl = rosl_class(EXPLORATION_SIZE, EXPLOITATION_SIZE, N_FAILURE_CONSTANT, "file_r", kr, "file_s", ks)
+def run_instrumented_rosl(variant_name, rosl_class, table_r, table_s, kr, ks, true_total, exp_size, explt_size, n_fail):
+    rosl = rosl_class(exp_size, explt_size, n_fail, "file_r", kr, "file_s", ks)
     rosl.size_r, rosl.size_s = len(table_r), len(table_s)
     
     results = []
@@ -115,141 +113,196 @@ def run_instrumented_rosl(variant_name, rosl_class, table_r, table_s, kr, ks, tr
 
 JOIN_SCENARIOS = [
     {
-        "label": "IMDB self-join on director",
-        "file_r": "data/movies/imdb.csv", "key_r": "director",
-        "file_s": "data/movies/imdb.csv", "key_s": "director"
-    }
+        "label":     "IMDB self-join on director",
+        "file_r":    "data/movies/imdb.csv",
+        "key_r":     "director",
+        "display_r": ["imdbid", "title", "year", "director"],
+        "file_s":    "data/movies/imdb.csv",
+        "key_s":     "director",
+        "display_s": ["imdbid", "title", "year", "director"],
+        "pre_r":     None,
+        "pre_s":     None,
+    },
+    {
+        "label":     "Actors self-join on primaryProfession",
+        "file_r":    "data/movies/Actors.tsv",
+        "key_r":     "primaryProfession",
+        "display_r": ["nconst", "primaryName", "primaryProfession"],
+        "file_s":    "data/movies/Actors.tsv",
+        "key_s":     "primaryProfession",
+        "display_s": ["nconst", "primaryName", "primaryProfession"],
+        "pre_r":     None,
+        "pre_s":     None,
+    },
+    {
+        "label":     "Actors joined with IMDB on knownForTitles = imdbid",
+        "file_r":    "data/movies/Actors.tsv",
+        "key_r":     "_exploded_key",
+        "display_r": ["nconst", "primaryName", "birthYear", "primaryProfession", "_exploded_key"],
+        "file_s":    "data/movies/imdb.csv",
+        "key_s":     "_tconst",
+        "display_s": ["imdbid", "title", "year", "director"],
+        "pre_r":     lambda rows: explode_multi_key(rows, "knownForTitles"),
+        "pre_s":     lambda rows: [dict(list(r.items()) + [("_tconst", imdbid_to_tconst(r.get("imdbid")))]) for r in rows],
+    },
 ]
+
+# A distinct color palette for different scenarios
+SCENARIO_COLORS = ['#1f77b4', '#d62728', '#2ca02c', '#9467bd', '#ff7f0e', '#8c564b', '#e377c2']
 
 # ─── Main Loop ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     for limit in CSV_LIMITS:
-        print(f"\n{'='*80}\n  RUNNING WITH CSV_LIMIT = {limit}\n{'='*80}")
-        
-        for scenario in JOIN_SCENARIOS:
-            table_r = load_csv(scenario["file_r"], limit=limit)
-            table_s = load_csv(scenario["file_s"], limit=limit)
-            kr, ks = scenario["key_r"], scenario["key_s"]
-            
-            basic = StandardHashJoin(scenario["file_r"], kr, scenario["file_s"], ks)
-            true_total = len(basic.join(table_r, table_s))
-            print(f"  Scenario: {scenario['label']} | # Results per Standard Hash Join: {true_total}")
-
-            all_results = {}
-            stats = {}
-
-            # ROSL Paper
-            if RUN_ROSL_PAPER:
-                hist, out_count, est, err = run_instrumented_rosl(
-                    "Paper", ROSL_Paper, table_r, table_s, kr, ks, true_total
-                )
-                all_results["ROSL Paper"] = hist
-                stats["Original Paper ISPW"] = (out_count, est, err)
-            
-            # PaperIntent
-            if RUN_ROSL_PAPER_INTENT:
-                hist, out_count, est, err = run_instrumented_rosl(
-                    "PaperIntent", ROSL_PaperIntent, table_r, table_s, kr, ks, true_total
-                )
-                all_results["ROSL PaperIntent"] = hist
-                stats["Paper Intent ISPW"] = (out_count, est, err)
-
-            # # Active State
-            # if RUN_ROSL_ActiveState:
-            #     hist, out_count, est, err = run_instrumented_rosl(
-            #         "Active-State", ROSL_ActiveState, table_r, table_s, kr, ks, true_total
-            #     )
-            #     all_results["R-B ROSL*"] = hist
-            #     stats["Active-State IPW"] = (out_count, est, err)
-
-            # # Survival Weighting
-            # if RUN_ROSL_SURVIVAL:
-            #     hist, out_count, est, err = run_instrumented_rosl(
-            #         "Survival", ROSL_Survival, table_r, table_s, kr, ks, true_total
-            #     )
-            #     all_results["S-W ROSL**"] = hist
-            #     stats["Empirical Survival"] = (out_count, est, err)
-
-            # ── Plotting ──
-            plt.figure(figsize=(10, 6))
-            colors = {
-                'ROSL Paper': 'blue',
-                'R-B ROSL*': 'red',
-                'S-W ROSL**': 'green',
-                'ROSL PaperIntent': 'purple'
-            }
-            
-            for label, history in all_results.items():
-                x = [h['out'] for h in history]
-                y = [h['err'] for h in history]
-                color = colors[label]
-                plt.plot(x, y, label=label, color=color, alpha=0.6)
+        for n_fail in N_FAILURE_CONSTANT:
+            for explt_size in EXPLOITATION_SIZE:
+                exp_size = EXPLORATION_SIZE
                 
-                x_exp = [h['out'] for h in history if h['phase'] == 'Exploration']
-                y_exp = [h['err'] for h in history if h['phase'] == 'Exploration']
-                plt.scatter(x_exp, y_exp, color=color, marker='o', s=30)
+                # Setup the single figure for this hyperparameter set
+                plt.figure(figsize=(12, 8))
                 
-                x_explt = [h['out'] for h in history if h['phase'] == 'Exploitation']
-                y_explt = [h['err'] for h in history if h['phase'] == 'Exploitation']
-                plt.scatter(x_explt, y_explt, color=color, marker='s', s=45)
+                all_scenario_results = {}
+                all_scenario_stats = {}
+                
+                for s_idx, scenario in enumerate(JOIN_SCENARIOS):
+                    color = SCENARIO_COLORS[s_idx % len(SCENARIO_COLORS)]
+                    label = scenario["label"]
+                    
+                    table_r = load_csv(scenario["file_r"], limit=limit)
+                    table_s = load_csv(scenario["file_s"], limit=limit)
+                    kr, ks = scenario["key_r"], scenario["key_s"]
+                    
+                    basic = StandardHashJoin(scenario["file_r"], kr, scenario["file_s"], ks)
+                    true_total = len(basic.join(table_r, table_s))
+                    print(f"\n{'='*80}")
+                    print(f"\n  Scenario: {label} | # Results per Standard Hash Join: {true_total}")
+                    print(f"  RUNNING WITH HYPERPARAMETERS:")
+                    print(f"    CSV_LIMIT        = {limit}")
+                    print(f"    EXPLORATION_SIZE = {exp_size}")
+                    print(f"    EXPLOITATION_SIZE= {explt_size}")
+                    print(f"    N_FAILURE_CONST  = {n_fail}")
+                    print(f"{'='*80}")
 
-            plt.xlabel("% Output (Progress)")
-            plt.ylabel("% Error (Estimation Accuracy)")
-            plt.title(f"Accuracy vs Progress (Limit: {limit})")
-            plt.grid(True, linestyle='--', alpha=0.5)
-            plt.legend()
-            plt.figtext(0.1, 0.01,
-                "* R-B: 50/50 Random Exploration Cache & Active State Probe\n"
-                "** S-W: 50/50 Random Exploration Cache & Empirical Survival Weighting",
-                fontsize=8
-            )
-            
-            plot_path = os.path.join(RESULTS_DIR, f"chart_limit_{limit}.png")
-            plt.savefig(plot_path)
-            print(f"  Saved chart to {plot_path}")
+                    hist_paper, out_paper, est_paper, err_paper = [], 0, 0.0, 0.0
+                    hist_pool, out_pool, est_pool, err_pool = [], 0, 0.0, 0.0
 
-            # ── Terminal Output & CSV Export ──
-            csv_path = os.path.join(RESULTS_DIR, f"table_limit_{limit}.csv")
-            with open(csv_path, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow([
-                    "Round", "Phase",
-                    "ROSL Paper %O/%E",
-                    "R-B ROSL* %O/%E",
-                    "S-W ROSL** %O/%E",
-                    "ROSL PaperIntent %O/%E"
-                ])
-                
-                if PRINT_PHASE_TABLE:
-                    print(f"\n{'Round':<6} | {'Phase':<12} | {'Paper %Output/%Error':<20} | {'R-B %O/%E':<15} | {'S-W %O/%E':<15} | {'Intent %O/%E':<15}")
-                    print("-" * 100)
-                
-                max_rounds = max(len(h) for h in all_results.values()) // 2
-                for r in range(max_rounds):
-                    for p_idx, phase_name in enumerate(["Exploration", "Exploitation"]):
-                        idx = r * 2 + p_idx
-                        row_str = f"{r+1:<6} | {phase_name:<12}"
-                        csv_row = [r + 1, phase_name]
+                    # Run ROSL Paper
+                    if RUN_ROSL_PAPER:
+                        hist_paper, out_paper, est_paper, err_paper = run_instrumented_rosl(
+                            "Paper", ROSL_Paper, table_r, table_s, kr, ks, true_total,
+                            exp_size, explt_size, n_fail
+                        )
+                    
+                    # Run ROSL PooledEstimator
+                    if RUN_ROSL_POOLED:
+                        hist_pool, out_pool, est_pool, err_pool = run_instrumented_rosl(
+                            "PooledEstimator", ROSL_PooledEstimator, table_r, table_s, kr, ks, true_total,
+                            exp_size, explt_size, n_fail
+                        )
                         
-                        for algo in ["ROSL Paper", "R-B ROSL*", "S-W ROSL**", "ROSL PaperIntent"]:
-                            if algo in all_results and idx < len(all_results[algo]):
-                                h = all_results[algo][idx]
-                                cell_str = f"{h['out']:.1f}% / {h['err']:.1f}%"
-                                row_str += f" | {cell_str:<16}"
-                                csv_row.append(cell_str)
-                            else:
-                                row_str += " |      -          "
-                                csv_row.append("-")
+                    # Store data for CSV and terminal summary
+                    all_scenario_results[label] = {"Paper": hist_paper, "Pooled": hist_pool}
+                    all_scenario_stats[label] = {
+                        "TrueTotal": true_total,
+                        "Paper": (out_paper, est_paper, err_paper),
+                        "Pooled": (out_pool, est_pool, err_pool)
+                    }
+
+                    # ── Plotting logic for this specific scenario ──
+                    
+                    # Plot ROSL Paper (Dashed Line, Hollow Markers)
+                    if hist_paper:
+                        x = [h['out'] for h in hist_paper]
+                        y = [h['err'] for h in hist_paper]
+                        plt.plot(x, y, label=f"{label} (Paper)", color=color, linestyle='--', alpha=0.7)
+                        
+                        x_exp = [h['out'] for h in hist_paper if h['phase'] == 'Exploration']
+                        y_exp = [h['err'] for h in hist_paper if h['phase'] == 'Exploration']
+                        plt.scatter(x_exp, y_exp, color=color, marker='o', s=30, facecolors='none', edgecolors=color)
+                        
+                        x_explt = [h['out'] for h in hist_paper if h['phase'] == 'Exploitation']
+                        y_explt = [h['err'] for h in hist_paper if h['phase'] == 'Exploitation']
+                        plt.scatter(x_explt, y_explt, color=color, marker='s', s=30, facecolors='none', edgecolors=color)
+
+                    # Plot ROSL PooledEstimator (Solid Line, Filled Markers)
+                    if hist_pool:
+                        x = [h['out'] for h in hist_pool]
+                        y = [h['err'] for h in hist_pool]
+                        plt.plot(x, y, label=f"{label} (Pooled)", color=color, linestyle='-', alpha=0.9)
+                        
+                        x_exp = [h['out'] for h in hist_pool if h['phase'] == 'Exploration']
+                        y_exp = [h['err'] for h in hist_pool if h['phase'] == 'Exploration']
+                        plt.scatter(x_exp, y_exp, color=color, marker='o', s=45)
+                        
+                        x_explt = [h['out'] for h in hist_pool if h['phase'] == 'Exploitation']
+                        y_explt = [h['err'] for h in hist_pool if h['phase'] == 'Exploitation']
+                        plt.scatter(x_explt, y_explt, color=color, marker='s', s=45)
+
+                # ── Finalize Chart ──
+                plt.xlabel("% Output (Progress)")
+                plt.ylabel("% Error (Estimation Accuracy)")
+                
+                chart_title = (
+                    f"Accuracy vs Progress\n"
+                    f"Exploration Cache Limit: {exp_size} | Exploitation Cache Limit: {explt_size}\n"
+                    f"N-Failure Constant: {n_fail} | Input Relation Size Limit: {limit}"
+                )
+                plt.title(chart_title)
+                
+                plt.grid(True, linestyle='--', alpha=0.5)
+                # Position legend slightly outside the plot area if there are many scenarios
+                plt.legend(bbox_to_anchor=(1.02, 1), loc="upper left")
+                
+                # Adjust layout to fit legend and bottom text
+                plt.tight_layout(rect=[0, 0.08, 0.85, 1]) 
+                
+                plt.figtext(0.05, 0.02,
+                    "Circles: End of Exploration | Squares: End of Exploitation\n"
+                    "Dashed Line: ROSL Paper | Solid Line: ROSL PooledEstimator",
+                    fontsize=9
+                )
+                
+                filename_suffix = f"limit{limit}_exp{exp_size}_explt{explt_size}_nfail{n_fail}"
+                plot_path = os.path.join(RESULTS_DIR, f"chart_{filename_suffix}.png")
+                plt.savefig(plot_path)
+                print(f"\n  Saved chart to {plot_path}")
+                plt.close()
+
+                # ── Export Unified CSV ──
+                csv_path = os.path.join(RESULTS_DIR, f"table_{filename_suffix}.csv")
+                with open(csv_path, 'w', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Scenario", "Round", "Phase", "ROSL Paper %O/%E", "ROSL PooledEstimator %O/%E"])
+                    
+                    for label, results_dict in all_scenario_results.items():
+                        h_paper = results_dict.get("Paper", [])
+                        h_pool = results_dict.get("Pooled", [])
+                        max_rounds = max(len(h_paper), len(h_pool)) // 2
+                        
+                        for r in range(max_rounds):
+                            for p_idx, phase_name in enumerate(["Exploration", "Exploitation"]):
+                                idx = r * 2 + p_idx
+                                csv_row = [label, r + 1, phase_name]
                                 
-                        if PRINT_PHASE_TABLE:
-                            print(row_str)
-                        writer.writerow(csv_row)
-                        
-            print(f"\n  Saved detailed phase CSV table to {csv_path}")
+                                if idx < len(h_paper):
+                                    csv_row.append(f"{h_paper[idx]['out']:.1f}% / {h_paper[idx]['err']:.1f}%")
+                                else:
+                                    csv_row.append("-")
+                                    
+                                if idx < len(h_pool):
+                                    csv_row.append(f"{h_pool[idx]['out']:.1f}% / {h_pool[idx]['err']:.1f}%")
+                                else:
+                                    csv_row.append("-")
+                                    
+                                writer.writerow(csv_row)
+                                
+                print(f"  Saved detailed unified CSV table to {csv_path}")
 
-            # Print Comparison Summary
-            print("\n-- Estimate Comparison Summary " + "-" * 60)
-            print(f"  # Results per Standard Hash Join: {true_total}")
-            for variant, (out_count, est, err) in stats.items():
-                print(f"  {variant:<20} | Found: {out_count:<8} | Est: {est:<12.2f} | Error: {err:>7.2f}%")
+                # ── Print Comparison Summary ──
+                print("\n-- Estimate Comparison Summary " + "-" * 60)
+                for label, s in all_scenario_stats.items():
+                    print(f"  Scenario: {label} (True Total: {s['TrueTotal']})")
+                    if s.get("Paper") and s["Paper"][0] is not None:
+                        print(f"    ROSL Paper       | Found: {s['Paper'][0]:<8} | Est: {s['Paper'][1]:<12.2f} | Error: {s['Paper'][2]:>7.2f}%")
+                    if s.get("Pooled") and s["Pooled"][0] is not None:
+                        print(f"    ROSL PooledEstimator | Found: {s['Pooled'][0]:<8} | Est: {s['Pooled'][1]:<12.2f} | Error: {s['Pooled'][2]:>7.2f}%")

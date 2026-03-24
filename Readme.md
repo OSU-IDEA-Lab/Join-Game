@@ -2,14 +2,24 @@
 
 ## Table of Contents
 1. [Original Paper ISPW](#original-paper-ispw)
-2. [Modified Version Following Paper's Intent](#modified-version-following-papers-intent)
-3. [Half Random Exploitation Cache Approach](#half-random-exploitation-cache-approach)
-   - [With Active State Conditioning](#with-exploration-probe-probabilities-conditioned-on-the-active-state)
-   - [With Empirical Survival Weighting](#with-exploration-probe-probabilities-based-on-empirical-survival-weighting)
+2. [Pooled Rate Estimator](#pooled-rate-estimator)
 
 ---
 
 # Original Paper ISPW
+
+
+## Exploration Cache Duplicate Removal
+
+If the the number of tuples left in `R` limited the exploration cache size such that the exploration cache size is $\leq$ the exploitation cache size limit, then fill the exploitation cache with all exploration tuples. This must the maximum set of unique explotation tuples.
+
+Otherwise, it must be possible to fill the exploitation cache as follows:
+
+Each exploitation cache tuple is drawn randomly from the same distribution, which means it is possible to draw duplicates. After the cache is filled, every slot is compared with every other slot to check for duplicates. Duplicates are replaced by drawing another tuple from the same distrubution, which means duplicates in redraw is still possible. The proccess repeats until a complete pass finds zero duplicates.
+
+## Discrete Event
+
+The discrete event is a **single probe** (a join attempt between an $R$ tuple and an $S$ tuple).
 
 ## Probabilities by Case
 
@@ -18,7 +28,7 @@ The probability of selecting a random tuple for exploration is denoted by $p_R(r
 
 $$p_R(r) = \frac{\text{exploration\_size}}{|R|}$$
 
-### Exploration Probe (First N probes)
+### *Discrete Event Case*: Exploration Probe (First N probes)
 The probability that an exploration cache tuple is probed against an opposite relation tuple in the first N probes.
 
 $$
@@ -27,7 +37,7 @@ e_t = p_R(r) = \frac{\text{exploration\_size}}{|R|}
 \end{aligned}
 $$
 
-### Exploration Probe (Additional probes beyond N)
+### *Discrete Event Case*: Exploration Probe (Additional probes beyond N)
 An exploration cache tuple is only probed against an additional opposite relation tuple after the first N probes if:
 - the tuple was chosen for exploration, with probability $p_R(r) = \frac{\text{exploration\_size}}{|R|}$
 - the tuple had at least one success in the first N probes, with probability (where $p_{su}(r)$ denotes the empirical success rate):
@@ -35,7 +45,8 @@ An exploration cache tuple is only probed against an additional opposite relatio
 $$
 \begin{aligned}
 &1 - (1 - p_{su}(r))^N\\
-= &1 - \left(1 - \frac{\text{reward}_i}{\text{reward}_i + \text{failure}_i}\right)^N
+= &1 - \left(1 - \frac{\text{total\_rewards}_i}{\text{total\_probes}_i}\right)^N\\
+= &1 - \left(1 - \frac{\text{total\_rewards}_i}{\text{total\_rewards}_i + \text{total\_failures}_i}\right)^N
 \end{aligned}
 $$
 
@@ -44,31 +55,25 @@ Thereby, the probability that an exploration cache tuple is probed against an ad
 $$
 \begin{aligned}
 e_t &= p_R(r) \times \left[1 - (1 - p_{su}(r))^N\right] \\
-&= \frac{\text{exploration\_size}}{|R|} \times \left[1 - \left(1 - \frac{\text{reward}_i}{\text{reward}_i + \text{failure}_i}\right)^N\right]
+&= \frac{\text{exploration\_size}}{|R|} \times \left[1 - \left(1 - \frac{\text{total\_rewards}_i}{\text{total\_rewards}_i + \text{total\_failures}_i}\right)^N\right]
 \end{aligned}
 $$
 
 ### Exploitation Selection
 The probability of selecting a tuple from the exploration cache for exploitation, randomly proportional to their exploration reward, is:
 
-$$\frac{\text{reward}_i}{\sum \text{rewards}}$$
+$$\frac{\text{total\_rewards}_i}{\sum \text{rewards}}$$
 
 with zero rewards smoothed to $0.01$ so that all exploration tuples have a non-zero chance of being selected.
 
-### Exploitation Probe
+### *Discrete Event Case*: Exploitation Probe
 All exploitation cache tuples will be probed against all remaining opposite relation tuples beyond the last opposite relation tuple tried by any exploration cache tuple in exploration. The probability that an exploitation cache tuple is probed against an opposite relation tuple in exploitation is the same probability that it was selected for exploitation:
 
-$$\frac{\text{reward}_i}{\sum \text{rewards}}$$
+$$\frac{\text{total\_rewards}_i}{\sum \text{rewards}}$$
 
 with zero rewards smoothed to $0.01$ so that all exploration tuples have a non-zero chance of being selected.
 
-## Exploration Cache Duplicate Removal
-
-After the cache fills via sequential `next(R_iter)` draws, a post-fill deduplication pass runs before any probing begins. Every pair of loaded slots is compared for full row equality (identical dict content). Any duplicate slot is replaced by drawing the next tuple from `R_iter` using the same mechanism as the original fill. The replacement is not checked in the current pass; it is deferred to the next iteration. The loop repeats until a complete pass finds zero duplicates or `R` is exhausted. If `R` is exhausted before the cache is clean, the cache is used as-is with whatever duplicates remain.
-
-## Estimate Update Procedure's Discrete Event
-
-The discrete event is a **single probe** (a join attempt between an $R$ tuple and an $S$ tuple).
+## Estimation Method
 
 For each probe, Inverse-Selection-Probability-Weighting (ISPW) is applied using an adaptive variance-stabilizing multiplier ($h_t = \sqrt{e_t / T}$). The outcome ($\Gamma_t = Y_t / e_t$) is weighted by $h_t$ and added to the arm's local numerator, while $h_t$ is added to the denominator.
 
@@ -78,186 +83,127 @@ $$\hat{J} = \frac{\text{global\_num}}{\text{global\_den}} \times |R| \times |S| 
 
 ---
 
-# Modified Version Following Paper's Intent
+# Pooled Rate Estimator
 
-## Description of Fixes
+## Exploration Cache Duplicate Prevention
 
-### The "Double Division" Fix
-The original code divided the final estimated count by the sample size (`global_den`) a second time. The fix removes this division, returning `q_hat * size_r * size_s`. This deviates from the literal instruction in Section 4.2.4 of the paper, which states to multiply by $\frac{|R||S|}{|J|}$. However, because `q_hat` is already a mean probability, dividing by the sample size again shrinks the estimate incorrectly. The fix aligns with the paper's true statistical intent to use ISPW to find a sample mean and extrapolate it by the pure Cartesian population size.
+If the the number of tuples left in `R` limited the exploration cache size such that the exploration cache size is $\leq$ the exploitation cache size limit, then fill the exploitation cache with all exploration tuples. This must the maximum set of unique explotation tuples.
 
-### The "Shared Iterator" Fix
-The fix instantiates a single `S_iter` at the start of the round and passes it continuously through both exploration and exploitation, effectively partitioning table $S$. This deviates from Section 3.2.4 of the paper, which explicitly instructs to sequentially scan $S$ "from the beginning" during exploitation. The literal instruction causes the algorithm to evaluate the exact same pairs twice, manufacturing duplicate rows that do not exist in the base tables. The fix aligns with the paper's intent to balance exploration and exploitation without violating fundamental relational database data integrity.
+Otherwise, it must be possible to fill the exploitation cache without duplicates as follows:
 
-### The "Double Scaling" Fix
-This fix removes the exploration selection probability ($p_R$) from the `e_t` calculation in both exploration and exploitation, leaving only the survival or trial probability. This deviates from the literal interpretation of ISPW, which suggests dividing by the product of *all* probabilistic selection factors immediately. The fix aligns with the paper's intent by recognizing the codebase's architecture: a blanket extrapolation multiplier ($|R| \times |S|$) is already applied at the end of every round. Removing the early scaling prevents the exploration selection factor from being applied twice and distorting the estimate.
+The exploitation cache is constructed duplicate-free, rather than being duplicate-free by post fill inspection and replacement. 
 
+Each tuple starts with a weight equal to its incremented exploration phase rewards. To select tuples, the algorithm:
+- generates a random treshold in the range of 1 to the sum of all weights of unchosen tuples
+- iterates through tuples and accumulates their weights, selecting the first tuple whose weight brings the cumulatitive weight to the treshold
+
+After an tuple is selected, its weight is zeroed. This limits subsequent selections to unchosen tuples. 
+
+## Discrete Event
+ 
+The discrete event is a **single probe** (one $(r_i, s_j)$ join attempt).
+ 
 ## Probabilities by Case
-
-### Exploration Selection
-Same as Original. $p_R(r) = \frac{\text{exploration\_size}}{|R|}$.
-
-### Exploration Probe (First N probes)
-With $p_R$ removed from $e_t$ per the Double Scaling Fix, each arm is treated as certain to be probed once loaded:
-
-$$e_t = 1.0$$
-
-### Exploration Probe (Additional probes beyond N)
-With $p_R$ removed per the Double Scaling Fix, only the bare survival factor remains:
-
-$$e_t = 1 - (1 - p_{su}(r))^N = 1 - \left(1 - \frac{\text{reward}_i}{\text{reward}_i + \text{failure}_i}\right)^N$$
-
-### Exploitation Selection
-Exploitation selection uses Laplace add-one smoothing instead of the piecewise zero-guard of the Original Paper version. The denominator is $n + \sum \text{rewards}$, where $n$ is the number of arms actually loaded into the cache in the current round (not `exploration_size`), ensuring all $n$ probabilities sum to exactly 1:
-
-$$\frac{\text{reward}_i + 1}{n + \sum \text{rewards}}$$
-
-### Exploitation Probe
-Each exploitation arm is probed against at most one S tuple per round (uniqueness guarantee — see below). The probability that a given arm is probed against a given S tuple is its Laplace-smoothed selection probability at the moment of the draw, using the `total_weight` that reflects only arms still eligible at that point:
-
-$$e_t = \frac{\text{reward}_i + 1}{\text{total\_weight at draw time}}$$
-
-## Exploration Cache Duplicate Removal
-
-Duplicates in the exploitation phase are **prevented** rather than removed. Each arm is held in a mutable `arm_weights` array initialised to `reward_i + 1`. After an arm is selected for a given S tuple, its weight is set to 0 and `total_weight` is decremented by that weight. Subsequent draws use the reduced `total_weight`, making it impossible for the same arm to be selected for a second S tuple in the same round. Exploitation stops when `total_weight` reaches 0 (all arms consumed) or S is exhausted, whichever comes first.
-
-## Corrected Version's Estimate Update Procedure's Discrete Event
-
-The discrete event remains a **single probe**. The join size updates are still computed using the variance-stabilized ISPW formula ($\Gamma_t$ and $h_t$), and the local metadata is still folded directly into the **global estimate accumulator**. The critical changes are:
-
-1. `e_t` values no longer include $p_R$, preventing the exploration selection factor from being squared.
-2. The global estimate is correctly extrapolated by multiplying the global mean probability (`global_num / global_den`) by the Cartesian product ($|R| \times |S|$), eliminating the double-division bug:
-
-$$\hat{J} = \frac{\text{global\_num}}{\text{global\_den}} \times |R| \times |S|$$
-
----
-
-# ROSL Join Algorithm Variants: Probability Models and Estimation Methods
-
-## Table of Contents
-1. [Original Paper ISPW](#original-paper-ispw)
-2. [Modified Version Following Paper's Intent](#modified-version-following-papers-intent)
-3. [Half Random Exploitation Cache Approach](#half-random-exploitation-cache-approach)
-   - [With Active State Conditioning](#with-exploration-probe-probabilities-conditioned-on-the-active-state)
-   - [With Empirical Survival Weighting](#with-exploration-probe-probabilities-based-on-empirical-survival-weighting)
-
----
-
-# Original Paper ISPW
-
-## Probabilities by Case
-
+ 
 ### Exploration Selection
 The probability of selecting a random tuple for exploration is denoted by $p_R(r)$.
-
+ 
 $$p_R(r) = \frac{\text{exploration\_size}}{|R|}$$
+ 
+### *Discrete Event Case*: Exploration Probe (in First N probes per tuple)
+The dependent probability that a tuple is probed each of the first N times in exploration, given that it was selected for exploration, is 1. 
 
-### Exploration Probe (First N probes)
-The probability that an exploration cache tuple is probed against an opposite relation tuple in the first N probes.
+Thereby, the overall probability of that a tuple is probed the first N times in exploration is
+$$e_t = p_R(r)*1 = \frac{\text{exploration\_size}}{|R|}$$
+ 
+Since all discrete events are dependent on tuple $r$ being chosen for exploration, we will define $\hat{e_t}$ as conditional probability for discrete events given that the $r$ tuple has already been selected for exploration.
+ 
+$$\hat{e_t} = 1.0$$
+ 
+### *Discrete Event Case*: Exploration Probe (Additional probes beyond N) (Curr Version)
+*Note: Tested in current implementation, but suspected to only be correct for N+1th probe and not further probes. See following section for planned correction.*
 
+Probability for each probe beyond N times in exploration is dependent on the probability that the tuple was chosen for exploration and the probability probed the first N times. 
+
+Given these preconditions, an arm continues to be probed beyond N only if it accumulated at least one success within its first N probes, meaning it was not retired by the N-failure condition. Given the arm's empirical match rate $p_{su}(r)$, the probability of this discrete event is as follows:
+ 
+$$
+\begin{align*}
+e_t &= p_R(r)*1*(1 - (1 - p_{su}(r))^N) \\
+&=  \frac{\text{exploration\_size}}{|R|}*(1 - (1 - \frac{\text{total\_rewards}_i}{\text{total\_probes}_i})^N )\\
+&=  \frac{\text{exploration\_size}}{|R|}*(1 - (1 - \frac{\text{total\_rewards}_i}{\text{total\_rewards}_i + \text{total\_failures}_i})^N )
+\end{align*}
+$$
+ 
+Thereby, the conditional probability for a $r$ tuple being probed each time beyond the first N probes, given that the $r$ tuple has already been selected for exploration, is just dependent on having been probed the first N times with probability 1 as follows:
+ 
+$$
+\begin{align*}
+\hat{e_t} &= 1* (1 - (1 - p_{su}(r))^N) \\
+&=  1 - (1 - \frac{\text{total\_rewards}_i}{\text{total\_rewards}_i + \text{total\_failures}_i})^N 
+\end{align*}
+$$
+
+### *Discrete Event Case*: Exploration Probe (Additional probes beyond N) (To be implemented)
+*Note: Untested correction, suspected to correct probability for probes beyond N+1th)*
+
+For $j > 0$, probability for N+$j\text{th}$ probe in exploration is dependent on the following three conditions:
+- the tuple was chosen for exploration, with probability $p_R(r)$
+- the tuple was probed the first N times, with probability 1
+- the tuple was accumulated less than $N$ failures, with probability that will be derived below 
+
+Since rewards per probe are in {0,1} for success or failure: $$\text{num\_failures} = \text{num\_probes} - \text{num\_rewards}$$
+Thereby the **conditional** probability that the N+$j\text{th}$ exploration probe passes the $N$-Failure condition, given the tuple was chosen for exploration and the tuple was probed the first N times, is: 
 $$
 \begin{aligned}
-e_t = p_R(r) = \frac{\text{exploration\_size}}{|R|}
+\hat{e_t} &= P(\text{total\_failures}_i < N \text{, in } (N+j-1) \text{ probes}) \\
+    &= P(\text{total\_rewards}_i > (N+j-1) - N \text{, in }(N+j-1) \text{ probes}) \\
+    &= P(\text{total\_rewards}_i > (j-1)  \text{, in }(N+j-1) \text{ probes}) \\
+    &= P(\text{total\_rewards}_i \ge j \text{, in }(N+j-1) \text{ probes}) \\
+    &= \sum_{k = j}^{N+j - 1} P(\text{total\_rewards}_i = k \text{, in } (N+j-1) \text{ probes})\\
+    &= \sum_{k = j}^{N+j - 1} \binom{N+j-1}{k} (p_{su}(r))^k (1 - p_{su}(r))^{(N+j-1)-k}
 \end{aligned}
 $$
 
-### Exploration Probe (Additional probes beyond N)
-An exploration cache tuple is only probed against an additional opposite relation tuple after the first N probes if:
-- the tuple was chosen for exploration, with probability $p_R(r) = \frac{\text{exploration\_size}}{|R|}$
-- the tuple had at least one success in the first N probes, with probability (where $p_{su}(r)$ denotes the empirical success rate):
 
+Finally, given the arm's empirical match rate $p_{su}(r)$, the probability of this discrete event is as follows:
+ 
 $$
-\begin{aligned}
-&1 - (1 - p_{su}(r))^N\\
-= &1 - \left(1 - \frac{\text{reward}_i}{\text{reward}_i + \text{failure}_i}\right)^N
-\end{aligned}
-$$
-
-Thereby, the probability that an exploration cache tuple is probed against an additional opposite relation tuple after the first N probes is:
-
-$$
-\begin{aligned}
-e_t &= p_R(r) \times \left[1 - (1 - p_{su}(r))^N\right] \\
-&= \frac{\text{exploration\_size}}{|R|} \times \left[1 - \left(1 - \frac{\text{reward}_i}{\text{reward}_i + \text{failure}_i}\right)^N\right]
-\end{aligned}
+\begin{align*}
+e_t &= p_R(r)*1* P(\text{total\_failures}_i < N \text{, in } (N+j-1) \text{ probes}) \\
+&=  \frac{\text{exploration\_size}}{|R|}*\sum_{k = j}^{N+j - 1} \binom{N+j-1}{k} (p_{su}(r))^k (1 - p_{su}(r))^{(N+j-1)-k}
+\end{align*}
 $$
 
 ### Exploitation Selection
-The probability of selecting a tuple from the exploration cache for exploitation, randomly proportional to their exploration reward, is:
+An exploitation cache of up to `exploitation_size` tuples is built as described above. Each tuple's selection probability is **conditional** given selection for exploration, influenced by previously selected tuples, and fixed at selection time as follows:
+ 
+$$
+p_{\text{exploit},i} = \frac{\text{explorationRewards}_i + 1}{ \text{explorationSize} - \text{numPrevChosen} + \sum_{j \in \text{Unchosen}} \text{explorationRewards}_j}
+$$
+ 
+### *Discrete Event Case*: Exploitation Probe
+Every tuple in the fixed exploitation cache is probed against every remaining opposite relation tuple following the last probed in by any exploration cache tuple in exploration. Given that a tuple was selected for exploration, the **conditional** probability that a the tuple is probed against any opposite relation tuple in exploitation is the probability that the tuple was selected for exploitation; this probability is the tuple specific probability that was fixed at selection time.
+ 
+$$\hat{e_t} = p_{\text{exploit},i} $$
 
-$$\frac{\text{reward}_i}{\sum \text{rewards}}$$
+The probability of this discrete event is as follows:
+$$e_t = p_R(r)*p_{\text{exploit},i}= \frac{\text{exploration\_size}}{|R|}* p_{\text{exploit},i}$$
 
-with zero rewards smoothed to $0.01$ so that all exploration tuples have a non-zero chance of being selected.
+ 
+## Estimate Update Procedure
+For every probe in both phases, the arm's per-phase accumulators are updated using a Horvitz-Thompson weighting without any variance-stabilizing multiplier. Here $\text{reward}_t \in \{0, 1\}$ is the binary match outcome of the probe, and $\hat{e_t}$ is the probability of the probe given selection for exploration as defined for each case above:
+ 
+$$\text{num}[i] \mathrel{+}= \frac{\text{reward}_t}{\hat{e_t}} \qquad \text{den}[i] \mathrel{+}= \frac{1}{\hat{e_t}}$$
+ 
+At the end of the round, exploration and exploitation accumulators are pooled per arm to compute an unbiased match rate. These rates are summed across all $n$ arms, multiplied by $|S|$ to project onto the full S relation, and scaled by $\frac{|R|}{\text{exploration\_size}}$ to extrapolate from the $n$ sampled arms to the full R relation. Here $n$ is the number of arms actually loaded into the exploration cache in the current round — the lesser of `exploration_size` and the number of tuples remaining in $R$ — which may be smaller than `exploration_size` in the final round when $R$ is exhausted early:
+ 
+$$\hat{J}_{\text{round}} = \sum_{i=1}^{n} \frac{\text{num\_explore}[i] + \text{num\_exploit}[i]}{\text{den\_explore}[i] + \text{den\_exploit}[i]} \times |S| \times \frac{|R|}{\text{exploration\_size}}$$
 
-### Exploitation Probe
-All exploitation cache tuples will be probed against all remaining opposite relation tuples beyond the last opposite relation tuple tried by any exploration cache tuple in exploration. The probability that an exploitation cache tuple is probed against an opposite relation tuple in exploitation is the same probability that it was selected for exploitation:
+**Why we use $\hat{e_t}$ and multiply by $p_R(r)$, instead of using $e_t$:**
 
-$$\frac{\text{reward}_i}{\sum \text{rewards}}$$
-
-with zero rewards smoothed to $0.01$ so that all exploration tuples have a non-zero chance of being selected.
-
-## Exploration Cache Duplicate Removal
-
-After the cache fills via sequential `next(R_iter)` draws, a post-fill deduplication pass runs before any probing begins. Every pair of loaded slots is compared for full row equality (identical dict content). Any duplicate slot is replaced by drawing the next tuple from `R_iter` using the same mechanism as the original fill. The replacement is not checked in the current pass; it is deferred to the next iteration. The loop repeats until a complete pass finds zero duplicates or `R` is exhausted. If `R` is exhausted before the cache is clean, the cache is used as-is with whatever duplicates remain.
-
-## Discrete Event
-
-The discrete event is a **single probe** (a join attempt between an $R$ tuple and an $S$ tuple).
-
-For each probe, Inverse-Selection-Probability-Weighting (ISPW) is applied using an adaptive variance-stabilizing multiplier ($h_t = \sqrt{e_t / T}$). The outcome ($\Gamma_t = Y_t / e_t$) is weighted by $h_t$ and added to the arm's local numerator, while $h_t$ is added to the denominator.
-
-At the end of each phase, per-arm accumulators (`ispw_num[i]`, `ispw_den[i]`) are folded **directly** into a global estimate accumulator (`global_num`, `global_den`) and then zeroed. The final join size is computed entirely from this global mean probability:
-
-$$\hat{J} = \frac{\text{global\_num}}{\text{global\_den}} \times |R| \times |S| \mathbin{/} \text{global\_den}$$
-
----
-
-# Modified Version Following Paper's Intent
-
-## Description of Fixes
-
-### The "Double Division" Fix
-The original code divided the final estimated count by the sample size (`global_den`) a second time. The fix removes this division, returning `q_hat * size_r * size_s`. This deviates from the literal instruction in Section 4.2.4 of the paper, which states to multiply by $\frac{|R||S|}{|J|}$. However, because `q_hat` is already a mean probability, dividing by the sample size again shrinks the estimate incorrectly. The fix aligns with the paper's true statistical intent to use ISPW to find a sample mean and extrapolate it by the pure Cartesian population size.
-
-### The "Shared Iterator" Fix
-The fix instantiates a single `S_iter` at the start of the round and passes it continuously through both exploration and exploitation, effectively partitioning table $S$. This deviates from Section 3.2.4 of the paper, which explicitly instructs to sequentially scan $S$ "from the beginning" during exploitation. The literal instruction causes the algorithm to evaluate the exact same pairs twice, manufacturing duplicate rows that do not exist in the base tables. The fix aligns with the paper's intent to balance exploration and exploitation without violating fundamental relational database data integrity.
-
-### The "Double Scaling" Fix
-This fix removes the exploration selection probability ($p_R$) from the `e_t` calculation in both exploration and exploitation, leaving only the survival or trial probability. This deviates from the literal interpretation of ISPW, which suggests dividing by the product of *all* probabilistic selection factors immediately. The fix aligns with the paper's intent by recognizing the codebase's architecture: a blanket extrapolation multiplier ($|R| \times |S|$) is already applied at the end of every round. Removing the early scaling prevents the exploration selection factor from being applied twice and distorting the estimate.
-
-## Probabilities by Case
-
-### Exploration Selection
-Same as Original. $p_R(r) = \frac{\text{exploration\_size}}{|R|}$.
-
-### Exploration Probe (First N probes)
-With $p_R$ removed from $e_t$ per the Double Scaling Fix, each arm is treated as certain to be probed once loaded:
-
-$$e_t = 1.0$$
-
-### Exploration Probe (Additional probes beyond N)
-With $p_R$ removed per the Double Scaling Fix, only the bare survival factor remains:
-
-$$e_t = 1 - (1 - p_{su}(r))^N = 1 - \left(1 - \frac{\text{reward}_i}{\text{reward}_i + \text{failure}_i}\right)^N$$
-
-### Exploitation Selection
-Exploitation selection uses Laplace add-one smoothing instead of the piecewise zero-guard of the Original Paper version. The denominator is $n + \sum \text{rewards}$, where $n$ is the number of arms actually loaded into the cache in the current round (not `exploration_size`), ensuring all $n$ probabilities sum to exactly 1:
-
-$$\frac{\text{reward}_i + 1}{n + \sum \text{rewards}}$$
-
-### Exploitation Probe
-Each exploitation arm is probed against at most one S tuple per round (uniqueness guarantee — see below). The probability that a given arm is probed against a given S tuple is its Laplace-smoothed selection probability at the moment of the draw, using the `total_weight` that reflects only arms still eligible at that point:
-
-$$e_t = \frac{\text{reward}_i + 1}{\text{total\_weight at draw time}}$$
-
-## Exploration Cache Duplicate Removal
-
-Duplicates in the exploitation phase are **prevented** rather than removed. Each arm is held in a mutable `arm_weights` array initialised to `reward_i + 1`. After an arm is selected for a given S tuple, its weight is set to 0 and `total_weight` is decremented by that weight. Subsequent draws use the reduced `total_weight`, making it impossible for the same arm to be selected for a second S tuple in the same round. Exploitation stops when `total_weight` reaches 0 (all arms consumed) or S is exhausted, whichever comes first.
-
-## Discrete Event
-
-The discrete event remains a **single probe**. The join size updates are still computed using the variance-stabilized ISPW formula ($\Gamma_t$ and $h_t$), and the local metadata is still folded directly into the **global estimate accumulator**. The critical changes are:
-
-1. `e_t` values no longer include $p_R$, preventing the exploration selection factor from being squared.
-2. The global estimate is correctly extrapolated by multiplying the global mean probability (`global_num / global_den`) by the Cartesian product ($|R| \times |S|$), eliminating the double-division bug:
-
-$$\hat{J} = \frac{\text{global\_num}}{\text{global\_den}} \times |R| \times |S|$$
+Every probe event across phases is dependent on the selection of a tuple from $R$ for exploration with probability $p_R(r)$. Because this probability is identical for every probe, it multiplies every term in both `num[i]` and `den[i]` by the same constant. It therefore cancels exactly in the ratio `num[i] / den[i]`, leaving the pooled rate unchanged regardless of whether $p_R(r)$ is included in $e_t$ or not. The pooled ratio estimates the match probability *given* the tuple was selected for exploration if the first place with probability $p_R(r)$. The multiplier $\frac{|R|}{\text{exploration\_size}}$ scales the estimate for tuples in the round(exploration+exploitation) up to represent the full relation $R$. 
+ 
+Across rounds, the join size estimate is the simple average of per-round estimates across all rounds:
+ 
+$$\hat{J} = \frac{1}{K} \sum_{k=1}^{K} \hat{J}_{\text{round},k}$$

@@ -64,6 +64,34 @@ class ROSL:
             except StopIteration:
                 break
 
+        # ── Duplicate removal ────────────────────────────────────────────────
+        # After the cache fills, scan every pair of loaded slots for duplicate
+        # rows (identical dict content). Any duplicate slot is replaced with
+        # the next tuple from R_iter using the same next(R_iter) mechanism as
+        # the original fill. Repeat until a full O(n²) pass finds no duplicates
+        # or R is exhausted.
+        r_exhausted = False
+        while not r_exhausted:
+            duplicate_found = False
+            seen = {}  # maps frozenset(row.items()) -> first slot index
+            for i in range(self.curr_exploration_loaded):
+                row = self.exploration_cache[i]
+                key = frozenset(row.items())
+                if key in seen:
+                    # Slot i is a duplicate of slot seen[key]; replace it
+                    duplicate_found = True
+                    try:
+                        self.exploration_cache[i] = next(R_iter)
+                        # New row is checked for duplicates in the next pass
+                    except StopIteration:
+                        r_exhausted = True
+                        break
+                else:
+                    seen[key] = i
+            if not duplicate_found:
+                break  # Clean pass — no duplicates remain
+        # ── End duplicate removal ────────────────────────────────────────────
+
         counter = self.curr_exploration_loaded
         while counter > 0:
             try:
@@ -85,46 +113,99 @@ class ROSL:
 
     def exploitation(self, R_iter, S_iter, results):
         """
-        ROSL exploitation with probabilistic selection (Section 4.1.2).
+        ROSL exploitation: build a fixed exploitation cache upfront, then probe
+        every remaining S-row against every arm in that cache.
 
-        "at each step of the exploitation phase of Γ, ROSL picks tuples of R
-        that are explored in Γ randomly proportional to their reward"
+        Phase 1 — Cache construction:
+            Selection draws from a fixed distribution over all n exploration arms:
+                w_i = reward_i  if reward_i > 0  else  1
+                W   = sum of all w_i  (fixed for every draw)
+                p_i = w_i / W
 
-        e_t for each probe = smoothed_reward_i / total_smoothed_rewards,
-        i.e. the probability the selected arm was chosen.
+            Two cases:
+
+            Case A — exploration cache exhausted R (n <= exploitation_size):
+                Every exploration arm is used directly as the exploitation cache.
+                This is the maximum possible set of unique arms and no draws are
+                needed.
+
+            Case B — n > exploitation_size:
+                exploitation_size slots are filled by drawing WITH replacement
+                from the fixed distribution (same W every draw, same p_i every
+                draw). After filling, every slot is compared with every other
+                slot for full-row equality. Any duplicate slot is replaced by
+                drawing again from the same fixed distribution. The process
+                repeats until a complete pass finds zero duplicates.
+
+            e_t for every probe of arm i in Phase 2 is the per-draw selection
+            probability from the fixed distribution: p_i = w_i / W.
+
+        Phase 2 — S scan:
+            Every remaining S-row is probed against every arm in the fixed
+            exploitation cache. ISPW is updated per physical probe using the
+            arm's fixed e_t from Phase 1.
         """
         if self.curr_exploration_loaded == 0:
             return
 
-        # Build smoothed reward distribution over explored tuples.
-        # Zero rewards are smoothed to 0.01 so every arm has a non-zero
-        # selection probability.
-        smoothed = [(i, self.reward[i] if self.reward[i] > 0 else 0.01)
-                    for i in range(self.curr_exploration_loaded)]
-        total_smoothed = sum(r for _, r in smoothed)
+        n = self.curr_exploration_loaded
 
-        for s_row in S_iter:
-            # Probabilistically select ONE tuple at each step
-            rng = random.random() * total_smoothed
-            cumsum = 0.0
-            selected_idx = smoothed[-1][0]          # fallback to last arm
-            selected_smoothed_reward = smoothed[-1][1]
-            for idx, sr in smoothed:
-                cumsum += sr
-                if rng <= cumsum:
-                    selected_idx = idx
-                    selected_smoothed_reward = sr
+        # Fixed selection weights: reward_i if nonzero, else 1.
+        # W is constant for every draw — the same distribution is used for
+        # every slot fill and every replacement draw.
+        weights     = [self.reward[i] if self.reward[i] > 0 else 1 for i in range(n)]
+        W           = float(sum(weights))
+        # e_t per arm — fixed, computed once from the static distribution
+        e_t_by_arm  = [weights[i] / W for i in range(n)]
+
+        # ── Phase 1: build exploitation cache ────────────────────────────────
+        if n <= self.exploitation_size:
+            # Case A: R was exhausted filling the exploration cache; every
+            # exploration arm is unique by construction (dedup already ran),
+            # so use all n arms directly.
+            exploit_slots = list(range(n))
+        else:
+            # Case B: draw exploitation_size slots with replacement, then
+            # iteratively replace duplicates until the cache is clean.
+            def draw_one():
+                """Draw one slot index from the fixed distribution."""
+                rng = random.random() * W
+                cumsum = 0.0
+                for i in range(n):
+                    cumsum += weights[i]
+                    if rng <= cumsum:
+                        return i
+                return n - 1  # fallback
+
+            exploit_slots = [draw_one() for _ in range(self.exploitation_size)]
+
+            # Post-fill dedup: replace duplicate slots by redrawing from the
+            # same fixed distribution. Repeat until a full pass is clean.
+            while True:
+                duplicate_found = False
+                seen = {}
+                for pos in range(len(exploit_slots)):
+                    slot = exploit_slots[pos]
+                    row_key = frozenset(self.exploration_cache[slot].items())
+                    if row_key in seen:
+                        duplicate_found = True
+                        exploit_slots[pos] = draw_one()
+                        # New slot checked in next pass
+                    else:
+                        seen[row_key] = pos
+                if not duplicate_found:
                     break
 
-            # e_t = probability this arm was selected for exploitation
-            e_t = selected_smoothed_reward / total_smoothed
-
-            r_row = self.exploration_cache[selected_idx]
-            if str(r_row[self.key_r]) == str(s_row[self.key_s]):
-                results.append((r_row, s_row))
-                self._update_ispw(selected_idx, 1, e_t)
-            else:
-                self._update_ispw(selected_idx, 0, e_t)
+        # ── Phase 2: scan remaining S against the fixed exploitation cache ──
+        for s_row in S_iter:
+            for slot_idx in exploit_slots:
+                r_row = self.exploration_cache[slot_idx]
+                e_t   = e_t_by_arm[slot_idx]
+                if str(r_row[self.key_r]) == str(s_row[self.key_s]):
+                    results.append((r_row, s_row))
+                    self._update_ispw(slot_idx, 1, e_t)
+                else:
+                    self._update_ispw(slot_idx, 0, e_t)
 
         # Fold per-arm ISPW accumulators directly into the global accumulator
         self._fold_into_global()
