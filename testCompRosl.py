@@ -34,7 +34,7 @@ PRINT_PHASE_TABLE     = False
 RESULTS_DIR = "resultsROSL"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-# ─── File Utils ──────────────────────────────────────────────────────────────
+# ─── File Utils & Pre-Processing ─────────────────────────────────────────────
 
 def find_file(filepath):
     if os.path.exists(filepath): return filepath
@@ -56,6 +56,29 @@ def load_csv(filepath, limit=None):
         reader = csv.DictReader(f, dialect=dialect)
         rows = [row for i, row in enumerate(reader) if limit is None or i < limit]
     return rows
+
+def explode_multi_key(rows, key, delimiter=',', transform=None):
+    result = []
+    for row in rows:
+        raw_val = row.get(key)
+        if raw_val is None:
+            raw_val = ''
+            
+        for val in raw_val.split(delimiter):
+            val = val.strip()
+            if transform:
+                val = transform(val)
+            if val:
+                new_row = dict(row)
+                new_row['_exploded_key'] = val
+                result.append(new_row)
+    return result
+
+def imdbid_to_tconst(imdbid):
+    try:
+        return "tt" + str(int(imdbid)).zfill(7)
+    except (ValueError, TypeError):
+        return None
 
 # ─── Instrumentation Logic ───────────────────────────────────────────────────
 
@@ -133,18 +156,7 @@ JOIN_SCENARIOS = [
         "display_s": ["nconst", "primaryName", "primaryProfession"],
         "pre_r":     None,
         "pre_s":     None,
-    },
-    {
-        "label":     "Actors joined with IMDB on knownForTitles = imdbid",
-        "file_r":    "data/movies/Actors.tsv",
-        "key_r":     "_exploded_key",
-        "display_r": ["nconst", "primaryName", "birthYear", "primaryProfession", "_exploded_key"],
-        "file_s":    "data/movies/imdb.csv",
-        "key_s":     "_tconst",
-        "display_s": ["imdbid", "title", "year", "director"],
-        "pre_r":     lambda rows: explode_multi_key(rows, "knownForTitles"),
-        "pre_s":     lambda rows: [dict(list(r.items()) + [("_tconst", imdbid_to_tconst(r.get("imdbid")))]) for r in rows],
-    },
+    }
 ]
 
 # A distinct color palette for different scenarios
@@ -170,12 +182,20 @@ if __name__ == "__main__":
                     
                     table_r = load_csv(scenario["file_r"], limit=limit)
                     table_s = load_csv(scenario["file_s"], limit=limit)
+                    
+                    # Apply pre-processing lambdas if they exist
+                    if scenario.get("pre_r"):
+                        table_r = scenario["pre_r"](table_r)
+                    if scenario.get("pre_s"):
+                        table_s = scenario["pre_s"](table_s)
+                        
                     kr, ks = scenario["key_r"], scenario["key_s"]
                     
                     basic = StandardHashJoin(scenario["file_r"], kr, scenario["file_s"], ks)
                     true_total = len(basic.join(table_r, table_s))
+                    
                     print(f"\n{'='*80}")
-                    print(f"\n  Scenario: {label} | # Results per Standard Hash Join: {true_total}")
+                    print(f"  Scenario: {label} | # Results per Standard Hash Join: {true_total}")
                     print(f"  RUNNING WITH HYPERPARAMETERS:")
                     print(f"    CSV_LIMIT        = {limit}")
                     print(f"    EXPLORATION_SIZE = {exp_size}")
@@ -303,6 +323,6 @@ if __name__ == "__main__":
                 for label, s in all_scenario_stats.items():
                     print(f"  Scenario: {label} (True Total: {s['TrueTotal']})")
                     if s.get("Paper") and s["Paper"][0] is not None:
-                        print(f"    ROSL Paper       | Found: {s['Paper'][0]:<8} | Est: {s['Paper'][1]:<12.2f} | Error: {s['Paper'][2]:>7.2f}%")
+                        print(f"    ROSL Paper           | Found: {s['Paper'][0]:<8} | Est: {s['Paper'][1]:<12.2f} | Error: {s['Paper'][2]:>7.2f}%")
                     if s.get("Pooled") and s["Pooled"][0] is not None:
                         print(f"    ROSL PooledEstimator | Found: {s['Pooled'][0]:<8} | Est: {s['Pooled'][1]:<12.2f} | Error: {s['Pooled'][2]:>7.2f}%")
