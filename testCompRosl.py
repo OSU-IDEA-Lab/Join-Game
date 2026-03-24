@@ -13,14 +13,11 @@ from BasicJoin import BasicJoin as StandardHashJoin
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 
-# N_FAILURE_CONSTANT    = [100, 1000]
-N_FAILURE_CONSTANT    = [100, 200]    
-
+N_FAILURE_CONSTANT    = [100]
 EXPLORATION_SIZE      = 1000   
-EXPLOITATION_SIZE     = [10, 100]   
+EXPLOITATION_SIZE     = [100]   
 
-# CSV_LIMITS            = [5000, 10000]
-CSV_LIMITS            = [1000, 5000]
+CSV_LIMITS            = [5000]
 
 
 # ─── Run Flags ───────────────────────────────────────────────────────────────
@@ -156,7 +153,29 @@ JOIN_SCENARIOS = [
         "display_s": ["nconst", "primaryName", "primaryProfession"],
         "pre_r":     None,
         "pre_s":     None,
-    }
+    },
+        {
+        "label":     "Actors joined with IMDB on knownForTitles",
+        "file_r":    "data/movies/Actors.tsv",
+        "key_r":     "_exploded_key",
+        "display_r": ["nconst", "primaryName", "birthYear", "primaryProfession", "_exploded_key"],
+        "file_s":    "data/movies/imdb.csv",
+        "key_s":     "_tconst",
+        "display_s": ["imdbid", "title", "year", "director"],
+        "pre_r":     lambda rows: explode_multi_key(rows, "knownForTitles"),
+        "pre_s":     lambda rows: [dict(list(r.items()) + [("_tconst", imdbid_to_tconst(r.get("imdbid")))]) for r in rows],
+    },
+    {
+        "label":     "IMDB Cast joined with Actors on Name",
+        "file_r":    "data/movies/imdb.csv",
+        "key_r":     "_exploded_key",
+        "display_r": ["title", "year", "_exploded_key"],
+        "file_s":    "data/movies/Actors.tsv",
+        "key_s":     "primaryName",
+        "display_s": ["nconst", "primaryName", "birthYear", "primaryProfession"],
+        "pre_r":     lambda rows: explode_multi_key(rows, "cast", transform=lambda x: x.split('(')[0].strip() if '(' in x else x.strip()),
+        "pre_s":     None,
+    },
 ]
 
 # A distinct color palette for different scenarios
