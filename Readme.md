@@ -20,27 +20,37 @@ In the **row labels** of the below table, labels of **discrete events** are in *
     <th></th>
     <th>Global Pooling (Paper Ver) ISPW</th>
     <th>Localized Pooling ISPW</th>
+    <th>Justification</th>
   </tr>
+
   <tr>
     <td>Exploitation Cache Duplicate Prevention</td>
     <td>remove and replace</td>
     <td>remove without replacement</td>
+    <td>If we were to draw a unique set of tuples of a given size, drawing each tuple would affect the probabilities of subsequent draws. The probabilities would be dependent, not fixed. The probability of ending up with a certain set is the summation of probabilies of each different draw order that would produce the set. The alternative implemented is drawing from a fixed distribution based on only exploration rewards, without guarenteeing uniqueness, then discarding duplicates without replacement, and calculating the probability that a tuple is picked at least once.  </td>
   </tr>
+
   <tr>
     <td>Discrete Event Definition</td>
     <td>a single probe</td>
     <td><i>same</i></td>
+    <td></td>
   </tr>
+
   <tr>
     <td>Exploration Selection Probability</td>
     <td>$\frac{1}{|R|}$</td>
     <td>$\frac{\text{explorationSize}}{|R|}$</td>
+    <td>We assume the order of tuples in a relation is random and draw the next explorationSize tuples sequentially to include in exploration. The probability that any $R$ tuple is included is $\frac{\text{explorationSize}}{|R|}$ since there are explorationSize ways it can be included with probabillity $\frac{1}{|R|}$ each way. </td>
   </tr>
+
   <tr>
     <td><b>Exploration Probe Probability (First N probes)</b></td>
     <td>$\frac{1}{|R|}$</td>
     <td>$\frac{\text{explorationSize}}{|R|}$</td>
+    <td>Same as Exploration Selection Probability.</td>
   </tr>
+
   <tr>
     <td><b>Exploration Probe Probability (Additional probes beyond N)</b></td>
     <td>
@@ -50,7 +60,14 @@ In the **row labels** of the below table, labels of **discrete events** are in *
       $\frac{\text{explorationSize}}{|R|} \times \sum_{k = j}^{N+j - 1} \binom{N+j-1}{k} (p_{su}(r))^k (1 - p_{su}(r))^{(N+j-1)-k}$<br><br>
       where $j$ is how many probes beyond N the probe is
     </td>
+<td>
+  <a href="#discrete-event-case-exploration-probe-additional-probes-beyond-n">
+    In-depth explanation in section
+  </a>
+</td>
+
   </tr>
+
   <tr>
     <td>Exploitation Selection Probability</td>
     <td>
@@ -60,7 +77,10 @@ In the **row labels** of the below table, labels of **discrete events** are in *
     <td>
       $\frac{\text{explorationSize}}{|R|} \times \left[ 1 - \left( 1 - \frac{\text{explorationRewards}_{i} + 1 / (explorationSize)}{ 1+ \sum_{\forall i} \text{explorationRewards}_{i}} \right)^\text{exploitationSize} \right]$
     </td>
+    <td>In depth explaination in section <a href="#exploitation-selection">
+    Exploitation Selection </a></td>
   </tr>
+
   <tr>
     <td><b>Exploitation Probe Probability</b></td>
     <td>
@@ -70,7 +90,9 @@ In the **row labels** of the below table, labels of **discrete events** are in *
     <td>
       $\frac{\text{explorationSize}}{|R|} \times \left[ 1 - \left( 1 - \frac{\text{explorationRewards}_{i} + 1 / (explorationSize)}{ 1+ \sum_{\forall i} \text{explorationRewards}_{i}} \right)^\text{exploitationSize} \right]$
     </td>
+    <td>Same as Exploitation Selection Probability</td>
   </tr>
+
   <tr>
     <td>Join Estimate Calculation</td>
     <td>
@@ -82,9 +104,10 @@ In the **row labels** of the below table, labels of **discrete events** are in *
       $\sum_{i=1}^{n} \frac{\text{numexplore}[i] + \text{numexploit}[i]}{\text{denexplore}[i] + \text{denexploit}[i]} \times |S| \times \frac{|R|}{\text{explorationSize}}$<br>
       The final estimate is the average of the join estimates from all rounds.
     </td>
+    <td>The current estimation method works with the updated probability terms. I expect that the paper's approach of using a variance stabalizing multiplier and adding weighted terms to a global estimate would further improve the estimator; the remaining work would be to implement these in accordance with the updated probabilities. </td>
   </tr>
-</table>
 
+</table>
 
 # Test Results
 
