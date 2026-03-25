@@ -7,7 +7,7 @@ from typing import List, Dict
 
 # Import the ROSL variants
 from ROSLJoinPaper import ROSL as ROSL_Paper
-from PooledEstROSL import ROSL as ROSL_PooledEstimator
+from LocalEstROSL import ROSL as ROSL_Updated
 
 from BasicJoin import BasicJoin as StandardHashJoin
 
@@ -24,7 +24,7 @@ TRIAL_COLORS          = ['#1f77b4', '#d62728'] # Blue for Trial 1, Red for Trial
 # ─── Run Flags ───────────────────────────────────────────────────────────────
 
 RUN_ROSL_PAPER        = True
-RUN_ROSL_POOLED       = True   
+RUN_ROSL_Updated       = True   
 
 PRINT_PHASE_TABLE     = False
 
@@ -177,10 +177,13 @@ JOIN_SCENARIOS = [
         "pre_s":     None,
     },
 ]
-
 # ─── Main Loop ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    
+    # NEW: Initialize the summary tracker
+    estimate_comparison_summary = []
+    
     for scenario in JOIN_SCENARIOS:
         label = scenario["label"]
         safe_label = label.replace(" ", "_").replace("/", "-")
@@ -219,7 +222,7 @@ if __name__ == "__main__":
                         color = TRIAL_COLORS[trial]
                         
                         hist_paper, out_paper, est_paper, err_paper = [], 0, 0.0, 0.0
-                        hist_pool, out_pool, est_pool, err_pool = [], 0, 0.0, 0.0
+                        hist_upd, out_upd, est_upd, err_upd = [], 0, 0.0, 0.0
 
                         # Run ROSL Paper
                         if RUN_ROSL_PAPER:
@@ -228,18 +231,18 @@ if __name__ == "__main__":
                                 exp_size, explt_size, n_fail
                             )
                         
-                        # Run ROSL PooledEstimator
-                        if RUN_ROSL_POOLED:
-                            hist_pool, out_pool, est_pool, err_pool = run_instrumented_rosl(
-                                "PooledEstimator", ROSL_PooledEstimator, table_r, table_s, kr, ks, true_total,
+                        # Run ROSL Updated
+                        if RUN_ROSL_Updated:
+                            hist_upd, out_upd, est_upd, err_upd = run_instrumented_rosl(
+                                "Updated", ROSL_Updated, table_r, table_s, kr, ks, true_total,
                                 exp_size, explt_size, n_fail
                             )
                             
                         trial_results.append({
                             "trial_num": trial + 1,
-                            "hist_paper": hist_paper, "hist_pool": hist_pool,
+                            "hist_paper": hist_paper, "hist_upd": hist_upd,
                             "stats_paper": (out_paper, est_paper, err_paper),
-                            "stats_pool": (out_pool, est_pool, err_pool)
+                            "stats_upd": (out_upd, est_upd, err_upd)
                         })
 
                         # ── Plotting for this Trial ──
@@ -258,18 +261,18 @@ if __name__ == "__main__":
                             y_explt = [h['err'] for h in hist_paper if h['phase'] == 'Exploitation']
                             plt.scatter(x_explt, y_explt, color=color, marker='s', s=30, facecolors='none', edgecolors=color)
 
-                        # Plot ROSL PooledEstimator (Solid Line, Filled Markers)
-                        if hist_pool:
-                            x = [h['out'] for h in hist_pool]
-                            y = [h['err'] for h in hist_pool]
-                            plt.plot(x, y, label=f"Trial {trial+1} (Pooled)", color=color, linestyle='-', alpha=0.9)
+                        # Plot ROSL Updated (Solid Line, Filled Markers)
+                        if hist_upd:
+                            x = [h['out'] for h in hist_upd]
+                            y = [h['err'] for h in hist_upd]
+                            plt.plot(x, y, label=f"Trial {trial+1} (Updated)", color=color, linestyle='-', alpha=0.9)
                             
-                            x_exp = [h['out'] for h in hist_pool if h['phase'] == 'Exploration']
-                            y_exp = [h['err'] for h in hist_pool if h['phase'] == 'Exploration']
+                            x_exp = [h['out'] for h in hist_upd if h['phase'] == 'Exploration']
+                            y_exp = [h['err'] for h in hist_upd if h['phase'] == 'Exploration']
                             plt.scatter(x_exp, y_exp, color=color, marker='o', s=45)
                             
-                            x_explt = [h['out'] for h in hist_pool if h['phase'] == 'Exploitation']
-                            y_explt = [h['err'] for h in hist_pool if h['phase'] == 'Exploitation']
+                            x_explt = [h['out'] for h in hist_upd if h['phase'] == 'Exploitation']
+                            y_explt = [h['err'] for h in hist_upd if h['phase'] == 'Exploitation']
                             plt.scatter(x_explt, y_explt, color=color, marker='s', s=45)
 
                     # ── Finalize Chart for this configuration ──
@@ -284,7 +287,7 @@ if __name__ == "__main__":
                     
                     plt.figtext(0.05, 0.02,
                         "Circles: End of Exploration | Squares: End of Exploitation\n"
-                        "Dashed Line: ROSL Paper | Solid Line: ROSL PooledEstimator",
+                        "Dashed Line: ROSL Paper | Solid Line: ROSL Updated",
                         fontsize=9
                     )
                     
@@ -301,16 +304,16 @@ if __name__ == "__main__":
                         writer = csv.writer(f)
                         writer.writerow([
                             "Round", "Phase", 
-                            "T1 Paper %O/%E", "T1 Pooled %O/%E", 
-                            "T2 Paper %O/%E", "T2 Pooled %O/%E"
+                            "T1 Paper %O/%E", "T1 Updated %O/%E", 
+                            "T2 Paper %O/%E", "T2 Updated %O/%E"
                         ])
                         
                         t1_paper = trial_results[0]["hist_paper"]
-                        t1_pool  = trial_results[0]["hist_pool"]
+                        t1_upd  = trial_results[0]["hist_upd"]
                         t2_paper = trial_results[1]["hist_paper"]
-                        t2_pool  = trial_results[1]["hist_pool"]
+                        t2_upd  = trial_results[1]["hist_upd"]
                         
-                        max_rounds = max(len(t1_paper), len(t1_pool), len(t2_paper), len(t2_pool)) // 2
+                        max_rounds = max(len(t1_paper), len(t1_upd), len(t2_paper), len(t2_upd)) // 2
                         
                         for r in range(max_rounds):
                             for p_idx, phase_name in enumerate(["Exploration", "Exploitation"]):
@@ -319,22 +322,43 @@ if __name__ == "__main__":
                                 
                                 # T1 Data
                                 csv_row.append(f"{t1_paper[idx]['out']:.1f}% / {t1_paper[idx]['err']:.1f}%" if idx < len(t1_paper) else "-")
-                                csv_row.append(f"{t1_pool[idx]['out']:.1f}% / {t1_pool[idx]['err']:.1f}%" if idx < len(t1_pool) else "-")
+                                csv_row.append(f"{t1_upd[idx]['out']:.1f}% / {t1_upd[idx]['err']:.1f}%" if idx < len(t1_upd) else "-")
                                 
                                 # T2 Data
                                 csv_row.append(f"{t2_paper[idx]['out']:.1f}% / {t2_paper[idx]['err']:.1f}%" if idx < len(t2_paper) else "-")
-                                csv_row.append(f"{t2_pool[idx]['out']:.1f}% / {t2_pool[idx]['err']:.1f}%" if idx < len(t2_pool) else "-")
+                                csv_row.append(f"{t2_upd[idx]['out']:.1f}% / {t2_upd[idx]['err']:.1f}%" if idx < len(t2_upd) else "-")
                                     
                                 writer.writerow(csv_row)
                                 
                     print(f"    Saved CSV to {csv_path}")
 
-                    # ── Print Comparison Summary ──
+                    # ── Print Comparison Summary (Per-Scenario/Trial) ──
                     for t_res in trial_results:
                         print(f"    -- Trial {t_res['trial_num']} Summary --")
                         s_paper = t_res["stats_paper"]
-                        s_pool = t_res["stats_pool"]
+                        s_upd = t_res["stats_upd"]
                         if s_paper and s_paper[0] is not None:
                             print(f"      ROSL Paper           | Found: {s_paper[0]:<8} | Est: {s_paper[1]:<12.2f} | Error: {s_paper[2]:>7.2f}%")
-                        if s_pool and s_pool[0] is not None:
-                            print(f"      ROSL PooledEstimator | Found: {s_pool[0]:<8} | Est: {s_pool[1]:<12.2f} | Error: {s_pool[2]:>7.2f}%")
+                        if s_upd and s_upd[0] is not None:
+                            print(f"      ROSL Updated | Found: {s_upd[0]:<8} | Est: {s_upd[1]:<12.2f} | Error: {s_upd[2]:>7.2f}%")
+                            
+                    # NEW: Add results to global summary array for end-of-script print
+                    estimate_comparison_summary.append({
+                        "scenario_name": label,
+                        "true_total": true_total,
+                        "trial_results": trial_results
+                    })
+
+    # NEW: Print the global Estimate Comparison Summary exactly as requested
+    print("\nEstimate Comparison Summary")
+    for summary in estimate_comparison_summary:
+        print(f"- Scenario: {summary['scenario_name']} (True Total: {summary['true_total']})")
+        for t_res in summary['trial_results']:
+            t_num = t_res['trial_num']
+            s_paper = t_res['stats_paper']
+            s_upd = t_res['stats_upd']
+            
+            if s_paper and s_paper[0] is not None:
+                print(f"  Trial {t_num} - ROSL Paper           | Found: {s_paper[0]:<8} | Est: {s_paper[1]:<13.2f} | Error: {s_paper[2]:>7.2f}%")
+            if s_upd and s_upd[0] is not None:
+                print(f"  Trial {t_num} - ROSL Updated | Found: {s_upd[0]:<8} | Est: {s_upd[1]:<13.2f} | Error: {s_upd[2]:>7.2f}%")

@@ -118,7 +118,7 @@ class ROSL:
 
         Phase 1 — Cache construction:
             Selection draws from a fixed distribution over all n exploration arms:
-                w_i = reward_i  if reward_i > 0  else  1
+                w_i = max(0.01, reward_i / sum(rewards))
                 W   = sum of all w_i  (fixed for every draw)
                 p_i = w_i / W
 
@@ -150,10 +150,15 @@ class ROSL:
 
         n = self.curr_exploration_loaded
 
-        # Fixed selection weights: reward_i if nonzero, else 1.
+        # Fixed selection weights: max(0.01, reward_i / sum_rewards)
         # W is constant for every draw — the same distribution is used for
         # every slot fill and every replacement draw.
-        weights     = [self.reward[i] if self.reward[i] > 0 else 1 for i in range(n)]
+        total_rewards = sum(self.reward[i] for i in range(n))
+        if total_rewards > 0:
+            weights = [max(0.01, self.reward[i] / total_rewards) for i in range(n)]
+        else:
+            weights = [0.01 for _ in range(n)]
+            
         W           = float(sum(weights))
         # e_t per arm — fixed, computed once from the static distribution
         e_t_by_arm  = [weights[i] / W for i in range(n)]
@@ -215,7 +220,7 @@ class ROSL:
         Replay each exploration probe as a discrete ISPW event.
 
         Exploration selection probability:
-            p_R(r) = exploration_size / |R|
+            p_R(r) = 1 / |R|
 
         For the first N probes of arm i (where N = n_failure_constant):
             e_t = p_R(r)   (arm was selected for exploration and will be probed)
@@ -227,7 +232,7 @@ class ROSL:
         if self.size_r == 0 or self.curr_exploration_loaded == 0:
             return
 
-        p_R = self.exploration_size / self.size_r
+        p_R = 1.0 / self.size_r
         N   = self.n_failure_constant
 
         for i in range(self.curr_exploration_loaded):
