@@ -2,6 +2,21 @@ import math
 import random
 import bisect
 
+import math
+
+# Compatibility patch for Python 3.6
+if not hasattr(math, 'comb'):
+    def comb(n, k):
+        if k < 0 or k > n: return 0
+        if k == 0 or k == n: return 1
+        if k > n // 2: k = n - k
+        
+        numerator = 1
+        for i in range(k):
+            numerator = numerator * (n - i) // (i + 1)
+        return numerator
+    math.comb = comb
+
 class ROSL:
     def __init__(self, exploration_size, exploitation_size, n_failure_constant,
                  file_r, key_r, file_s, key_s):
