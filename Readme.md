@@ -16,12 +16,12 @@ Different event probabilities are used as described in the below version compari
 
 In the **row labels** of the below table, labels of **discrete events** are in **bold**.
 <table>
-  <tr>
-    <th></th>
-    <th>Global Pooling (Paper Ver) ISPW</th>
-    <th>Localized Pooling ISPW</th>
-    <th>Justification</th>
-  </tr>
+<tr>
+      <th width="15%">Category</th>
+      <th width="30%">Global Pooling (Paper Ver) ISPW</th>
+      <th width="30%">Localized Pooling ISPW</th>
+      <th width="25%">Justification &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
+    </tr>
 
   <tr>
     <td>Exploitation Cache Duplicate Prevention</td>
