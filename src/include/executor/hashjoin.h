@@ -80,6 +80,35 @@ typedef struct HashJoinTupleData
 #define HJTUPLE_MINTUPLE(hjtup)  \
 	((MinimalTuple) ((char *) (hjtup) + HJTUPLE_OVERHEAD))
 
+/* ----------------------------------------------------------------
+ * EHJ-extended tuple layout
+ *
+ * The Early Hash Join stores an arrival timestamp between the standard
+ * HashJoinTupleData header and the MinimalTuple payload, so that the Phase 3
+ * duplicate-detection logic can compare per-tuple timestamps against the
+ * partition flush timestamps recorded in EHJPartData.
+ *
+ * Memory layout of an EHJ tuple inside a partition block:
+ *
+ *   offset 0                       : HashJoinTupleData (next ptr + hashvalue)
+ *   offset HJTUPLE_OVERHEAD        : int64 arrival_ts  (EHJ_TS_SIZE bytes)
+ *   offset EHJ_HJTUPLE_OVERHEAD    : MinimalTuple data (t_len bytes)
+ *
+ * All EHJ insertion and scan functions use the EHJ_* macros below.  The
+ * standard HJTUPLE_MINTUPLE() macro must NOT be used on EHJ tuples.
+ * ----------------------------------------------------------------
+ */
+#define EHJ_TS_SIZE              MAXALIGN(sizeof(int64))
+#define EHJ_HJTUPLE_OVERHEAD     (HJTUPLE_OVERHEAD + EHJ_TS_SIZE)
+
+/* Read/write the arrival timestamp embedded in an EHJ tuple header. */
+#define EHJ_HJTUPLE_ARRIVAL_TS(hjtup) \
+	(*((int64 *) ((char *) (hjtup) + HJTUPLE_OVERHEAD)))
+
+/* Get the MinimalTuple payload from an EHJ tuple header. */
+#define EHJ_HJTUPLE_MINTUPLE(hjtup) \
+	((MinimalTuple) ((char *) (hjtup) + EHJ_HJTUPLE_OVERHEAD))
+
 /*
  * If the outer relation's distribution is sufficiently nonuniform, we attempt
  * to optimize the join by treating the hash values corresponding to the outer
@@ -142,6 +171,119 @@ typedef struct HashMemoryChunkData *HashMemoryChunk;
 /* tuples exceeding HASH_CHUNK_THRESHOLD bytes are put in their own chunk */
 #define HASH_CHUNK_THRESHOLD	(HASH_CHUNK_SIZE / 4)
 
+/* ----------------------------------------------------------------
+ * EHJ Phase 2: partition-exclusive block allocator
+ *
+ * Standard Postgres HashMemoryChunks interleave tuples from all partitions
+ * in a single mixed slab, making per-partition pfree impossible.  The EHJ
+ * Phase 2 allocator gives each partition its own chain of contiguous blocks
+ * (EHJPartBlock), so that when a partition is flushed to disk the entire
+ * block chain can be pfree'd, physically reclaiming that memory.
+ *
+ * Each EHJPartBlock is a standalone palloc in batchCxt.  Tuples belonging
+ * to the same partition are written contiguously within the block; when a
+ * block fills, a new one is allocated and linked via EHJPartBlock.next.
+ *
+ * Memory layout of an EHJPartBlock:
+ *
+ *   offset 0                          : EHJPartBlockData header
+ *   offset EHJ_PART_BLOCK_HEADER_SIZE : packed EHJ tuple data (capacity bytes)
+ *
+ * ----------------------------------------------------------------
+ */
+typedef struct EHJPartBlockData
+{
+	bool		full;			/* true: block is full; allocate a successor */
+	size_t		capacity;		/* usable data bytes after the header        */
+	size_t		used;			/* bytes already written into data region    */
+	struct EHJPartBlockData *next;	/* next block in partition chain, or NULL */
+} EHJPartBlockData;
+
+typedef EHJPartBlockData *EHJPartBlock;
+
+/* Size of each partition block. Matches HASH_CHUNK_SIZE for consistency. */
+#define EHJ_PART_BLOCK_SIZE         (32 * 1024L)
+#define EHJ_PART_BLOCK_HEADER_SIZE  MAXALIGN(sizeof(EHJPartBlockData))
+#define EHJ_PART_BLOCK_DATA(blk)    ((char *)(blk) + EHJ_PART_BLOCK_HEADER_SIZE)
+
+/*
+ * Tuples larger than this threshold are given their own dedicated block,
+ * matching the HASH_CHUNK_THRESHOLD policy in the standard allocator.
+ */
+#define EHJ_PART_BLOCK_THRESHOLD    (EHJ_PART_BLOCK_SIZE / 4)
+
+/* ----------------------------------------------------------------
+ * EHJ post-freeze write buffer
+ *
+ * When a new tuple hashes to a partition that has already been frozen and
+ * flushed to disk, the partition's block chain no longer exists in memory.
+ * Instead of re-allocating blocks for it, the tuple is appended to a small
+ * in-memory buffer (EHJBufferedTuple array) and bulk-written to the
+ * partition's BufFile once the buffer fills or Phase 2 ends.
+ *
+ * The tuple copy is palloc'd in hashCxt so it survives batchCxt resets.
+ * ----------------------------------------------------------------
+ */
+typedef struct EHJBufferedTuple
+{
+	uint32		hashvalue;		/* hash value (needed for Phase 3 re-read)  */
+	int64		arrival_ts;		/* arrival timestamp at buffering time      */
+	MinimalTuple tuple;			/* palloc'd copy of the tuple in hashCxt    */
+} EHJBufferedTuple;
+
+/* Initial capacity of a partition's post-freeze write buffer (entries). */
+#define EHJ_PART_BUFFER_INITIAL  64
+
+/* ----------------------------------------------------------------
+ * EHJ per-partition metadata  (EHJPartData)
+ *
+ * One EHJPartData struct tracks the state of a single hash bucket/partition
+ * on one side of the EHJ join.  Arrays of these structs are allocated in
+ * hashCxt (so they survive batchCxt resets), one array per join side:
+ *
+ *   hashtable->ehj_inner_parts[0 .. nbuckets-1]   inner (R) side
+ *   hashtable->ehj_outer_parts[0 .. nbuckets-1]   outer (S) side
+ *
+ * Memory accounting summary:
+ *   - Insertion:  hashtable->spaceUsed += EHJ_HJTUPLE_OVERHEAD + t_len
+ *                 part->nbytes         += same
+ *   - Block alloc: no spaceUsed change (consistent with dense_alloc policy)
+ *   - Flush:      hashtable->spaceUsed -= part->nbytes   (tuple bytes freed)
+ *                 pfree each block      (physical reclamation)
+ *   - Buf alloc:  hashtable->spaceUsed += buffer_capacity * sizeof(EHJBufferedTuple)
+ *   - Buf entry:  hashtable->spaceUsed += tuple->t_len   (palloc'd copy)
+ *                 part->buffer_nbytes  += tuple->t_len
+ *   - Buf flush:  hashtable->spaceUsed -= part->buffer_nbytes
+ *                 pfree each copy; reset buffer_count and buffer_nbytes
+ * ----------------------------------------------------------------
+ */
+typedef struct EHJPartData
+{
+	/* ── frozen / flushed state ─────────────────────────────────── */
+	bool		is_flushed;		/* true once this partition has been frozen  */
+	int64		flush_ts;		/* ehj_current_tick at the moment of freeze  */
+	BufFile    *disk_file;		/* spill file; NULL until first flush        */
+
+	/* ── in-memory tuple accounting ─────────────────────────────── */
+	int			ntuples;		/* live in-memory tuples (0 when flushed)    */
+	Size		nbytes;			/* sum of (EHJ_HJTUPLE_OVERHEAD + t_len)    *
+								 * for each in-memory tuple; used for victim *
+								 * selection and spaceUsed adjustment        */
+
+	/* ── partition-exclusive block chain (batchCxt) ─────────────── */
+	EHJPartBlock head_block;	/* first block in chain (for traversal/free) */
+	EHJPartBlock tail_block;	/* current write target                      */
+	int			nblocks;		/* number of blocks currently allocated      */
+
+	/* ── post-freeze spill buffer (hashCxt; NULL until first freeze) */
+	EHJBufferedTuple *buffer;	/* dynamically grown array                   */
+	int			buffer_count;	/* number of entries currently in buffer     */
+	int			buffer_capacity;/* allocated capacity of buffer array        */
+	Size		buffer_nbytes;	/* sum of t_len for all buffered tuple copies*/
+} EHJPartData;
+
+typedef EHJPartData *EHJPart;
+
 /*
  * For each batch of a Parallel Hash Join, we have a ParallelHashJoinBatch
  * object in shared memory to coordinate access to it.  Since they are
@@ -167,8 +309,8 @@ typedef struct ParallelHashJoinBatch
 } ParallelHashJoinBatch;
 
 /* Accessor for inner batch tuplestore following a ParallelHashJoinBatch. */
-#define ParallelHashJoinBatchInner(batch)							\
-	((SharedTuplestore *)											\
+#define ParallelHashJoinBatchInner(batch)								\
+	((SharedTuplestore *)												\
 	 ((char *) (batch) + MAXALIGN(sizeof(ParallelHashJoinBatch))))
 
 /* Accessor for outer batch tuplestore following a ParallelHashJoinBatch. */
@@ -333,6 +475,24 @@ typedef struct HashJoinTableData
 	bool		ehj_phase1_done;	/* phase 1 has ended */
 	bool		ehj_inner_done;		/* R iterator exhausted */
 	bool		ehj_outer_done;		/* S iterator exhausted */
+
+	/*
+	 * EHJ Phase 2: per-partition metadata arrays.
+	 *
+	 * ehj_inner_parts[bucketno] tracks the state of inner (R) partition
+	 * 'bucketno'; ehj_outer_parts[bucketno] tracks outer (S) partition
+	 * 'bucketno'.  Both arrays have nbuckets entries and are allocated in
+	 * hashCxt so they survive batchCxt resets.
+	 *
+	 * ehj_current_tick is a monotonically increasing counter advanced once
+	 * per tuple inserted (inner or outer) and used as the arrival timestamp
+	 * stored in each EHJ tuple header and in EHJPartData.flush_ts.
+	 *
+	 * These fields are NULL / 0 for non-EHJ hash tables.
+	 */
+	EHJPartData *ehj_inner_parts;	/* [nbuckets] inner (R) partition state  */
+	EHJPartData *ehj_outer_parts;	/* [nbuckets] outer (S) partition state  */
+	int64		ehj_current_tick;	/* monotonically increasing arrival clock */
 
 	bool		keepNulls;		/* true to store unmatchable NULL tuples */
 

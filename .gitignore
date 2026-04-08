@@ -45,8 +45,13 @@ lib*.pc
 
 # Output logs
 *.out
+*.txt
 *.swp
 src/tags
+
+# path specific
+/start.sh
+/close.sh
 /localsave.sh
 /replacement.sh
 /build.sh

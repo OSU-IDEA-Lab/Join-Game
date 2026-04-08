@@ -1864,13 +1864,80 @@ typedef struct HashJoinState
 	int			hj_JoinState;
 	bool		hj_MatchedOuter;
 	bool		hj_OuterNotEmpty;
-
-	int         read_ratio_inner;       /* A in A:B reading strategy */
-    int         read_ratio_outer;       /* B in A:B reading strategy */
-    int         reads_from_inner;       /* Counter for current reading cycle */
-    int         reads_from_outer;       /* Counter for current reading cycle */
+ 
+	int			read_ratio_inner;	/* A in A:B reading strategy */
+	int			read_ratio_outer;	/* B in A:B reading strategy */
+	int			reads_from_inner;	/* counter within current cycle */
+	int			reads_from_outer;	/* counter within current cycle */
+ 
+	/* ----------------------------------------------------------------
+	 * EHJ Phase 2: per-tuple pending-probe bookkeeping
+	 *
+	 * After inserting one tuple in the Phase 2 loop we immediately scan
+	 * the opposite bucket for matches.  We need to remember which tuple
+	 * was just inserted so that it can be loaded into the right slot when
+	 * we re-enter the scan state on the next ExecHashJoinImpl call.
+	 *
+	 * ehj_p2_pending_inner — true while a Phase 2 inner tuple is waiting
+	 *   to be probed against the outer bucket.  When set, hj_CurHashValue
+	 *   and hj_CurBucketNo already reflect the inner tuple, and
+	 *   hj_HashTupleSlot already stores the inner MinimalTuple.
+	 *
+	 * ehj_p2_pending_outer — symmetric: set after a Phase 2 outer tuple
+	 *   has been inserted and hj_OuterTupleSlot holds the tuple.
+	 *
+	 * These flags survive across state-machine returns so the 5:1 loop
+	 * can finish flushing any remaining result tuples before moving on.
+	 * ---------------------------------------------------------------- */
+	bool		ehj_p2_pending_inner;
+	bool		ehj_p2_pending_outer;
+ 
+	/* ----------------------------------------------------------------
+	 * EHJ Phase 3: per-partition cleanup state
+	 *
+	 * Phase 3 iterates over every bucket index [0, nbuckets) looking for
+	 * partitions that have disk files on at least one side.  For each such
+	 * partition it loads all tuples from both BufFiles into temporary
+	 * palloc'd arrays, performs a nested-loop join filtered by the
+	 * duplicate-detection timestamp check, and then frees the arrays.
+	 *
+	 * ehj_p3_partno         — current bucket index being processed.
+	 *
+	 * ehj_p3_inner_tups /
+	 * ehj_p3_outer_tups     — palloc'd arrays of MinimalTuple pointers
+	 *                          for the loaded inner and outer tuples of
+	 *                          the current partition.  NULL when not active.
+	 *
+	 * ehj_p3_inner_ts /
+	 * ehj_p3_outer_ts       — parallel arrays of arrival timestamps.
+	 *
+	 * ehj_p3_inner_hv /
+	 * ehj_p3_outer_hv       — parallel arrays of hash values (needed for
+	 *                          hash-value equality check in the probe loop).
+	 *
+	 * ehj_p3_inner_count /
+	 * ehj_p3_outer_count    — number of valid entries in the above arrays.
+	 *
+	 * ehj_p3_ri / ehj_p3_si — loop cursors (inner index, outer index) for
+	 *                          the nested-loop join within HJ_EHJ_PHASE3_PROBE.
+	 *                          The outer loop walks inner tuples (ri), the
+	 *                          inner loop walks outer tuples (si).
+	 * ---------------------------------------------------------------- */
+	int			ehj_p3_partno;
+ 
+	MinimalTuple *ehj_p3_inner_tups;
+	int64	   *ehj_p3_inner_ts;
+	uint32	   *ehj_p3_inner_hv;
+	int			ehj_p3_inner_count;
+ 
+	MinimalTuple *ehj_p3_outer_tups;
+	int64	   *ehj_p3_outer_ts;
+	uint32	   *ehj_p3_outer_hv;
+	int			ehj_p3_outer_count;
+ 
+	int			ehj_p3_ri;		/* current inner tuple index in nested loop */
+	int			ehj_p3_si;		/* current outer tuple index in nested loop */
 } HashJoinState;
-
 
 /* ----------------------------------------------------------------
  *				 Materialization State Information
