@@ -4027,7 +4027,7 @@ ExecEHJFlushPartitionBuffer(HashJoinTable hashtable, EHJPartData *part)
 
 		BufFileWrite(part->disk_file, &entry->hashvalue, sizeof(uint32));
 		BufFileWrite(part->disk_file, &entry->arrival_ts, sizeof(int64));
-		BufFileWrite(part->disk_file, &tlen, sizeof(uint32));
+		// BufFileWrite(part->disk_file, &tlen, sizeof(uint32));
 		BufFileWrite(part->disk_file, mintup, tlen);
 
 		pfree(mintup);

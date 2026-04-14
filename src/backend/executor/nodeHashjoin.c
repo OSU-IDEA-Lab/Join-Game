@@ -833,6 +833,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 												  &inner_hashvalue))
 						{
 						ExecEHJTableInsertInner(hashtable_ehj, inner_tuple, inner_hashvalue);
+						pfree(inner_tuple);
 						/* Set the flag on overage, but probe regardless (unless now transitioning). */
 						if (hashtable_ehj->spaceUsed >= hashtable_ehj->spaceAllowed)
 							hashtable_ehj->ehj_phase1_done = true;
@@ -843,7 +844,6 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 							got_inner = true;
 						}	
 						}
-						/* inner_tuple is now safely in the slab; no pfree needed */
 					}
 				}
 
@@ -870,6 +870,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 												  &outer_hashvalue))
 						{
 						ExecEHJTableInsertOuter(hashtable_ehj, outer_tuple, outer_hashvalue);
+						pfree(outer_tuple);
 						/* Set the flag on overage, but probe regardless (unless now transitioning). */
 						if (hashtable_ehj->spaceUsed >= hashtable_ehj->spaceAllowed)
 							hashtable_ehj->ehj_phase1_done = true;
@@ -1146,26 +1147,26 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
  
 				if (ht->ehj_inner_parts[bucketno].is_flushed)
 				{
-					/*
-					 * Case 2 or 4: The INNER partition is on disk.
-					 *
-					 * The incoming R tuple's own partition has been frozen.
-					 * Buffer it for bulk-write to that partition's BufFile.
-					 * Phase 3 will load both sides from disk and join them.
-					 *
-					 * FIX: was checking ehj_OUTER_parts[].is_flushed and
-					 * calling BufferFrozenTuple on the inner partition even
-					 * when it was not frozen → Assert(part->is_flushed) crash.
-					 */
+					/* The INNER partition is on disk. Buffer it. */
 					ExecEHJBufferFrozenTuple(ht,
-											 &ht->ehj_inner_parts[bucketno],
-											 tup, hv,
-											 ++ht->ehj_current_tick);
-					pfree(tup);
-					/*
-					 * No in-memory probe is possible.  Return to the Phase 2
-					 * driver loop; do not transition to a scan state.
-					 */
+												&ht->ehj_inner_parts[bucketno],
+												tup, hv,
+												++ht->ehj_current_tick);
+					
+					/* FIX: Even though R goes to disk, if S is in memory, it MUST probe S! */
+					if (!ht->ehj_outer_parts[bucketno].is_flushed)
+					{
+						ExecStoreMinimalTuple(tup, node->hj_HashTupleSlot, true); /* slot owns memory */
+						econtext->ecxt_innertuple = node->hj_HashTupleSlot;
+						node->hj_CurBucketNo = bucketno;
+						node->hj_CurHashValue = hv;
+						node->hj_CurTuple = NULL;
+						node->hj_JoinState = HJ_EHJ_PHASE2_SCAN_OUTER;
+					}
+					else
+					{
+						pfree(tup);
+					}
 				}
 				else
 				{
@@ -1249,25 +1250,26 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 	
 					if (ht->ehj_outer_parts[bucketno].is_flushed)
 					{
-						/*
-						* Case 2 or 4: The OUTER partition is on disk.
-						*
-						* The incoming S tuple's own partition has been frozen.
-						* Buffer it for bulk-write to that partition's BufFile.
-						*
-						* FIX (symmetric to inner path): was checking
-						* ehj_INNER_parts[].is_flushed and calling
-						* BufferFrozenTuple on the outer partition regardless of
-						* whether the outer partition was actually frozen.
-						*/
+						/* The OUTER partition is on disk. Buffer it. */
 						ExecEHJBufferFrozenTuple(ht,
 												&ht->ehj_outer_parts[bucketno],
 												tup, hv,
 												++ht->ehj_current_tick);
-						pfree(tup);
-						/*
-						* No in-memory probe is possible.
-						*/
+						
+						/* FIX: Even though S goes to disk, if R is in memory, it MUST probe R! */
+						if (!ht->ehj_inner_parts[bucketno].is_flushed)
+						{
+							ExecStoreMinimalTuple(tup, node->hj_OuterTupleSlot, true); /* slot owns memory */
+							econtext->ecxt_outertuple = node->hj_OuterTupleSlot;
+							node->hj_CurBucketNo = bucketno;
+							node->hj_CurHashValue = hv;
+							node->hj_CurTuple = NULL;
+							node->hj_JoinState = HJ_EHJ_PHASE2_SCAN_INNER;
+						}
+						else
+						{
+							pfree(tup);
+						}
 					}
 					else
 					{
@@ -1404,29 +1406,17 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 	
 			case HJ_EHJ_PHASE3_NEXT_PART:
 			{
-				/*
-				* Advance to the next partition that has on-disk data on at
-				* least one side and load it into memory for the nested-loop
-				* cleanup join.
-				*
-				* A partition is eligible if:
-				*   ehj_inner_parts[p].disk_file != NULL  OR
-				*   ehj_outer_parts[p].disk_file != NULL
-				*
-				* We load ALL tuples from both sides (even the in-memory side
-				* of an asymmetrically frozen partition) into flat arrays so
-				* that the probe loop in PHASE3_PROBE can iterate without
-				* re-entering the executor or accessing block chains that may
-				* have been freed.
-				*/
 				HashJoinTable ht = node->hj_HashTable;
 				int			n = ht->nbuckets;
+				MemoryContext oldcxt; 
+
+				/* Switch to the Long-lived hash context */
+				oldcxt = MemoryContextSwitchTo(ht->hashCxt);
 	
 				/* Free arrays from the previous partition, if any. */
 				if (node->ehj_p3_inner_tups != NULL)
 				{
 					int i;
-	
 					for (i = 0; i < node->ehj_p3_inner_count; i++)
 						if (node->ehj_p3_inner_tups[i])
 							pfree(node->ehj_p3_inner_tups[i]);
@@ -1438,7 +1428,6 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				if (node->ehj_p3_outer_tups != NULL)
 				{
 					int i;
-	
 					for (i = 0; i < node->ehj_p3_outer_count; i++)
 						if (node->ehj_p3_outer_tups[i])
 							pfree(node->ehj_p3_outer_tups[i]);
@@ -1461,12 +1450,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						outer_part->disk_file == NULL)
 						continue;	/* nothing on disk for this partition */
 	
-					/*
-					* Load inner (R) tuples for this partition.
-					*
-					* Initial capacity estimate: allocate room for 64 tuples
-					* and grow by doubling as needed.
-					*/
+					/* Load inner (R) tuples for this partition. */
 					{
 						int			cap = 64;
 						int			cnt = 0;
@@ -1505,8 +1489,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 	
 						/* Also include any remaining in-memory inner tuples. */
 						{
-							HashJoinTuple ht_tup =
-								ht->buckets.unshared[p];
+							HashJoinTuple ht_tup = ht->buckets.unshared[p];
 	
 							while (ht_tup != NULL)
 							{
@@ -1624,24 +1607,25 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						node->ehj_p3_inner_count,
 						node->ehj_p3_outer_count);
 	
-					break;			/* re-enter the for(;;) to hit PROBE */
+					/* RESTORE THE OLD CONTEXT before breaking out to probe */
+					MemoryContextSwitchTo(oldcxt);
+					break;			/* break out of the while loop */
 				}
 	
-				if (node->ehj_p3_partno >= n &&
-					node->hj_JoinState == HJ_EHJ_PHASE3_NEXT_PART)
+				if (node->ehj_p3_partno >= n)
 				{
-					/*
-					* All partitions processed.  The join is complete.
-					* Destroy the hash table and signal end of output.
-					*/
+					/* RESTORE THE OLD CONTEXT before finishing the join */
+					MemoryContextSwitchTo(oldcxt);
 					ExecHashTableDestroy(node->hj_HashTable);
 					node->hj_HashTable = NULL;
 					elog(INFO, "EHJ Status: Phase 3 cleanup complete. Join finished.");
 					return NULL;
 				}
-				continue;
+				
+				/* Break out of the switch statement so the driver loops to the probe phase */
+				break;
 			}
-	
+
 			case HJ_EHJ_PHASE3_PROBE:
 			{
 				/*
