@@ -1310,20 +1310,21 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					}
 	
 					/* Completed one full A:B cycle; reset counters. */
-					if (node->reads_from_outer >= node->read_ratio_outer)
-					{
-						node->reads_from_inner = 0;
-						node->reads_from_outer = 0;
-					}
-					break;
-				}
-				else
-				{
-					/* Reset cycle counters and loop. */
-					node->reads_from_inner = 0;
-					node->reads_from_outer = 0;
-				}
-				break;
+                    if (node->reads_from_outer >= node->read_ratio_outer)
+                    {
+                        /* If a relation is done, permanently fast-forward its turn */
+                        node->reads_from_inner = ht->ehj_inner_done ? node->read_ratio_inner : 0;
+                        node->reads_from_outer = ht->ehj_outer_done ? node->read_ratio_outer : 0;
+                    }
+                    break;
+                }
+                else
+                {
+                    /* Fallback state reset */
+                    node->reads_from_inner = ht->ehj_inner_done ? node->read_ratio_inner : 0;
+                    node->reads_from_outer = ht->ehj_outer_done ? node->read_ratio_outer : 0;
+                }
+                break;
 			}
 	
 			case HJ_EHJ_PHASE2_SCAN_OUTER:
