@@ -1,7 +1,7 @@
 SET enable_mergejoin = off;
 SET enable_nestloop = off;
 SET max_parallel_workers_per_gather = 0;
-SET work_mem = '1MB';
+SET work_mem = '4MB';
 SET client_min_messages = info;
 
 \o query_output.txt

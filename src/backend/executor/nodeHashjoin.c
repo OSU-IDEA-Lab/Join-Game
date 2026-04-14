@@ -1130,55 +1130,89 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						break;
 					}
 	
-					tup = ExecCopySlotMinimalTuple(slot);
-					inner_econtext->ecxt_innertuple = slot;
-	
-					if (!ExecHashGetHashValue(ht, inner_econtext,
-											node->hj_InnerHashKeys,
-											false, ht->keepNulls, &hv))
-					{
-						pfree(tup);
-						break;
-					}
-	
-					ExecHashGetBucketAndBatch(ht, hv, &bucketno, &dummy_batchno);
-	
-					if (ht->ehj_outer_parts[bucketno].is_flushed)
+				tup = ExecCopySlotMinimalTuple(slot);
+				inner_econtext->ecxt_innertuple = slot;
+ 
+				if (!ExecHashGetHashValue(ht, inner_econtext,
+										  node->hj_InnerHashKeys,
+										  false, ht->keepNulls, &hv))
+				{
+					/* NULL key — discard and continue cycle. */
+					pfree(tup);
+					break;
+				}
+ 
+				ExecHashGetBucketAndBatch(ht, hv, &bucketno, &dummy_batchno);
+ 
+				if (ht->ehj_inner_parts[bucketno].is_flushed)
+				{
+					/*
+					 * Case 2 or 4: The INNER partition is on disk.
+					 *
+					 * The incoming R tuple's own partition has been frozen.
+					 * Buffer it for bulk-write to that partition's BufFile.
+					 * Phase 3 will load both sides from disk and join them.
+					 *
+					 * FIX: was checking ehj_OUTER_parts[].is_flushed and
+					 * calling BufferFrozenTuple on the inner partition even
+					 * when it was not frozen → Assert(part->is_flushed) crash.
+					 */
+					ExecEHJBufferFrozenTuple(ht,
+											 &ht->ehj_inner_parts[bucketno],
+											 tup, hv,
+											 ++ht->ehj_current_tick);
+					pfree(tup);
+					/*
+					 * No in-memory probe is possible.  Return to the Phase 2
+					 * driver loop; do not transition to a scan state.
+					 */
+				}
+				else
+				{
+					/*
+					 * Cases 1 or 3: The INNER partition is in memory.
+					 *
+					 * Insert the R tuple into its in-memory partition block.
+					 * After the insert the bucket head is the new tuple.
+					 */
+					ExecEHJTableInsertInner(ht, tup, hv);
+					pfree(tup);	/* data is now in the block; original no longer needed */
+ 
+					if (!ht->ehj_outer_parts[bucketno].is_flushed)
 					{
 						/*
-						* The corresponding outer partition is frozen.  Per the
-						* biased flushing policy, spill this R tuple directly to
-						* the inner partition's disk file (it will be needed in
-						* Phase 3 when we join the two on-disk partitions).
-						*/
-						ExecEHJBufferFrozenTuple(ht,
-												&ht->ehj_inner_parts[bucketno],
-												tup, hv,
-												ht->ehj_current_tick + 1);
-						ht->ehj_current_tick++;
-						pfree(tup);	/* buffered copy was made by BufferFrozenTuple */
-					}
-					else
-					{
-						/*
-						* Insert into the inner block chain and probe the outer
-						* bucket for existing S tuples that match.
-						*/
-						ExecEHJTableInsertInner(ht, tup, hv);
-
-						/* Head of chain is the tuple we just prepended. */
-						HashJoinTuple newTuple = ht->buckets.unshared[bucketno];
-						ExecStoreMinimalTuple(EHJ_HJTUPLE_MINTUPLE(newTuple),   // in-block copy
-											node->hj_HashTupleSlot,
-											false);
+						 * Case 1: Both partitions are in memory.
+						 *
+						 * Probe the outer (S) bucket for existing tuples
+						 * that match the R tuple we just inserted.  Point
+						 * hj_HashTupleSlot at the block's copy (bucket head).
+						 */
+						HashJoinTuple stored = ht->buckets.unshared[bucketno];
+ 
+						Assert(stored != NULL);
+						ExecStoreMinimalTuple(EHJ_HJTUPLE_MINTUPLE(stored),
+											  node->hj_HashTupleSlot,
+											  false);	/* block owns memory */
 						econtext->ecxt_innertuple = node->hj_HashTupleSlot;
+ 
 						node->hj_CurBucketNo = bucketno;
 						node->hj_CurHashValue = hv;
 						node->hj_CurTuple = NULL;
 						node->hj_JoinState = HJ_EHJ_PHASE2_SCAN_OUTER;
-						pfree(tup);   // now safe: slot points into block chain, not at tup
-						}
-						break;
+					}
+					/*
+					 * Case 3: Inner in memory, outer on disk.
+					 *
+					 * The R tuple is now safely in memory.  The matching S
+					 * partition is frozen and cannot be probed in Phase 2.
+					 * Phase 3 will load the outer partition from disk and
+					 * join it against this in-memory R partition.
+					 *
+					 * No state transition — fall through to break and let
+					 * the Phase 2 loop read the next tuple.
+					 */
+				}
+				break;
 				}
 				else if (node->reads_from_inner >= node->read_ratio_inner &&
 						node->reads_from_outer < node->read_ratio_outer &&
@@ -1204,8 +1238,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 											node->hj_OuterHashKeys,
 											true, HJ_FILL_OUTER(node), &hv))
 					{
+						/* NULL key — discard and reset cycle. */
 						pfree(tup);
-						/* Advance cycle */
 						node->reads_from_inner = 0;
 						node->reads_from_outer = 0;
 						break;
@@ -1213,39 +1247,68 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 	
 					ExecHashGetBucketAndBatch(ht, hv, &bucketno, &dummy_batchno);
 	
-					if (ht->ehj_inner_parts[bucketno].is_flushed)
+					if (ht->ehj_outer_parts[bucketno].is_flushed)
 					{
 						/*
-						* The inner partition is frozen: spill this S tuple to
-						* the outer partition's disk file.
+						* Case 2 or 4: The OUTER partition is on disk.
+						*
+						* The incoming S tuple's own partition has been frozen.
+						* Buffer it for bulk-write to that partition's BufFile.
+						*
+						* FIX (symmetric to inner path): was checking
+						* ehj_INNER_parts[].is_flushed and calling
+						* BufferFrozenTuple on the outer partition regardless of
+						* whether the outer partition was actually frozen.
 						*/
 						ExecEHJBufferFrozenTuple(ht,
 												&ht->ehj_outer_parts[bucketno],
 												tup, hv,
-												ht->ehj_current_tick + 1);
-						ht->ehj_current_tick++;
+												++ht->ehj_current_tick);
 						pfree(tup);
+						/*
+						* No in-memory probe is possible.
+						*/
 					}
 					else
 					{
+						/*
+						* Cases 1 or 3: The OUTER partition is in memory.
+						*
+						* Insert the S tuple into its in-memory partition block.
+						*/
 						ExecEHJTableInsertOuter(ht, tup, hv);
+						pfree(tup);	/* data is now in the block */
 	
-						/* Head of chain is the S-tuple we just prepended. */
-						HashJoinTuple newTuple = ht->outer_buckets[bucketno];
-						ExecStoreMinimalTuple(EHJ_HJTUPLE_MINTUPLE(newTuple),   // in-block copy
-											  node->hj_OuterTupleSlot,
-											  false);
-						econtext->ecxt_outertuple = node->hj_OuterTupleSlot;
+						if (!ht->ehj_inner_parts[bucketno].is_flushed)
+						{
+							/*
+							* Case 1: Both partitions are in memory.
+							*
+							* Probe the inner (R) bucket for matches.
+							*/
+							HashJoinTuple stored = ht->outer_buckets[bucketno];
 	
-						/* Keep these state variables intact so the scanner knows what to search! */
-						node->hj_CurBucketNo = bucketno;
-						node->hj_CurHashValue = hv;
-						node->hj_CurTuple = NULL;
-						node->ehj_p2_pending_outer = false;
-						node->hj_JoinState = HJ_EHJ_PHASE2_SCAN_INNER;
-						pfree(tup);   // now safe: slot points into block chain, not at tup
+							Assert(stored != NULL);
+							ExecStoreMinimalTuple(EHJ_HJTUPLE_MINTUPLE(stored),
+												node->hj_OuterTupleSlot,
+												false);	/* block owns memory */
+							econtext->ecxt_outertuple = node->hj_OuterTupleSlot;
+	
+							node->hj_CurBucketNo = bucketno;
+							node->hj_CurHashValue = hv;
+							node->hj_CurTuple = NULL;
+							node->hj_JoinState = HJ_EHJ_PHASE2_SCAN_INNER;
+						}
+						/*
+						* Case 3: Outer in memory, inner on disk.
+						*
+						* The S tuple is in memory.  The matching R partition is
+						* frozen and cannot be probed now.  Phase 3 will load
+						* the inner partition from disk and join against the
+						* in-memory S partition.
+						*/
 					}
-
+	
 					/* Completed one full A:B cycle; reset counters. */
 					if (node->reads_from_outer >= node->read_ratio_outer)
 					{
