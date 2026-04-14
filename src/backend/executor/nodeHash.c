@@ -3396,65 +3396,39 @@ ExecParallelHashTuplePrealloc(HashJoinTable hashtable, int batchno, size_t size)
  * A new block is palloc'd in batchCxt.  Block allocation does NOT change
  * hashtable->spaceUsed — per-tuple accounting is done in the caller.
  * ------------------------------------------------------------------------- */
-static char *
-EHJPartGetWritePtr(HashJoinTable hashtable, EHJPartData *part, Size needed)
+static char *EHJPartGetWritePtr(HashJoinTable hashtable,
+                                EHJPartData *part, Size needed)
 {
-	EHJPartBlock blk = part->tail_block;
+    /* If we have no blocks, or the current tail block is full / lacks space */
+    if (part->tail_block == NULL || part->tail_block->full || 
+        (part->tail_block->capacity - part->tail_block->used) < needed)
+    {
+        Size block_size = EHJ_PART_BLOCK_SIZE;
+        EHJPartBlock new_block = (EHJPartBlock) MemoryContextAlloc(hashtable->batchCxt, block_size);
+        
+        new_block->full = false;
+        new_block->capacity = block_size - EHJ_PART_BLOCK_HEADER_SIZE;
+        new_block->used = 0;
+        new_block->next = NULL;
+        
+        if (part->tail_block != NULL)
+            part->tail_block->next = new_block;
+        else
+            part->head_block = new_block;
+            
+        part->tail_block = new_block;
+        part->nblocks++;
 
-	if (blk == NULL || blk->used + needed > blk->capacity)
-	{
-		EHJPartBlock newblk;
-		Size		blksize;
-
-		/*
-		 * Oversized tuples get their own dedicated block, just like the
-		 * standard HASH_CHUNK_THRESHOLD policy.
-		 */
-		if (needed > EHJ_PART_BLOCK_THRESHOLD)
-			blksize = EHJ_PART_BLOCK_HEADER_SIZE + needed;
-		else
-			blksize = EHJ_PART_BLOCK_SIZE;
-
-		newblk = (EHJPartBlock)
-			MemoryContextAlloc(hashtable->batchCxt, blksize);
-
-		newblk->full = false;
-		newblk->capacity = blksize - EHJ_PART_BLOCK_HEADER_SIZE;
-		newblk->used = 0;
-		newblk->next = NULL;
-
-		if (blk != NULL)
-		{
-			blk->full = true;	/* predecessor is now full */
-			blk->next = newblk;
-		}
-		else
-		{
-			/* First block ever for this partition */
-			part->head_block = newblk;
-		}
-
-		part->tail_block = newblk;
-		part->nblocks++;
-
-		/*
-		 * Note: we intentionally do NOT adjust hashtable->spaceUsed here.
-		 * spaceUsed is charged per tuple (in the insert functions) to match
-		 * the accounting model of the existing dense_alloc() code, which
-		 * similarly does not charge for chunk headers or internal waste.
-		 */
-	}
-
-	blk = part->tail_block;
-	{
-		char	   *ptr = EHJ_PART_BLOCK_DATA(blk) + blk->used;
-
-		blk->used += needed;
-		return ptr;
-	}
+        /* --- ADDED INFO LOG --- */
+        /* Logs the event without requiring the bucketno argument */
+        // elog(INFO, "EHJ Alloc: New memory block allocated for an unfrozen partition.");
+    }
+    
+    char *write_ptr = EHJ_PART_BLOCK_DATA(part->tail_block) + part->tail_block->used;
+    part->tail_block->used += needed;
+    
+    return write_ptr;
 }
-
-
 /* =========================================================================
  * ExecEHJInitPartitions
  *
@@ -3893,136 +3867,83 @@ ExecEHJPickVictimInner(HashJoinTable hashtable)
  *   - The bucket head pointer is NULL.
  *   - part->buffer is allocated in hashCxt and part->buffer_count == 0.
  * ========================================================================= */
-void
-ExecEHJFlushPartition(HashJoinTable hashtable,
-					  EHJPartData *part,
-					  int bucketno,
-					  bool is_inner)
+void ExecEHJFlushPartition(HashJoinTable hashtable,
+                    EHJPartData *part, int bucketno, bool is_inner)
 {
-	HashJoinTuple hashTuple;
-	EHJPartBlock blk;
-	MemoryContext oldcxt;
+    HashJoinTuple tuple;
+    HashJoinTuple nexttuple;
+    
+    /* --- MEMORY TRACKING: BEFORE --- */
+    Size mem_used_before = hashtable->spaceUsed;
+    Size remaining_before = hashtable->spaceAllowed > mem_used_before ? 
+                            (hashtable->spaceAllowed - mem_used_before) : 0;
+    Size mem_reclaimed = part->nbytes;
 
-	Assert(!part->is_flushed);
+    /* 1. Ensure BufFile exists */
+    if (part->disk_file == NULL)
+    {
+        PrepareTempTablespaces();
+        part->disk_file = BufFileCreateTemp(false);
+    }
 
-	/* ----------------------------------------------------------------
-	 * Step 1: Create the BufFile if this is the first flush for this
-	 * partition, then write every in-memory tuple to disk.
-	 * ---------------------------------------------------------------- */
-	if (part->disk_file == NULL)
-	{
-		/*
-		 * Ensure temp tablespace is ready before the first BufFile creation.
-		 * PrepareTempTablespaces() is idempotent if already called.
-		 */
-		PrepareTempTablespaces();
-		oldcxt = MemoryContextSwitchTo(hashtable->hashCxt);
-		part->disk_file = BufFileCreateTemp(false /* interXact */);
-		MemoryContextSwitchTo(oldcxt);
-	}
+    /* 2. Write tuples and clear head pointer */
+    int array_index = is_inner ? bucketno : (hashtable->nbuckets + bucketno);
+    tuple = hashtable->buckets.unshared[array_index];
 
-	/*
-	 * Walk the bucket's linked list and serialise each tuple to disk.
-	 * We traverse the bucket chain (not the raw block data) so that the
-	 * logical ordering is preserved even when a single partition spans
-	 * multiple blocks.
-	 */
-	hashTuple = is_inner
-		? hashtable->buckets.unshared[bucketno]
-		: hashtable->outer_buckets[bucketno];
+    while (tuple != NULL)
+    {
+        nexttuple = tuple->next.unshared;
+        
+        MinimalTuple mintup = EHJ_HJTUPLE_MINTUPLE(tuple);
+        int64 arrival_ts = EHJ_HJTUPLE_ARRIVAL_TS(tuple);
+        uint32 hashvalue = tuple->hashvalue;
 
-	while (hashTuple != NULL)
-	{
-		MinimalTuple mintup = EHJ_HJTUPLE_MINTUPLE(hashTuple);
-		uint32		hv = hashTuple->hashvalue;
-		int64		ts = EHJ_HJTUPLE_ARRIVAL_TS(hashTuple);
-		uint32		tlen = mintup->t_len;
+        BufFileWrite(part->disk_file, (void *) &hashvalue, sizeof(uint32));
+        BufFileWrite(part->disk_file, (void *) &arrival_ts, sizeof(int64));
+        BufFileWrite(part->disk_file, (void *) mintup, mintup->t_len);
 
-		BufFileWrite(part->disk_file, &hv, sizeof(uint32));
-		BufFileWrite(part->disk_file, &ts, sizeof(int64));
-		BufFileWrite(part->disk_file, &tlen, sizeof(uint32));
-		BufFileWrite(part->disk_file, mintup, tlen);
+        tuple = nexttuple;
+    }
+    hashtable->buckets.unshared[array_index] = NULL;
 
-		hashTuple = hashTuple->next.unshared;
-	}
+    /* 3. Free physical blocks */
+    EHJPartBlock block = part->head_block;
+    while (block != NULL)
+    {
+        EHJPartBlock nextblock = block->next;
+        pfree(block);
+        block = nextblock;
+    }
+    part->head_block = NULL;
+    part->tail_block = NULL;
+    part->nblocks = 0;
 
-	/* ----------------------------------------------------------------
-	 * Step 2: NULL out the bucket head pointer.  Do this before freeing
-	 * the blocks so that no code can follow the (soon-to-be-invalid)
-	 * pointers that live inside the freed blocks.
-	 * ---------------------------------------------------------------- */
-	if (is_inner)
-		hashtable->buckets.unshared[bucketno] = NULL;
-	else
-		hashtable->outer_buckets[bucketno] = NULL;
+    /* 4. Update memory accounting */
+    hashtable->spaceUsed -= mem_reclaimed;
 
-	/* ----------------------------------------------------------------
-	 * Step 3: Physically free every block in the partition's chain.
-	 * This is the core of the physical reclamation strategy.  Because
-	 * each EHJPartBlock was independently palloc'd in batchCxt, pfree
-	 * returns its memory to the allocator immediately, not at context
-	 * reset time.
-	 * ---------------------------------------------------------------- */
-	blk = part->head_block;
-	while (blk != NULL)
-	{
-		EHJPartBlock next = blk->next;
+    /* 5. Initialize write buffer */
+    MemoryContext oldcxt = MemoryContextSwitchTo(hashtable->hashCxt);
+    part->buffer_capacity = EHJ_PART_BUFFER_INITIAL;
+    part->buffer = (EHJBufferedTuple *) palloc(part->buffer_capacity * sizeof(EHJBufferedTuple));
+    part->buffer_count = 0;
+    part->buffer_nbytes = 0;
+    MemoryContextSwitchTo(oldcxt);
 
-		pfree(blk);
-		blk = next;
-	}
+    /* 6. Mark as flushed */
+    part->is_flushed = true;
+    part->flush_ts = hashtable->ehj_current_tick;
+    part->ntuples = 0;
+    part->nbytes = 0;
 
-	part->head_block = NULL;
-	part->tail_block = NULL;
-	part->nblocks = 0;
+    /* --- MEMORY TRACKING: AFTER & LOG --- */
+    Size mem_used_after = hashtable->spaceUsed;
+    Size remaining_after = hashtable->spaceAllowed > mem_used_after ? 
+                           (hashtable->spaceAllowed - mem_used_after) : 0;
+    Size net_reclaimed = mem_used_before > mem_used_after ? (mem_used_before - mem_used_after) : 0;
 
-	/* ----------------------------------------------------------------
-	 * Step 4: Decrement spaceUsed by exactly the bytes we accounted for
-	 * on insertion (part->nbytes), then zero out the tuple counters.
-	 * ---------------------------------------------------------------- */
-	Assert(hashtable->spaceUsed >= part->nbytes);
-	hashtable->spaceUsed -= part->nbytes;
-
-	part->ntuples = 0;
-	part->nbytes = 0;
-
-	/* ----------------------------------------------------------------
-	 * Step 5: Record the freeze metadata.
-	 * ---------------------------------------------------------------- */
-	part->is_flushed = true;
-	part->flush_ts = hashtable->ehj_current_tick;
-
-	/* ----------------------------------------------------------------
-	 * Step 6: Allocate the post-freeze write buffer in hashCxt.
-	 *
-	 * The buffer lives for the duration of the join (not just the batch)
-	 * because frozen partitions accumulate new tuples across many ticks.
-	 * Its memory footprint is charged to spaceUsed so that the biased-
-	 * flush loop can account for it when deciding whether flushing has
-	 * relieved enough pressure.
-	 * ---------------------------------------------------------------- */
-	oldcxt = MemoryContextSwitchTo(hashtable->hashCxt);
-
-	part->buffer = (EHJBufferedTuple *)
-		palloc(EHJ_PART_BUFFER_INITIAL * sizeof(EHJBufferedTuple));
-	part->buffer_count = 0;
-	part->buffer_capacity = EHJ_PART_BUFFER_INITIAL;
-	part->buffer_nbytes = 0;
-
-	MemoryContextSwitchTo(oldcxt);
-
-	/* Charge the buffer array to spaceUsed. */
-	hashtable->spaceUsed +=
-		(Size) part->buffer_capacity * sizeof(EHJBufferedTuple);
-
-#ifdef HJDEBUG
-	printf("EHJ %p: flushed %s partition %d (flush_ts=%ld)\n",
-		   hashtable, is_inner ? "inner" : "outer",
-		   bucketno, (long) part->flush_ts);
-#endif
+    elog(INFO, "EHJ Flush: Partition %d (%s). Remaining before: %zu bytes | Reclaimed (net): %zu bytes | Remaining after: %zu bytes", 
+         bucketno, is_inner ? "Inner" : "Outer", remaining_before, net_reclaimed, remaining_after);
 }
-
-
 /* =========================================================================
  * ExecEHJBufferFrozenTuple
  *
@@ -4175,6 +4096,8 @@ ExecEHJFlushAllPartitionBuffers(HashJoinTable hashtable)
 bool
 ExecEHJBiasedFlush(HashJoinTable hashtable)
 {
+	elog(INFO, "EHJ Status: Starting Phase 2 (Biased Reading and Flushing)");
+
 	while (hashtable->spaceUsed >= hashtable->spaceAllowed)
 	{
 		int			victim;

@@ -1,17 +1,17 @@
--- Disable merge and nested loop joins to force a Hash Join
 SET enable_mergejoin = off;
 SET enable_nestloop = off;
+SET max_parallel_workers_per_gather = 0;
+SET work_mem = '1MB';
+SET client_min_messages = info;
 
--- 1. Print the execution plan to verify it is using a Hash Join
-EXPLAIN SELECT a.brand, b.brand
+-- 1. Print the execution plan
+EXPLAIN SELECT COUNT(*)
 FROM wdc1brands a
 JOIN wdc1brands b
-  ON a.brand = b.brand
-LIMIT 50;
+  ON a.brand = b.brand;
 
--- 2. Execute the actual query
-SELECT a.brand, b.brand
+-- 2. Execute the full table join
+SELECT COUNT(*)
 FROM wdc1brands a
 JOIN wdc1brands b
-  ON a.brand = b.brand
-LIMIT 50;
+  ON a.brand = b.brand;

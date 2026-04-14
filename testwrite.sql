@@ -1,20 +1,19 @@
 SET enable_mergejoin = off;
 SET enable_nestloop = off;
+SET max_parallel_workers_per_gather = 0;
+SET work_mem = '1MB';
+SET client_min_messages = info;
 
-EXPLAIN SELECT a.brand, b.brand
-FROM wdc1brands a
-JOIN wdc1brands b
-  ON a.brand = b.brand
-LIMIT 50;
-
--- Redirect all output after this line to a text file
 \o query_output.txt
 
-SELECT a.brand, b.brand
-FROM wdc1brands a
-JOIN wdc1brands b
-  ON a.brand = b.brand
-LIMIT 50;
+EXPLAIN SELECT COUNT(*)
+FROM generate_series(1, 1000000) a(id)
+JOIN generate_series(1, 1000000) b(id)
+  ON a.id = b.id;
 
--- Stop redirecting (optional if it's the end of the file)
+SELECT COUNT(*)
+FROM generate_series(1, 1000000) a(id)
+JOIN generate_series(1, 1000000) b(id)
+  ON a.id = b.id;
+
 \o

@@ -832,17 +832,16 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 												  hashtable_ehj->keepNulls,
 												  &inner_hashvalue))
 						{
-							ExecEHJTableInsertInner(hashtable_ehj,
-													inner_tuple,
-													inner_hashvalue);
-							if (!hashtable_ehj->ehj_phase1_done)
-							{
-								ExecHashGetBucketAndBatch(hashtable_ehj,
-														  inner_hashvalue,
-														  &inner_bucketno,
-														  &dummy_batchno);
-								got_inner = true;
-							}
+						ExecEHJTableInsertInner(hashtable_ehj, inner_tuple, inner_hashvalue);
+						/* Set the flag on overage, but probe regardless (unless now transitioning). */
+						if (hashtable_ehj->spaceUsed >= hashtable_ehj->spaceAllowed)
+							hashtable_ehj->ehj_phase1_done = true;
+						else
+						{
+							ExecHashGetBucketAndBatch(hashtable_ehj, inner_hashvalue,
+													&inner_bucketno, &dummy_batchno);
+							got_inner = true;
+						}	
 						}
 						/* inner_tuple is now safely in the slab; no pfree needed */
 					}
@@ -870,18 +869,16 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 												  HJ_FILL_OUTER(node),
 												  &outer_hashvalue))
 						{
-							ExecEHJTableInsertOuter(hashtable_ehj,
-													outer_tuple,
-													outer_hashvalue);
-							if (!hashtable_ehj->ehj_phase1_done)
-							{
-								ExecHashGetBucketAndBatch(hashtable_ehj,
-														  outer_hashvalue,
-														  &outer_bucketno,
-														  &dummy_batchno);
-								node->hj_OuterNotEmpty = true;
-								got_outer = true;
-							}
+						ExecEHJTableInsertOuter(hashtable_ehj, outer_tuple, outer_hashvalue);
+						/* Set the flag on overage, but probe regardless (unless now transitioning). */
+						if (hashtable_ehj->spaceUsed >= hashtable_ehj->spaceAllowed)
+							hashtable_ehj->ehj_phase1_done = true;
+						else
+						{
+							ExecHashGetBucketAndBatch(hashtable_ehj, outer_hashvalue,
+													&outer_bucketno, &dummy_batchno);
+							got_outer = true;
+						}
 						}
 					}
 				}
@@ -1168,19 +1165,20 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						* bucket for existing S tuples that match.
 						*/
 						ExecEHJTableInsertInner(ht, tup, hv);
-	
-						ExecStoreMinimalTuple(tup, node->hj_HashTupleSlot, false);
+
+						/* Head of chain is the tuple we just prepended. */
+						HashJoinTuple newTuple = ht->buckets.unshared[bucketno];
+						ExecStoreMinimalTuple(EHJ_HJTUPLE_MINTUPLE(newTuple),   // in-block copy
+											node->hj_HashTupleSlot,
+											false);
 						econtext->ecxt_innertuple = node->hj_HashTupleSlot;
-	
 						node->hj_CurBucketNo = bucketno;
 						node->hj_CurHashValue = hv;
 						node->hj_CurTuple = NULL;
-						node->ehj_p2_pending_inner = false;
 						node->hj_JoinState = HJ_EHJ_PHASE2_SCAN_OUTER;
-					}
-	
-					pfree(tup);
-					break;
+						pfree(tup);   // now safe: slot points into block chain, not at tup
+						}
+						break;
 				}
 				else if (node->reads_from_inner >= node->read_ratio_inner &&
 						node->reads_from_outer < node->read_ratio_outer &&
@@ -1232,18 +1230,22 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					{
 						ExecEHJTableInsertOuter(ht, tup, hv);
 	
-						ExecStoreMinimalTuple(tup, node->hj_OuterTupleSlot, false);
+						/* Head of chain is the S-tuple we just prepended. */
+						HashJoinTuple newTuple = ht->outer_buckets[bucketno];
+						ExecStoreMinimalTuple(EHJ_HJTUPLE_MINTUPLE(newTuple),   // in-block copy
+											  node->hj_OuterTupleSlot,
+											  false);
 						econtext->ecxt_outertuple = node->hj_OuterTupleSlot;
 	
+						/* Keep these state variables intact so the scanner knows what to search! */
 						node->hj_CurBucketNo = bucketno;
 						node->hj_CurHashValue = hv;
 						node->hj_CurTuple = NULL;
 						node->ehj_p2_pending_outer = false;
 						node->hj_JoinState = HJ_EHJ_PHASE2_SCAN_INNER;
+						pfree(tup);   // now safe: slot points into block chain, not at tup
 					}
-	
-					pfree(tup);
-	
+
 					/* Completed one full A:B cycle; reset counters. */
 					if (node->reads_from_outer >= node->read_ratio_outer)
 					{
