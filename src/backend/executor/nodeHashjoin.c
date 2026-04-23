@@ -10,96 +10,7 @@
  * IDENTIFICATION
  *	  src/backend/executor/nodeHashjoin.c
  *
- * PARALLELISM
- *
- * Hash joins can participate in parallel query execution in several ways.  A
- * parallel-oblivious hash join is one where the node is unaware that it is
- * part of a parallel plan.  In this case, a copy of the inner plan is used to
- * build a copy of the hash table in every backend, and the outer plan could
- * either be built from a partial or complete path, so that the results of the
- * hash join are correspondingly either partial or complete.  A parallel-aware
- * hash join is one that behaves differently, coordinating work between
- * backends, and appears as Parallel Hash Join in EXPLAIN output.  A Parallel
- * Hash Join always appears with a Parallel Hash node.
- *
- * Parallel-aware hash joins use the same per-backend state machine to track
- * progress through the hash join algorithm as parallel-oblivious hash joins.
- * In a parallel-aware hash join, there is also a shared state machine that
- * co-operating backends use to synchronize their local state machines and
- * program counters.  The shared state machine is managed with a Barrier IPC
- * primitive.  When all attached participants arrive at a barrier, the phase
- * advances and all waiting participants are released.
- *
- * When a participant begins working on a parallel hash join, it must first
- * figure out how much progress has already been made, because participants
- * don't wait for each other to begin.  For this reason there are switch
- * statements at key points in the code where we have to synchronize our local
- * state machine with the phase, and then jump to the correct part of the
- * algorithm so that we can get started.
- *
- * One barrier called build_barrier is used to coordinate the hashing phases.
- * The phase is represented by an integer which begins at zero and increments
- * one by one, but in the code it is referred to by symbolic names as follows:
- *
- *   PHJ_BUILD_ELECTING              -- initial state
- *   PHJ_BUILD_ALLOCATING            -- one sets up the batches and table 0
- *   PHJ_BUILD_HASHING_INNER         -- all hash the inner rel
- *   PHJ_BUILD_HASHING_OUTER         -- (multi-batch only) all hash the outer
- *   PHJ_BUILD_DONE                  -- building done, probing can begin
- *
- * While in the phase PHJ_BUILD_HASHING_INNER a separate pair of barriers may
- * be used repeatedly as required to coordinate expansions in the number of
- * batches or buckets.  Their phases are as follows:
- *
- *   PHJ_GROW_BATCHES_ELECTING       -- initial state
- *   PHJ_GROW_BATCHES_ALLOCATING     -- one allocates new batches
- *   PHJ_GROW_BATCHES_REPARTITIONING -- all repartition
- *   PHJ_GROW_BATCHES_FINISHING      -- one cleans up, detects skew
- *
- *   PHJ_GROW_BUCKETS_ELECTING       -- initial state
- *   PHJ_GROW_BUCKETS_ALLOCATING     -- one allocates new buckets
- *   PHJ_GROW_BUCKETS_REINSERTING    -- all insert tuples
- *
- * If the planner got the number of batches and buckets right, those won't be
- * necessary, but on the other hand we might finish up needing to expand the
- * buckets or batches multiple times while hashing the inner relation to stay
- * within our memory budget and load factor target.  For that reason it's a
- * separate pair of barriers using circular phases.
- *
- * The PHJ_BUILD_HASHING_OUTER phase is required only for multi-batch joins,
- * because we need to divide the outer relation into batches up front in order
- * to be able to process batches entirely independently.  In contrast, the
- * parallel-oblivious algorithm simply throws tuples 'forward' to 'later'
- * batches whenever it encounters them while scanning and probing, which it
- * can do because it processes batches in serial order.
- *
- * Once PHJ_BUILD_DONE is reached, backends then split up and process
- * different batches, or gang up and work together on probing batches if there
- * aren't enough to go around.  For each batch there is a separate barrier
- * with the following phases:
- *
- *  PHJ_BATCH_ELECTING       -- initial state
- *  PHJ_BATCH_ALLOCATING     -- one allocates buckets
- *  PHJ_BATCH_LOADING        -- all load the hash table from disk
- *  PHJ_BATCH_PROBING        -- all probe
- *  PHJ_BATCH_DONE           -- end
- *
- * Batch 0 is a special case, because it starts out in phase
- * PHJ_BATCH_PROBING; populating batch 0's hash table is done during
- * PHJ_BUILD_HASHING_INNER so we can skip loading.
- *
- * Initially we try to plan for a single-batch hash join using the combined
- * work_mem of all participants to create a large shared hash table.  If that
- * turns out either at planning or execution time to be impossible then we
- * fall back to regular work_mem sized hash tables.
- *
- * To avoid deadlocks, we never wait for any barrier unless it is known that
- * all other backends attached to it are actively executing the node or have
- * already arrived.  Practically, that means that we never return a tuple
- * while attached to a barrier, unless the barrier has reached its final
- * state.  In the slightly special case of the per-batch barrier, we return
- * tuples while in PHJ_BATCH_PROBING phase, but that's OK because we use
- * BarrierArriveAndDetach() to advance it to PHJ_BATCH_DONE without waiting.
+ * Gutted and replaced with Early Hash Join implementation. 
  *
  *-------------------------------------------------------------------------
  */
@@ -322,33 +233,28 @@ EHJShouldEmit(int64 tr_ts, int64 ts_ts,
 			  int64 tsf_r, int64 tsf_s,
 			  bool r_flushed, bool s_flushed)
 {
-	if (!s_flushed && !r_flushed)
-		return false;
- 
-	if (!s_flushed)
+	/*
+	 * In our asymmetric Phase 2 EHJ implementation, an arriving tuple ALWAYS 
+	 * probes the opposite partition UNLESS that opposite partition has already
+	 * been flushed to disk.
+	 *
+	 * Therefore, a matching pair of tuples was MISSED in Phase 2 (and thus
+	 * must be emitted here in Phase 3) if and only if the opposite partition
+	 * was already flushed when the second tuple of the pair arrived.
+	 */
+
+	if (tr_ts > ts_ts)
 	{
-		/*
-		 * Only R partition was flushed.  The Python analogue: tsf_s is None,
-		 * return ts_ts > tsf_r.
-		 */
-		return ts_ts > tsf_r;
+		/* R arrived after S.
+		 * It missed S in Phase 2 if and only if S was already flushed. */
+		return (s_flushed && tsf_s < tr_ts);
 	}
- 
-	/* Case 1 */
-	if (ts_ts <= tsf_s && tr_ts > tsf_s)
-		return true;
- 
-	if (r_flushed)
+	else
 	{
-		/* Case 2 */
-		if (ts_ts > tsf_s && ts_ts <= tsf_r && tr_ts > ts_ts)
-			return true;
-		/* Case 3 */
-		if (ts_ts > tsf_r)
-			return true;
+		/* S arrived after R.
+		 * It missed R in Phase 2 if and only if R was already flushed. */
+		return (r_flushed && tsf_r < ts_ts);
 	}
- 
-	return false;
 }
 
 /* ----------------------------------------------------------------
@@ -1150,8 +1056,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					/* The INNER partition is on disk. Buffer it. */
 					ExecEHJBufferFrozenTuple(ht,
 												&ht->ehj_inner_parts[bucketno],
-												tup, hv,
-												++ht->ehj_current_tick);
+												tup, hv);
 					
 					/* FIX: Even though R goes to disk, if S is in memory, it MUST probe S! */
 					if (!ht->ehj_outer_parts[bucketno].is_flushed)
@@ -1253,8 +1158,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						/* The OUTER partition is on disk. Buffer it. */
 						ExecEHJBufferFrozenTuple(ht,
 												&ht->ehj_outer_parts[bucketno],
-												tup, hv,
-												++ht->ehj_current_tick);
+												tup, hv);
 						
 						/* FIX: Even though S goes to disk, if R is in memory, it MUST probe R! */
 						if (!ht->ehj_inner_parts[bucketno].is_flushed)

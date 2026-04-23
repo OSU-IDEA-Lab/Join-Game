@@ -150,7 +150,7 @@ extern void ExecEHJFlushPartition(HashJoinTable hashtable,
  */
 extern void ExecEHJBufferFrozenTuple(HashJoinTable hashtable,
 					EHJPartData *part, MinimalTuple tuple,
-					uint32 hashvalue, int64 arrival_ts);
+					uint32 hashvalue);
 
 /*
  * ExecEHJFlushPartitionBuffer

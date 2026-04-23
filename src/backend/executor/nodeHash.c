@@ -3315,75 +3315,6 @@ ExecParallelHashTuplePrealloc(HashJoinTable hashtable, int batchno, size_t size)
 	return true;
 }
 
-/* ========================================================================
- * Early Hash Join (EHJ) — Phase 1 (symmetric in-memory) and
- *                          Phase 2 (biased flush with physical reclamation)
- *
- * INTEGRATION NOTES
- * -----------------
- * This file replaces the entire EHJ section at the bottom of nodeHash.c,
- * starting from the comment block that begins
- *   "Early Hash Join (EHJ) — Phase 1: symmetric in-memory join"
- * through to the end of the file.
- *
- * Additionally, remove the following line from the static forward-declaration
- * block near the top of nodeHash.c (around line 50):
- *
- *   static void *ehj_dense_alloc(HashJoinTable hashtable, Size size);
- *
- * and replace it with:
- *
- *   static char *EHJPartGetWritePtr(HashJoinTable hashtable,
- *                                   EHJPartData *part, Size needed);
- *
- * Design overview
- * ---------------
- * Phase 1 uses the standard slab allocator (ehj_dense_alloc, now removed)
- * which interleaves all partitions' tuples in mixed HashMemoryChunks.  That
- * design makes per-partition pfree impossible, so memory could only be
- * "reclaimed" logically by adjusting spaceUsed while leaving phantom bytes in
- * the slab.
- *
- * Phase 2 replaces the slab with a per-partition block chain (EHJPartBlock).
- * Each block is an independent palloc in batchCxt holding only tuples of one
- * partition.  When a partition is frozen:
- *   - its tuples are written to a BufFile;
- *   - every block in its chain is pfree'd (physical reclamation);
- *   - spaceUsed is decremented by the accounted tuple bytes.
- * A post-freeze write buffer (EHJBufferedTuple array in hashCxt) catches any
- * subsequent tuples that hash to the now-frozen partition and bulk-writes them
- * to the same BufFile once the buffer fills or Phase 2 ends.
- *
- * Tuple layout (EHJ-specific)
- * ---------------------------
- * Every EHJ tuple stored in a partition block has the layout:
- *
- *   [HashJoinTupleData header]   HJTUPLE_OVERHEAD bytes
- *   [int64 arrival_ts        ]   EHJ_TS_SIZE bytes  (MAXALIGN'd)
- *   [MinimalTuple data       ]   t_len bytes
- *
- * Use EHJ_HJTUPLE_MINTUPLE() and EHJ_HJTUPLE_ARRIVAL_TS() — never the plain
- * HJTUPLE_MINTUPLE() — when working with EHJ tuples.
- *
- * Memory accounting
- * -----------------
- * spaceUsed is incremented per tuple on insertion (EHJ_HJTUPLE_OVERHEAD +
- * t_len), not per block allocation, consistent with the existing dense_alloc
- * model.  On partition flush, spaceUsed is decremented by part->nbytes
- * (the sum of per-tuple charges), and the blocks are pfree'd.  Post-freeze
- * buffer entries additionally charge spaceUsed by the MinimalTuple copy size.
- * ======================================================================== */
-
-#include "postgres.h"
-
-#include <limits.h>
-
-#include "commands/tablespace.h"
-#include "executor/hashjoin.h"
-#include "executor/nodeHash.h"
-#include "executor/nodeHashjoin.h"
-#include "utils/memutils.h"
-
 
 /* -------------------------------------------------------------------------
  * Static helper: EHJPartGetWritePtr
@@ -3688,7 +3619,7 @@ ExecEHJTableInsertInner(HashJoinTable hashtable,
 	 */
 	if (part->is_flushed)
 	{
-		ExecEHJBufferFrozenTuple(hashtable, part, tuple, hashvalue, tick);
+		ExecEHJBufferFrozenTuple(hashtable, part, tuple, hashvalue);
 		return;
 	}
 
@@ -3742,13 +3673,13 @@ ExecEHJTableInsertOuter(HashJoinTable hashtable,
 	ExecHashGetBucketAndBatch(hashtable, hashvalue, &bucketno, &batchno);
 	Assert(batchno == 0);
 
-	tick = ++hashtable->ehj_current_tick;
+	tick = hashtable->ehj_current_tick;
 
 	part = &hashtable->ehj_outer_parts[bucketno];
 
 	if (part->is_flushed)
 	{
-		ExecEHJBufferFrozenTuple(hashtable, part, tuple, hashvalue, tick);
+		ExecEHJBufferFrozenTuple(hashtable, part, tuple, hashvalue);
 		return;
 	}
 
@@ -3878,6 +3809,7 @@ void ExecEHJFlushPartition(HashJoinTable hashtable,
     Size remaining_before = hashtable->spaceAllowed > mem_used_before ? 
                             (hashtable->spaceAllowed - mem_used_before) : 0;
     Size mem_reclaimed = part->nbytes;
+    MemoryContext oldcxt;
 
     /* 1. Ensure BufFile exists */
     if (part->disk_file == NULL)
@@ -3922,7 +3854,7 @@ void ExecEHJFlushPartition(HashJoinTable hashtable,
     hashtable->spaceUsed -= mem_reclaimed;
 
     /* 5. Initialize write buffer */
-    MemoryContext oldcxt = MemoryContextSwitchTo(hashtable->hashCxt);
+    oldcxt = MemoryContextSwitchTo(hashtable->hashCxt);
     part->buffer_capacity = EHJ_PART_BUFFER_INITIAL;
     part->buffer = (EHJBufferedTuple *) palloc(part->buffer_capacity * sizeof(EHJBufferedTuple));
     part->buffer_count = 0;
@@ -3941,8 +3873,8 @@ void ExecEHJFlushPartition(HashJoinTable hashtable,
                            (hashtable->spaceAllowed - mem_used_after) : 0;
     Size net_reclaimed = mem_used_before > mem_used_after ? (mem_used_before - mem_used_after) : 0;
 
-    elog(INFO, "EHJ Flush: Partition %d (%s). Remaining before: %zu bytes | Reclaimed (net): %zu bytes | Remaining after: %zu bytes", 
-         bucketno, is_inner ? "Inner" : "Outer", remaining_before, net_reclaimed, remaining_after);
+    // elog(INFO, "EHJ Flush: Partition %d (%s). Remaining before: %zu bytes | Reclaimed (net): %zu bytes | Remaining after: %zu bytes", 
+    //      bucketno, is_inner ? "Inner" : "Outer", remaining_before, net_reclaimed, remaining_after);
 }
 /* =========================================================================
  * ExecEHJBufferFrozenTuple
@@ -3958,8 +3890,7 @@ void
 ExecEHJBufferFrozenTuple(HashJoinTable hashtable,
 						 EHJPartData *part,
 						 MinimalTuple tuple,
-						 uint32 hashvalue,
-						 int64 arrival_ts)
+						 uint32 hashvalue)
 {
 	EHJBufferedTuple *entry;
 	MinimalTuple copy;
@@ -3967,6 +3898,9 @@ ExecEHJBufferFrozenTuple(HashJoinTable hashtable,
 
 	Assert(part->is_flushed);
 	Assert(part->buffer != NULL);
+
+	// /* Advance the global arrival clock before any path that stores the tick. */
+	// hashtable->ehj_current_tick++;
 
 	/* Flush the buffer to disk if it is full. */
 	if (part->buffer_count == part->buffer_capacity)
@@ -3988,7 +3922,7 @@ ExecEHJBufferFrozenTuple(HashJoinTable hashtable,
 	/* Populate the buffer entry. */
 	entry = &part->buffer[part->buffer_count++];
 	entry->hashvalue = hashvalue;
-	entry->arrival_ts = arrival_ts;
+	entry->arrival_ts = hashtable->ehj_current_tick++;
 	entry->tuple = copy;
 
 	/* Account for the MinimalTuple copy. */
@@ -4027,7 +3961,6 @@ ExecEHJFlushPartitionBuffer(HashJoinTable hashtable, EHJPartData *part)
 
 		BufFileWrite(part->disk_file, &entry->hashvalue, sizeof(uint32));
 		BufFileWrite(part->disk_file, &entry->arrival_ts, sizeof(int64));
-		// BufFileWrite(part->disk_file, &tlen, sizeof(uint32));
 		BufFileWrite(part->disk_file, mintup, tlen);
 
 		pfree(mintup);
@@ -4096,8 +4029,6 @@ ExecEHJFlushAllPartitionBuffers(HashJoinTable hashtable)
 bool
 ExecEHJBiasedFlush(HashJoinTable hashtable)
 {
-	elog(INFO, "EHJ Status: Starting Phase 2 (Biased Reading and Flushing)");
-
 	while (hashtable->spaceUsed >= hashtable->spaceAllowed)
 	{
 		int			victim;

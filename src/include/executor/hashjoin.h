@@ -467,7 +467,7 @@ typedef struct HashJoinTableData
 	 *   ehj_phase1_done  – set when memory fills or both iterators are
 	 *                      exhausted; causes the driver loop to exit the
 	 *                      symmetric phase and fall through to standard
-	 *                      batch processing (Phase 2, not yet implemented).
+	 *                      batch processing.
 	 *   ehj_inner_done   – inner (R) iterator exhausted during phase 1.
 	 *   ehj_outer_done   – outer (S) iterator exhausted during phase 1.
 	 */
