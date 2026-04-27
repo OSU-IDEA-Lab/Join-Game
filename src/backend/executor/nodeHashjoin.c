@@ -557,7 +557,19 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					break;
 				}
 
-				/* Match found — project and return */
+				/* Filter out hash collisions */
+				if (node->hashclauses != NULL && !ExecQual(node->hashclauses, econtext))
+				{
+					InstrCountFiltered1(node, 1);
+					break;
+				}
+
+				/* Match found — verify with joinqual before emitting */
+				if (joinqual != NULL && !ExecQual(joinqual, econtext))
+				{
+					InstrCountFiltered1(node, 1);
+					break;
+				}
 				if (node->js.jointype == JOIN_ANTI)
 				{
 					node->hj_JoinState = HJ_EHJ_SYMMETRIC;
@@ -594,6 +606,19 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					break;
 				}
 
+				/* Filter out hash collisions */
+				if (node->hashclauses != NULL && !ExecQual(node->hashclauses, econtext))
+				{
+					InstrCountFiltered1(node, 1);
+					break;
+				}
+
+				/* Match found — verify with joinqual before emitting */
+				if (joinqual != NULL && !ExecQual(joinqual, econtext))
+				{
+					InstrCountFiltered1(node, 1);
+					break;
+				}
 				if (node->js.jointype == JOIN_ANTI)
 				{
 					node->hj_JoinState = HJ_EHJ_SYMMETRIC;
@@ -897,6 +922,19 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					break;
 				}
 	
+				/* Filter out hash collisions */
+				if (node->hashclauses != NULL && !ExecQual(node->hashclauses, econtext))
+				{
+					InstrCountFiltered1(node, 1);
+					break;
+				}
+
+				/* Match found — verify with joinqual before emitting */
+				if (joinqual != NULL && !ExecQual(joinqual, econtext))
+				{
+					InstrCountFiltered1(node, 1);
+					break;
+				}
 				if (node->js.jointype == JOIN_ANTI)
 				{
 					node->hj_JoinState = HJ_EHJ_PHASE2_LOOP;
@@ -934,6 +972,19 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					break;
 				}
 	
+				/* Filter out hash collisions */
+				if (node->hashclauses != NULL && !ExecQual(node->hashclauses, econtext))
+				{
+					InstrCountFiltered1(node, 1);
+					break;
+				}
+
+				/* Match found — verify with joinqual before emitting */
+				if (joinqual != NULL && !ExecQual(joinqual, econtext))
+				{
+					InstrCountFiltered1(node, 1);
+					break;
+				}
 				if (node->js.jointype == JOIN_ANTI)
 				{
 					node->hj_JoinState = HJ_EHJ_PHASE2_LOOP;
@@ -1008,115 +1059,96 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					{
 						int			cap = 64;
 						int			cnt = 0;
-						MinimalTuple *tups = (MinimalTuple *)
-							palloc(cap * sizeof(MinimalTuple));
+						MinimalTuple *tups = (MinimalTuple *) palloc(cap * sizeof(MinimalTuple));
 						int64	   *tss = (int64 *) palloc(cap * sizeof(int64));
 						uint32	   *hvs = (uint32 *) palloc(cap * sizeof(uint32));
-	
+
 						if (inner_part->disk_file != NULL)
 						{
+							/* Load the spilled tuples from disk. */
 							uint32		hv;
 							int64		ts;
 							MinimalTuple tup;
-	
+
 							if (BufFileSeek(inner_part->disk_file, 0, 0L, SEEK_SET))
-								ereport(ERROR,
-										(errcode_for_file_access(),
-										errmsg("could not rewind EHJ inner partition file: %m")));
-	
-							while (ExecEHJReadNextTuple(inner_part->disk_file,
-														&hv, &ts, &tup))
+								ereport(ERROR, (errcode_for_file_access(), errmsg("could not rewind EHJ inner partition file: %m")));
+
+							while (ExecEHJReadNextTuple(inner_part->disk_file, &hv, &ts, &tup))
 							{
-								if (cnt == cap)
-								{
+								if (cnt == cap) {
 									cap *= 2;
 									tups = repalloc(tups, cap * sizeof(MinimalTuple));
 									tss  = repalloc(tss,  cap * sizeof(int64));
 									hvs  = repalloc(hvs,  cap * sizeof(uint32));
 								}
-								tups[cnt] = tup;
-								tss[cnt]  = ts;
-								hvs[cnt]  = hv;
+								tups[cnt] = tup; tss[cnt] = ts; hvs[cnt] = hv;
 								cnt++;
 							}
 						}
-	
-						/* Also include any remaining in-memory inner tuples. */
+						
+						/* ALWAYS load the pre-flush tuples from memory. */
 						{
 							HashJoinTuple ht_tup = ht->buckets.unshared[p];
-	
 							while (ht_tup != NULL)
 							{
-								if (cnt == cap)
-								{
+								if (cnt == cap) {
 									cap *= 2;
 									tups = repalloc(tups, cap * sizeof(MinimalTuple));
 									tss  = repalloc(tss,  cap * sizeof(int64));
 									hvs  = repalloc(hvs,  cap * sizeof(uint32));
 								}
-								/* Copy the tuple; it lives in the (about to be
-								* destroyed) batchCxt block chain. */
 								MinimalTuple src = EHJ_HJTUPLE_MINTUPLE(ht_tup);
 								tups[cnt] = (MinimalTuple) palloc(src->t_len);
 								memcpy(tups[cnt], src, src->t_len);
-								tss[cnt]  = EHJ_HJTUPLE_ARRIVAL_TS(ht_tup);
-								hvs[cnt]  = ht_tup->hashvalue;
+								tss[cnt] = EHJ_HJTUPLE_ARRIVAL_TS(ht_tup);
+								hvs[cnt] = ht_tup->hashvalue;
 								cnt++;
 								ht_tup = ht_tup->next.unshared;
 							}
 						}
-	
-						node->ehj_p3_inner_tups  = tups;
-						node->ehj_p3_inner_ts    = tss;
-						node->ehj_p3_inner_hv    = hvs;
+						node->ehj_p3_inner_tups = tups;
+						node->ehj_p3_inner_ts = tss;
+						node->ehj_p3_inner_hv = hvs;
 						node->ehj_p3_inner_count = cnt;
 					}
-	
+
 					/* Load outer (S) tuples for this partition. */
 					{
 						int			cap = 64;
 						int			cnt = 0;
-						MinimalTuple *tups = (MinimalTuple *)
-							palloc(cap * sizeof(MinimalTuple));
+						MinimalTuple *tups = (MinimalTuple *) palloc(cap * sizeof(MinimalTuple));
 						int64	   *tss = (int64 *) palloc(cap * sizeof(int64));
 						uint32	   *hvs = (uint32 *) palloc(cap * sizeof(uint32));
-	
+
 						if (outer_part->disk_file != NULL)
 						{
+							/* Load the spilled tuples from disk. */
 							uint32		hv;
 							int64		ts;
 							MinimalTuple tup;
-	
+
 							if (BufFileSeek(outer_part->disk_file, 0, 0L, SEEK_SET))
-								ereport(ERROR,
-										(errcode_for_file_access(),
-										errmsg("could not rewind EHJ outer partition file: %m")));
-	
-							while (ExecEHJReadNextTuple(outer_part->disk_file,
-														&hv, &ts, &tup))
+								ereport(ERROR, (errcode_for_file_access(), errmsg("could not rewind EHJ outer partition file: %m")));
+
+							while (ExecEHJReadNextTuple(outer_part->disk_file, &hv, &ts, &tup))
 							{
-								if (cnt == cap)
-								{
+								if (cnt == cap) {
 									cap *= 2;
 									tups = repalloc(tups, cap * sizeof(MinimalTuple));
 									tss  = repalloc(tss,  cap * sizeof(int64));
 									hvs  = repalloc(hvs,  cap * sizeof(uint32));
 								}
-								tups[cnt] = tup;
-								tss[cnt]  = ts;
-								hvs[cnt]  = hv;
+								tups[cnt] = tup; tss[cnt] = ts; hvs[cnt] = hv;
 								cnt++;
 							}
 						}
-	
-						/* Also include any remaining in-memory outer tuples. */
+						
+						/* ALWAYS load the pre-flush tuples from memory. */
 						{
 							HashJoinTuple ht_tup = ht->outer_buckets[p];
-	
 							while (ht_tup != NULL)
 							{
-								if (cnt == cap)
-								{
+								if (cnt == cap) {
 									cap *= 2;
 									tups = repalloc(tups, cap * sizeof(MinimalTuple));
 									tss  = repalloc(tss,  cap * sizeof(int64));
@@ -1125,19 +1157,17 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 								MinimalTuple src = EHJ_HJTUPLE_MINTUPLE(ht_tup);
 								tups[cnt] = (MinimalTuple) palloc(src->t_len);
 								memcpy(tups[cnt], src, src->t_len);
-								tss[cnt]  = EHJ_HJTUPLE_ARRIVAL_TS(ht_tup);
-								hvs[cnt]  = ht_tup->hashvalue;
+								tss[cnt] = EHJ_HJTUPLE_ARRIVAL_TS(ht_tup);
+								hvs[cnt] = ht_tup->hashvalue;
 								cnt++;
 								ht_tup = ht_tup->next.unshared;
 							}
 						}
-	
-						node->ehj_p3_outer_tups  = tups;
-						node->ehj_p3_outer_ts    = tss;
-						node->ehj_p3_outer_hv    = hvs;
+						node->ehj_p3_outer_tups = tups;
+						node->ehj_p3_outer_ts = tss;
+						node->ehj_p3_outer_hv = hvs;
 						node->ehj_p3_outer_count = cnt;
 					}
-	
 					/* Close the disk files — we've loaded everything. */
 					if (inner_part->disk_file)
 					{
@@ -1251,7 +1281,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						econtext->ecxt_outertuple = node->hj_OuterTupleSlot;
 	
 						/* Hash clauses encode key equality. */
-						if (joinqual != NULL && !ExecQual(joinqual, econtext))
+						if (node->hashclauses != NULL && !ExecQual(node->hashclauses, econtext))
 						{
 							InstrCountFiltered1(node, 1);
 							continue;
@@ -1264,6 +1294,12 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 							break;
 						}
 	
+						if (joinqual != NULL && !ExecQual(joinqual, econtext))
+						{
+							InstrCountFiltered1(node, 1);
+							continue;
+						}
+
 						/* Other (non-hash) quals. */
 						if (otherqual != NULL && !ExecQual(otherqual, econtext))
 						{
