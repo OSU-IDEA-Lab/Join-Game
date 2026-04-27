@@ -569,8 +569,10 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					node->hj_JoinState = HJ_EHJ_SYMMETRIC;
 					node->hj_CurTuple = NULL;
 				}
-				if (otherqual == NULL || ExecQual(otherqual, econtext))
+				if (otherqual == NULL || ExecQual(otherqual, econtext)) {
+					elog(INFO, "EHJ_MATCH: hash=%u phase=1 case=Inner_Insert_Probes_Outer", node->hj_CurHashValue);
 					return ExecProject(node->js.ps.ps_ProjInfo);
+				}
 				else
 					InstrCountFiltered2(node, 1);
 				break;
@@ -603,8 +605,10 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					node->hj_JoinState = HJ_EHJ_SYMMETRIC;
 					node->hj_CurTuple = NULL;
 				}
-				if (otherqual == NULL || ExecQual(otherqual, econtext))
+				if (otherqual == NULL || ExecQual(otherqual, econtext)) {
+					elog(INFO, "EHJ_MATCH: hash=%u phase=1 case=Outer_Insert_Probes_Inner", node->hj_CurHashValue);
 					return ExecProject(node->js.ps.ps_ProjInfo);
+				}
 				else
 					InstrCountFiltered2(node, 1);
 				break;
@@ -904,8 +908,10 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					node->hj_JoinState = HJ_EHJ_PHASE2_LOOP;
 					node->hj_CurTuple = NULL;
 				}
-				if (otherqual == NULL || ExecQual(otherqual, econtext))
+				if (otherqual == NULL || ExecQual(otherqual, econtext)) {
+					elog(INFO, "EHJ_MATCH: hash=%u phase=2 case=Biased_Inner_Insert", node->hj_CurHashValue);
 					return ExecProject(node->js.ps.ps_ProjInfo);
+				}
 				else
 					InstrCountFiltered2(node, 1);
 				break;
@@ -939,8 +945,10 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					node->hj_JoinState = HJ_EHJ_PHASE2_LOOP;
 					node->hj_CurTuple = NULL;
 				}
-				if (otherqual == NULL || ExecQual(otherqual, econtext))
+				if (otherqual == NULL || ExecQual(otherqual, econtext)) {
+					elog(INFO, "EHJ_MATCH: hash=%u phase=2 case=Biased_Outer_Insert", node->hj_CurHashValue);
 					return ExecProject(node->js.ps.ps_ProjInfo);
+				}
 				else
 					InstrCountFiltered2(node, 1);
 				break;
@@ -1222,9 +1230,10 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 							continue;
 	
 						/* Duplicate-detection timestamp check. */
-						if (!EHJShouldEmit(tr_ts, ts_ts,
+						int emit_case = EHJShouldEmitCase(tr_ts, ts_ts,
 										ipart->flush_ts, opart->flush_ts,
-										ipart->is_flushed, opart->is_flushed))
+										ipart->is_flushed, opart->is_flushed);
+						if (emit_case == 0)
 							continue;
 	
 						/*
@@ -1268,6 +1277,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						*/
 						node->ehj_p3_ri = ri;
 						node->ehj_p3_si = si;	/* already advanced past this si */
+						elog(INFO, "EHJ_MATCH: hash=%u phase=3 case=%d", r_hv, emit_case);
 						return ExecProject(node->js.ps.ps_ProjInfo);
 					}
 	
