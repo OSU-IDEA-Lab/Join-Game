@@ -202,31 +202,44 @@ ExecEHJReadNextTuple(BufFile *file,
  * Parameters
  *   tr_ts    arrival timestamp of the inner (R) tuple
  *   ts_ts    arrival timestamp of the outer (S) tuple
- *   tsf_r    flush timestamp of the inner partition  (0 if not flushed)
- *   tsf_s    flush timestamp of the outer partition  (0 if not flushed)
+ *   tsf_r    flush timestamp of the inner (R) partition  (0 if not flushed)
+ *   tsf_s    flush timestamp of the outer (S) partition  (0 if not flushed)
  *   r_flushed / s_flushed — whether the respective partition was frozen
  *
  * Returns true if the pair (R tuple, S tuple) was NOT already emitted
- * during Phases 1 or 2 and therefore must be emitted now.
+ * during Phases 1 or 2 and therefore must be emitted now in Phase 3.
  *
- * The three cases are taken directly from Section 4.3 of the EHJ paper
- * (Lawrence 2005), translated from Python's VanillaEHJ.should_emit():
+ * Implements the three cases from Section 4.3 of the EHJ paper (Lawrence
+ * 2005) directly.  The biased flushing policy guarantees TSF(S) < TSF(R),
+ * i.e. the outer (S) partition is always frozen before the inner (R)
+ * partition.  The three cases below enumerate every scenario in which both
+ * tuples were present in memory at the same time but were unable to probe
+ * each other:
  *
- *   Case 1: S tuple arrived before S partition flushed, R tuple arrived
- *           after S partition flushed.
- *             → ts_ts <= tsf_s  AND  tr_ts > tsf_s
+ *   Case 1: S arrived before the S partition was flushed; R arrived after.
+ *           When S was inserted it probed R — R had not arrived yet, so no
+ *           match was found.  When R arrived, S was already frozen and could
+ *           not be probed.
+ *             → TS(ts) ≤ TSF(S)  AND  TS(tr) > TSF(S)
  *
- *   Case 2: S tuple arrived after S partition flushed but before R partition
- *           flushed, and R tuple arrived after S tuple.
- *             → ts_ts > tsf_s  AND  ts_ts <= tsf_r  AND  tr_ts > ts_ts
+ *   Case 2: S arrived after the S partition was flushed (so S was buffered
+ *           to disk but still probed R per the asymmetric Phase 2 rule);
+ *           R was still in memory when S probed, but R had not arrived yet.
+ *           R arrived after S, found S's partition frozen, and could not
+ *           probe.
+ *             → TS(ts) > TSF(S)  AND  TS(ts) ≤ TSF(R)  AND  TS(tr) > TS(ts)
  *
- *   Case 3: S tuple arrived after both partitions were flushed.
- *             → ts_ts > tsf_r
+ *   Case 3: S arrived after BOTH partitions were flushed.  S's probe of R
+ *           failed (R frozen).  R's probe of S also failed regardless of
+ *           when R arrived, because S had not arrived yet when R probed (if
+ *           R arrived before S) or S was already frozen (if R arrived after
+ *           TSF(S)).
+ *             → TS(ts) > TSF(R)
  *
- * If neither partition was flushed the pair was handled in Phase 1; return
- * false.  If only S was flushed, the special-case from the Python code
- * (tsf_r is None) simplifies to: emit iff ts_ts > tsf_s, which is Case 3
- * with tsf_r treated as infinity — handled by the (!r_flushed) branch.
+ * Guard conditions:
+ *   - Cases 1 and 2 require s_flushed (they reference tsf_s).
+ *   - Cases 2 and 3 require r_flushed (they reference tsf_r).
+ *   - If neither partition was flushed the pair was emitted in Phase 1.
  */
 static bool
 EHJShouldEmit(int64 tr_ts, int64 ts_ts,
@@ -234,27 +247,46 @@ EHJShouldEmit(int64 tr_ts, int64 ts_ts,
 			  bool r_flushed, bool s_flushed)
 {
 	/*
-	 * In our asymmetric Phase 2 EHJ implementation, an arriving tuple ALWAYS 
-	 * probes the opposite partition UNLESS that opposite partition has already
-	 * been flushed to disk.
+	 * Case 1: TS(ts) ≤ TSF(S) AND TS(tr) > TSF(S)
 	 *
-	 * Therefore, a matching pair of tuples was MISSED in Phase 2 (and thus
-	 * must be emitted here in Phase 3) if and only if the opposite partition
-	 * was already flushed when the second tuple of the pair arrived.
+	 * S was in memory when it arrived and probed R (finding nothing — R had
+	 * not arrived yet).  R arrived after S's partition was already frozen and
+	 * could not probe S.
 	 */
+	if (s_flushed && ts_ts <= tsf_s && tr_ts > tsf_s)
+		return true;
 
-	if (tr_ts > ts_ts)
-	{
-		/* R arrived after S.
-		 * It missed S in Phase 2 if and only if S was already flushed. */
-		return (s_flushed && tsf_s < tr_ts);
-	}
-	else
-	{
-		/* S arrived after R.
-		 * It missed R in Phase 2 if and only if R was already flushed. */
-		return (r_flushed && tsf_r < ts_ts);
-	}
+	/*
+	 * Case 2: TS(ts) > TSF(S) AND TS(ts) ≤ TSF(R) AND TS(tr) > TS(ts)
+	 *
+	 * S arrived after its own partition was frozen; per the asymmetric Phase 2
+	 * rule S still probed R (which was in memory), but R had not yet arrived.
+	 * R arrived after S, found S's partition frozen, and could not probe.
+	 *
+	 * If R's partition was never flushed its conceptual flush time is infinity,
+	 * so ts_ts <= TSF(R) is trivially true.  We must NOT guard on r_flushed
+	 * here — doing so would silently discard every pair where S spilled but R
+	 * stayed in memory for the entire join (the most common biased-flush
+	 * scenario).  Only Case 3, where we test ts_ts > TSF(R), legitimately
+	 * requires r_flushed as a guard (ts_ts > infinity is impossible).
+	 */
+	if (s_flushed &&
+		ts_ts > tsf_s &&
+		(!r_flushed || ts_ts <= tsf_r) &&
+		tr_ts > ts_ts)
+		return true;
+
+	/*
+	 * Case 3: TS(ts) > TSF(R)
+	 *
+	 * S arrived after both partitions were frozen.  S's probe of R failed
+	 * (R frozen).  R's probe of S also failed (S had not arrived yet if R
+	 * arrived before S, or S was already frozen if R arrived after TSF(S)).
+	 */
+	if (r_flushed && ts_ts > tsf_r)
+		return true;
+
+	return false;
 }
 
 /* ----------------------------------------------------------------
@@ -723,6 +755,12 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					else
 					{
 						/*
+						 * Advance the arrival clock exactly once per tuple read,
+						 * here and nowhere else in the call chain.
+						 */
+						hashtable_ehj->ehj_current_tick++;
+
+						/*
 						 * Materialize BEFORE hashing: ExecHashGetHashValue
 						 * calls ResetExprContext which frees per-tuple memory.
 						 * ExecCopySlotMinimalTuple allocates in the current
@@ -764,6 +802,12 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					}
 					else
 					{
+						/*
+						 * Advance the arrival clock exactly once per tuple read,
+						 * here and nowhere else in the call chain.
+						 */
+						hashtable_ehj->ehj_current_tick++;
+
 						/* Same pre-materialization discipline as inner. */
 						outer_tuple = ExecCopySlotMinimalTuple(slot);
 
@@ -1036,7 +1080,13 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						node->reads_from_inner = node->read_ratio_inner;
 						break;
 					}
-	
+
+					/*
+					 * Advance the arrival clock exactly once per tuple read,
+					 * here and nowhere else in the call chain.
+					 */
+					ht->ehj_current_tick++;
+
 				tup = ExecCopySlotMinimalTuple(slot);
 				inner_econtext->ecxt_innertuple = slot;
  
@@ -1136,7 +1186,13 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						node->reads_from_outer = 0;
 						break;
 					}
-	
+
+					/*
+					 * Advance the arrival clock exactly once per tuple read,
+					 * here and nowhere else in the call chain.
+					 */
+					ht->ehj_current_tick++;
+
 					tup = ExecCopySlotMinimalTuple(slot);
 					econtext->ecxt_outertuple = slot;
 	

@@ -3607,8 +3607,12 @@ ExecEHJTableInsertInner(HashJoinTable hashtable,
 	ExecHashGetBucketAndBatch(hashtable, hashvalue, &bucketno, &batchno);
 	Assert(batchno == 0);
 
-	/* Advance the global arrival clock before any path that stores the tick. */
-	tick = ++hashtable->ehj_current_tick;
+	/*
+	 * The arrival clock is advanced exactly once per tuple read, in the
+	 * state machine (nodeHashjoin.c), immediately after ExecProcNode returns
+	 * a non-NULL slot.  Here we only read the current value.
+	 */
+	tick = hashtable->ehj_current_tick;
 
 	part = &hashtable->ehj_inner_parts[bucketno];
 
@@ -3673,6 +3677,11 @@ ExecEHJTableInsertOuter(HashJoinTable hashtable,
 	ExecHashGetBucketAndBatch(hashtable, hashvalue, &bucketno, &batchno);
 	Assert(batchno == 0);
 
+	/*
+	 * The arrival clock is advanced exactly once per tuple read, in the
+	 * state machine (nodeHashjoin.c), immediately after ExecProcNode returns
+	 * a non-NULL slot.  Here we only read the current value.
+	 */
 	tick = hashtable->ehj_current_tick;
 
 	part = &hashtable->ehj_outer_parts[bucketno];
@@ -3899,9 +3908,6 @@ ExecEHJBufferFrozenTuple(HashJoinTable hashtable,
 	Assert(part->is_flushed);
 	Assert(part->buffer != NULL);
 
-	// /* Advance the global arrival clock before any path that stores the tick. */
-	// hashtable->ehj_current_tick++;
-
 	/* Flush the buffer to disk if it is full. */
 	if (part->buffer_count == part->buffer_capacity)
 		ExecEHJFlushPartitionBuffer(hashtable, part);
@@ -3922,7 +3928,12 @@ ExecEHJBufferFrozenTuple(HashJoinTable hashtable,
 	/* Populate the buffer entry. */
 	entry = &part->buffer[part->buffer_count++];
 	entry->hashvalue = hashvalue;
-	entry->arrival_ts = hashtable->ehj_current_tick++;
+	/*
+	 * The tick was already incremented in the state machine when this tuple
+	 * was read from its source.  Record that value; do not advance the clock
+	 * again here.
+	 */
+	entry->arrival_ts = hashtable->ehj_current_tick;
 	entry->tuple = copy;
 
 	/* Account for the MinimalTuple copy. */
