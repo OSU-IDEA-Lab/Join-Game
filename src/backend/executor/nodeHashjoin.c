@@ -30,16 +30,6 @@
 
 
 /*
- * States of the ExecHashJoin state machine
- */
-#define HJ_BUILD_HASHTABLE		1
-#define HJ_NEED_NEW_OUTER		2
-#define HJ_SCAN_BUCKET			3
-#define HJ_FILL_OUTER_TUPLE		4
-#define HJ_FILL_INNER_TUPLES	5
-#define HJ_NEED_NEW_BATCH		6
-
-/*
  * Early Hash Join (EHJ) Phase 1 states.
  *
  * HJ_EHJ_SYMMETRIC
@@ -93,14 +83,14 @@
  *		projected tuple per match.  On exhaustion, pfrees the arrays and
  *		transitions back to HJ_EHJ_PHASE3_NEXT_PART.
  */
-#define HJ_EHJ_SYMMETRIC		7
-#define HJ_EHJ_SCAN_OUTER_BUCKET 8
-#define HJ_EHJ_SCAN_INNER_BUCKET 9
-#define HJ_EHJ_PHASE2_LOOP			10
-#define HJ_EHJ_PHASE2_SCAN_OUTER	11
-#define HJ_EHJ_PHASE2_SCAN_INNER	12
-#define HJ_EHJ_PHASE3_NEXT_PART		13
-#define HJ_EHJ_PHASE3_PROBE			14
+#define HJ_EHJ_SYMMETRIC          1
+#define HJ_EHJ_PHASE2_LOOP        2
+#define HJ_EHJ_PHASE3_NEXT_PART   3
+#define HJ_EHJ_SCAN_OUTER_BUCKET  4
+#define HJ_EHJ_SCAN_INNER_BUCKET  5
+#define HJ_EHJ_PHASE2_SCAN_OUTER  6
+#define HJ_EHJ_PHASE2_SCAN_INNER  7
+#define HJ_EHJ_PHASE3_PROBE       8
 
 /* Returns true if doing null-fill on outer relation */
 #define HJ_FILL_OUTER(hjstate)	((hjstate)->hj_NullInnerTupleSlot != NULL)
@@ -195,98 +185,27 @@ ExecEHJReadNextTuple(BufFile *file,
 	return true;
 }
  
-/*
- * EHJShouldEmit
- *		Duplicate-detection timestamp check for the EHJ Phase 3 cleanup join.
- *
- * Parameters
- *   tr_ts    arrival timestamp of the inner (R) tuple
- *   ts_ts    arrival timestamp of the outer (S) tuple
- *   tsf_r    flush timestamp of the inner (R) partition  (0 if not flushed)
- *   tsf_s    flush timestamp of the outer (S) partition  (0 if not flushed)
- *   r_flushed / s_flushed — whether the respective partition was frozen
- *
- * Returns true if the pair (R tuple, S tuple) was NOT already emitted
- * during Phases 1 or 2 and therefore must be emitted now in Phase 3.
- *
- * Implements the three cases from Section 4.3 of the EHJ paper (Lawrence
- * 2005) directly.  The biased flushing policy guarantees TSF(S) < TSF(R),
- * i.e. the outer (S) partition is always frozen before the inner (R)
- * partition.  The three cases below enumerate every scenario in which both
- * tuples were present in memory at the same time but were unable to probe
- * each other:
- *
- *   Case 1: S arrived before the S partition was flushed; R arrived after.
- *           When S was inserted it probed R — R had not arrived yet, so no
- *           match was found.  When R arrived, S was already frozen and could
- *           not be probed.
- *             → TS(ts) ≤ TSF(S)  AND  TS(tr) > TSF(S)
- *
- *   Case 2: S arrived after the S partition was flushed (so S was buffered
- *           to disk but still probed R per the asymmetric Phase 2 rule);
- *           R was still in memory when S probed, but R had not arrived yet.
- *           R arrived after S, found S's partition frozen, and could not
- *           probe.
- *             → TS(ts) > TSF(S)  AND  TS(ts) ≤ TSF(R)  AND  TS(tr) > TS(ts)
- *
- *   Case 3: S arrived after BOTH partitions were flushed.  S's probe of R
- *           failed (R frozen).  R's probe of S also failed regardless of
- *           when R arrived, because S had not arrived yet when R probed (if
- *           R arrived before S) or S was already frozen (if R arrived after
- *           TSF(S)).
- *             → TS(ts) > TSF(R)
- *
- * Guard conditions:
- *   - Cases 1 and 2 require s_flushed (they reference tsf_s).
- *   - Cases 2 and 3 require r_flushed (they reference tsf_r).
- *   - If neither partition was flushed the pair was emitted in Phase 1.
- */
-static bool
-EHJShouldEmit(int64 tr_ts, int64 ts_ts,
-			  int64 tsf_r, int64 tsf_s,
-			  bool r_flushed, bool s_flushed)
+static int
+EHJShouldEmitCase(int64 tr_ts, int64 ts_ts,
+                  int64 tsf_r, int64 tsf_s,
+                  bool r_flushed, bool s_flushed)
 {
-	/*
-	 * Case 1: TS(ts) ≤ TSF(S) AND TS(tr) > TSF(S)
-	 *
-	 * S was in memory when it arrived and probed R (finding nothing — R had
-	 * not arrived yet).  R arrived after S's partition was already frozen and
-	 * could not probe S.
-	 */
-	if (s_flushed && ts_ts <= tsf_s && tr_ts > tsf_s)
-		return true;
+    /* Case 1 */
+    if (s_flushed && ts_ts <= tsf_s && tr_ts > tsf_s)
+        return 1;
 
-	/*
-	 * Case 2: TS(ts) > TSF(S) AND TS(ts) ≤ TSF(R) AND TS(tr) > TS(ts)
-	 *
-	 * S arrived after its own partition was frozen; per the asymmetric Phase 2
-	 * rule S still probed R (which was in memory), but R had not yet arrived.
-	 * R arrived after S, found S's partition frozen, and could not probe.
-	 *
-	 * If R's partition was never flushed its conceptual flush time is infinity,
-	 * so ts_ts <= TSF(R) is trivially true.  We must NOT guard on r_flushed
-	 * here — doing so would silently discard every pair where S spilled but R
-	 * stayed in memory for the entire join (the most common biased-flush
-	 * scenario).  Only Case 3, where we test ts_ts > TSF(R), legitimately
-	 * requires r_flushed as a guard (ts_ts > infinity is impossible).
-	 */
-	if (s_flushed &&
-		ts_ts > tsf_s &&
-		(!r_flushed || ts_ts <= tsf_r) &&
-		tr_ts > ts_ts)
-		return true;
+    /* Case 2 (with the Infinity fix!) */
+    if (s_flushed && 
+        ts_ts > tsf_s && 
+        (!r_flushed || ts_ts <= tsf_r) && 
+        tr_ts > ts_ts)
+        return 2;
 
-	/*
-	 * Case 3: TS(ts) > TSF(R)
-	 *
-	 * S arrived after both partitions were frozen.  S's probe of R failed
-	 * (R frozen).  R's probe of S also failed (S had not arrived yet if R
-	 * arrived before S, or S was already frozen if R arrived after TSF(S)).
-	 */
-	if (r_flushed && ts_ts > tsf_r)
-		return true;
+    /* Case 3 */
+    if (r_flushed && ts_ts > tsf_r)
+        return 3;
 
-	return false;
+    return 0;
 }
 
 /* ----------------------------------------------------------------
@@ -349,339 +268,6 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 
 		switch (node->hj_JoinState)
 		{
-			case HJ_BUILD_HASHTABLE:
-
-				/*
-				 * First time through: build hash table for inner relation.
-				 */
-				Assert(hashtable == NULL);
-
-				/*
-				 * If the outer relation is completely empty, and it's not
-				 * right/full join, we can quit without building the hash
-				 * table.  However, for an inner join it is only a win to
-				 * check this when the outer relation's startup cost is less
-				 * than the projected cost of building the hash table.
-				 * Otherwise it's best to build the hash table first and see
-				 * if the inner relation is empty.  (When it's a left join, we
-				 * should always make this check, since we aren't going to be
-				 * able to skip the join on the strength of an empty inner
-				 * relation anyway.)
-				 *
-				 * If we are rescanning the join, we make use of information
-				 * gained on the previous scan: don't bother to try the
-				 * prefetch if the previous scan found the outer relation
-				 * nonempty. This is not 100% reliable since with new
-				 * parameters the outer relation might yield different
-				 * results, but it's a good heuristic.
-				 *
-				 * The only way to make the check is to try to fetch a tuple
-				 * from the outer plan node.  If we succeed, we have to stash
-				 * it away for later consumption by ExecHashJoinOuterGetTuple.
-				 */
-				if (HJ_FILL_INNER(node))
-				{
-					/* no chance to not build the hash table */
-					node->hj_FirstOuterTupleSlot = NULL;
-				}
-				else if (parallel)
-				{
-					/*
-					 * The empty-outer optimization is not implemented for
-					 * shared hash tables, because no one participant can
-					 * determine that there are no outer tuples, and it's not
-					 * yet clear that it's worth the synchronization overhead
-					 * of reaching consensus to figure that out.  So we have
-					 * to build the hash table.
-					 */
-					node->hj_FirstOuterTupleSlot = NULL;
-				}
-				else if (HJ_FILL_OUTER(node) ||
-						 (outerNode->plan->startup_cost < hashNode->ps.plan->total_cost &&
-						  !node->hj_OuterNotEmpty))
-				{
-					node->hj_FirstOuterTupleSlot = ExecProcNode(outerNode);
-					if (TupIsNull(node->hj_FirstOuterTupleSlot))
-					{
-						node->hj_OuterNotEmpty = false;
-						return NULL;
-					}
-					else
-						node->hj_OuterNotEmpty = true;
-				}
-				else
-					node->hj_FirstOuterTupleSlot = NULL;
-
-				/*
-				 * Create the hash table.  If using Parallel Hash, then
-				 * whoever gets here first will create the hash table and any
-				 * later arrivals will merely attach to it.
-				 */
-				hashtable = ExecHashTableCreate(hashNode,
-												node->hj_HashOperators,
-												HJ_FILL_INNER(node));
-				node->hj_HashTable = hashtable;
-
-				/*
-				 * Execute the Hash node, to build the hash table.  If using
-				 * Parallel Hash, then we'll try to help hashing unless we
-				 * arrived too late.
-				 */
-				hashNode->hashtable = hashtable;
-				(void) MultiExecProcNode((PlanState *) hashNode);
-
-				/*
-				 * If the inner relation is completely empty, and we're not
-				 * doing a left outer join, we can quit without scanning the
-				 * outer relation.
-				 */
-				if (hashtable->totalTuples == 0 && !HJ_FILL_OUTER(node))
-					return NULL;
-
-				/*
-				 * need to remember whether nbatch has increased since we
-				 * began scanning the outer relation
-				 */
-				hashtable->nbatch_outstart = hashtable->nbatch;
-
-				/*
-				 * Reset OuterNotEmpty for scan.  (It's OK if we fetched a
-				 * tuple above, because ExecHashJoinOuterGetTuple will
-				 * immediately set it again.)
-				 */
-				node->hj_OuterNotEmpty = false;
-
-				if (parallel)
-				{
-					Barrier    *build_barrier;
-
-					build_barrier = &parallel_state->build_barrier;
-					Assert(BarrierPhase(build_barrier) == PHJ_BUILD_HASHING_OUTER ||
-						   BarrierPhase(build_barrier) == PHJ_BUILD_DONE);
-					if (BarrierPhase(build_barrier) == PHJ_BUILD_HASHING_OUTER)
-					{
-						/*
-						 * If multi-batch, we need to hash the outer relation
-						 * up front.
-						 */
-						if (hashtable->nbatch > 1)
-							ExecParallelHashJoinPartitionOuter(node);
-						BarrierArriveAndWait(build_barrier,
-											 WAIT_EVENT_HASH_BUILD_HASHING_OUTER);
-					}
-					Assert(BarrierPhase(build_barrier) == PHJ_BUILD_DONE);
-
-					/* Each backend should now select a batch to work on. */
-					hashtable->curbatch = -1;
-					node->hj_JoinState = HJ_NEED_NEW_BATCH;
-
-					continue;
-				}
-				else
-					node->hj_JoinState = HJ_NEED_NEW_OUTER;
-
-				/* FALL THRU */
-
-			case HJ_NEED_NEW_OUTER:
-
-				/*
-				 * We don't have an outer tuple, try to get the next one
-				 */
-				if (parallel)
-					outerTupleSlot =
-						ExecParallelHashJoinOuterGetTuple(outerNode, node,
-														  &hashvalue);
-				else
-					outerTupleSlot =
-						ExecHashJoinOuterGetTuple(outerNode, node, &hashvalue);
-
-				if (TupIsNull(outerTupleSlot))
-				{
-					/* end of batch, or maybe whole join */
-					if (HJ_FILL_INNER(node))
-					{
-						/* set up to scan for unmatched inner tuples */
-						ExecPrepHashTableForUnmatched(node);
-						node->hj_JoinState = HJ_FILL_INNER_TUPLES;
-					}
-					else
-						node->hj_JoinState = HJ_NEED_NEW_BATCH;
-					continue;
-				}
-
-				econtext->ecxt_outertuple = outerTupleSlot;
-				node->hj_MatchedOuter = false;
-
-				/*
-				 * Find the corresponding bucket for this tuple in the main
-				 * hash table or skew hash table.
-				 */
-				node->hj_CurHashValue = hashvalue;
-				ExecHashGetBucketAndBatch(hashtable, hashvalue,
-										  &node->hj_CurBucketNo, &batchno);
-				node->hj_CurSkewBucketNo = ExecHashGetSkewBucket(hashtable,
-																 hashvalue);
-				node->hj_CurTuple = NULL;
-
-				/*
-				 * The tuple might not belong to the current batch (where
-				 * "current batch" includes the skew buckets if any).
-				 */
-				if (batchno != hashtable->curbatch &&
-					node->hj_CurSkewBucketNo == INVALID_SKEW_BUCKET_NO)
-				{
-					/*
-					 * Need to postpone this outer tuple to a later batch.
-					 * Save it in the corresponding outer-batch file.
-					 */
-					Assert(parallel_state == NULL);
-					Assert(batchno > hashtable->curbatch);
-					ExecHashJoinSaveTuple(ExecFetchSlotMinimalTuple(outerTupleSlot),
-										  hashvalue,
-										  &hashtable->outerBatchFile[batchno]);
-
-					/* Loop around, staying in HJ_NEED_NEW_OUTER state */
-					continue;
-				}
-
-				/* OK, let's scan the bucket for matches */
-				node->hj_JoinState = HJ_SCAN_BUCKET;
-
-				/* FALL THRU */
-
-			case HJ_SCAN_BUCKET:
-
-				/*
-				 * Scan the selected hash bucket for matches to current outer
-				 */
-				if (parallel)
-				{
-					if (!ExecParallelScanHashBucket(node, econtext))
-					{
-						/* out of matches; check for possible outer-join fill */
-						node->hj_JoinState = HJ_FILL_OUTER_TUPLE;
-						continue;
-					}
-				}
-				else
-				{
-					if (!ExecScanHashBucket(node, econtext))
-					{
-						/* out of matches; check for possible outer-join fill */
-						node->hj_JoinState = HJ_FILL_OUTER_TUPLE;
-						continue;
-					}
-				}
-
-				/*
-				 * We've got a match, but still need to test non-hashed quals.
-				 * ExecScanHashBucket already set up all the state needed to
-				 * call ExecQual.
-				 *
-				 * If we pass the qual, then save state for next call and have
-				 * ExecProject form the projection, store it in the tuple
-				 * table, and return the slot.
-				 *
-				 * Only the joinquals determine tuple match status, but all
-				 * quals must pass to actually return the tuple.
-				 */
-				if (joinqual == NULL || ExecQual(joinqual, econtext))
-				{
-					node->hj_MatchedOuter = true;
-					HeapTupleHeaderSetMatch(HJTUPLE_MINTUPLE(node->hj_CurTuple));
-
-					/* In an antijoin, we never return a matched tuple */
-					if (node->js.jointype == JOIN_ANTI)
-					{
-						node->hj_JoinState = HJ_NEED_NEW_OUTER;
-						continue;
-					}
-
-					/*
-					 * If we only need to join to the first matching inner
-					 * tuple, then consider returning this one, but after that
-					 * continue with next outer tuple.
-					 */
-					if (node->js.single_match)
-						node->hj_JoinState = HJ_NEED_NEW_OUTER;
-
-					if (otherqual == NULL || ExecQual(otherqual, econtext))
-						return ExecProject(node->js.ps.ps_ProjInfo);
-					else
-						InstrCountFiltered2(node, 1);
-				}
-				else
-					InstrCountFiltered1(node, 1);
-				break;
-
-			case HJ_FILL_OUTER_TUPLE:
-
-				/*
-				 * The current outer tuple has run out of matches, so check
-				 * whether to emit a dummy outer-join tuple.  Whether we emit
-				 * one or not, the next state is NEED_NEW_OUTER.
-				 */
-				node->hj_JoinState = HJ_NEED_NEW_OUTER;
-
-				if (!node->hj_MatchedOuter &&
-					HJ_FILL_OUTER(node))
-				{
-					/*
-					 * Generate a fake join tuple with nulls for the inner
-					 * tuple, and return it if it passes the non-join quals.
-					 */
-					econtext->ecxt_innertuple = node->hj_NullInnerTupleSlot;
-
-					if (otherqual == NULL || ExecQual(otherqual, econtext))
-						return ExecProject(node->js.ps.ps_ProjInfo);
-					else
-						InstrCountFiltered2(node, 1);
-				}
-				break;
-
-			case HJ_FILL_INNER_TUPLES:
-
-				/*
-				 * We have finished a batch, but we are doing right/full join,
-				 * so any unmatched inner tuples in the hashtable have to be
-				 * emitted before we continue to the next batch.
-				 */
-				if (!ExecScanHashTableForUnmatched(node, econtext))
-				{
-					/* no more unmatched tuples */
-					node->hj_JoinState = HJ_NEED_NEW_BATCH;
-					continue;
-				}
-
-				/*
-				 * Generate a fake join tuple with nulls for the outer tuple,
-				 * and return it if it passes the non-join quals.
-				 */
-				econtext->ecxt_outertuple = node->hj_NullOuterTupleSlot;
-
-				if (otherqual == NULL || ExecQual(otherqual, econtext))
-					return ExecProject(node->js.ps.ps_ProjInfo);
-				else
-					InstrCountFiltered2(node, 1);
-				break;
-
-			case HJ_NEED_NEW_BATCH:
-
-				/*
-				 * Try to advance to next batch.  Done if there are no more.
-				 */
-				if (parallel)
-				{
-					if (!ExecParallelHashJoinNewBatch(node))
-						return NULL;	/* end of parallel-aware join */
-				}
-				else
-				{
-					if (!ExecHashJoinNewBatch(node))
-						return NULL;	/* end of parallel-oblivious join */
-				}
-				node->hj_JoinState = HJ_NEED_NEW_OUTER;
-				break;
 
 			/* --------------------------------------------------------
 			 * Early Hash Join — Phase 1 states
@@ -2465,74 +2051,36 @@ ExecHashJoinGetSavedTuple(HashJoinState *hjstate,
 	return ExecStoreMinimalTuple(tuple, tupleSlot, true);
 }
 
-
 void
 ExecReScanHashJoin(HashJoinState *node)
 {
-	/*
-	 * In a multi-batch join, we currently have to do rescans the hard way,
-	 * primarily because batch temp files may have already been released. But
-	 * if it's a single-batch join, and there is no parameter change for the
-	 * inner subnode, then we can just re-use the existing hash table without
-	 * rebuilding it.
+	/* * EHJ GUARD:
+	 * Early Hash Join does not support rescanning mid-execution. 
+	 * If the hash table exists, we are already executing and must abort.
 	 */
 	if (node->hj_HashTable != NULL)
-	{
-		if (node->hj_HashTable->nbatch == 1 &&
-			node->js.ps.righttree->chgParam == NULL)
-		{
-			/*
-			 * Okay to reuse the hash table; needn't rescan inner, either.
-			 *
-			 * However, if it's a right/full join, we'd better reset the
-			 * inner-tuple match flags contained in the table.
-			 */
-			if (HJ_FILL_INNER(node))
-				ExecHashTableResetMatchFlags(node->hj_HashTable);
+		elog(ERROR, "Early Hash Join (EHJ) does not currently support rescanning");
 
-			/*
-			 * Also, we need to reset our state about the emptiness of the
-			 * outer relation, so that the new scan of the outer will update
-			 * it correctly if it turns out to be empty this time. (There's no
-			 * harm in clearing it now because ExecHashJoin won't need the
-			 * info.  In the other cases, where the hash table doesn't exist
-			 * or we are destroying it, we leave this state alone because
-			 * ExecHashJoin will need it the first time through.)
-			 */
-			node->hj_OuterNotEmpty = false;
-
-			/* ExecHashJoin can skip the BUILD_HASHTABLE step */
-			node->hj_JoinState = HJ_NEED_NEW_OUTER;
-		}
-		else
-		{
-			/* must destroy and rebuild hash table */
-			ExecHashTableDestroy(node->hj_HashTable);
-			node->hj_HashTable = NULL;
-			node->hj_JoinState = HJ_BUILD_HASHTABLE;
-
-			/*
-			 * if chgParam of subnode is not null then plan will be re-scanned
-			 * by first ExecProcNode.
-			 */
-			if (node->js.ps.righttree->chgParam == NULL)
-				ExecReScan(node->js.ps.righttree);
-		}
-	}
-
-	/* Always reset intra-tuple state */
+	/*
+	 * If we reach here, hj_HashTable is NULL. This means the executor 
+	 * requested a rescan BEFORE Phase 1 even started.
+	 * * We safely reset the baseline intra-tuple state to ensure a clean start.
+	 */
+	node->hj_JoinState = HJ_EHJ_SYMMETRIC;
 	node->hj_CurHashValue = 0;
 	node->hj_CurBucketNo = 0;
 	node->hj_CurSkewBucketNo = INVALID_SKEW_BUCKET_NO;
 	node->hj_CurTuple = NULL;
-
 	node->hj_MatchedOuter = false;
 	node->hj_FirstOuterTupleSlot = NULL;
 
 	/*
-	 * if chgParam of subnode is not null then plan will be re-scanned by
-	 * first ExecProcNode.
+	 * Pass the rescan command down to the child nodes so they can 
+	 * re-evaluate parameters if necessary.
 	 */
+	if (node->js.ps.righttree->chgParam == NULL)
+		ExecReScan(node->js.ps.righttree);
+
 	if (node->js.ps.lefttree->chgParam == NULL)
 		ExecReScan(node->js.ps.lefttree);
 }
