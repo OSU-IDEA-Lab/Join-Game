@@ -185,27 +185,27 @@ ExecEHJReadNextTuple(BufFile *file,
 	return true;
 }
  
-static int
-EHJShouldEmitCase(int64 tr_ts, int64 ts_ts,
-                  int64 tsf_r, int64 tsf_s,
-                  bool r_flushed, bool s_flushed)
+static bool
+EHJShouldEmit(int64 tr_ts, int64 ts_ts,
+              int64 tsf_r, int64 tsf_s,
+              bool r_flushed, bool s_flushed)
 {
-    /* Case 1 */
+    /* Case 1: S arrived before flush, R arrived after S flush */
     if (s_flushed && ts_ts <= tsf_s && tr_ts > tsf_s)
-        return 1;
+        return true;
 
-    /* Case 2 (with the Infinity fix!) */
+    /* Case 2: S arrived after flush, S arrived before R flush, R arrived after S */
     if (s_flushed && 
         ts_ts > tsf_s && 
         (!r_flushed || ts_ts <= tsf_r) && 
         tr_ts > ts_ts)
-        return 2;
+        return true;
 
-    /* Case 3 */
+    /* Case 3: S arrived after R flush */
     if (r_flushed && ts_ts > tsf_r)
-        return 3;
+        return true;
 
-    return 0;
+    return false;
 }
 
 /* ----------------------------------------------------------------
@@ -340,39 +340,26 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					}
 					else
 					{
-						/*
-						 * Advance the arrival clock exactly once per tuple read,
-						 * here and nowhere else in the call chain.
-						 */
 						hashtable_ehj->ehj_current_tick++;
-
-						/*
-						 * Materialize BEFORE hashing: ExecHashGetHashValue
-						 * calls ResetExprContext which frees per-tuple memory.
-						 * ExecCopySlotMinimalTuple allocates in the current
-						 * memory context (per-query), so it survives the reset.
-						 */
 						inner_tuple = ExecCopySlotMinimalTuple(slot);
-
 						inner_econtext->ecxt_innertuple = slot;
-						if (ExecHashGetHashValue(hashtable_ehj,
-												  inner_econtext,
+
+						if (ExecHashGetHashValue(hashtable_ehj, inner_econtext,
 												  node->hj_InnerHashKeys,
-												  false, /* inner tuple */
-												  hashtable_ehj->keepNulls,
+												  false, hashtable_ehj->keepNulls,
 												  &inner_hashvalue))
 						{
-						ExecEHJTableInsertInner(hashtable_ehj, inner_tuple, inner_hashvalue);
-						pfree(inner_tuple);
-						/* Set the flag on overage, but probe regardless (unless now transitioning). */
-						if (hashtable_ehj->spaceUsed >= hashtable_ehj->spaceAllowed)
-							hashtable_ehj->ehj_phase1_done = true;
-						else
-						{
+							ExecEHJTableInsertInner(hashtable_ehj, inner_tuple, inner_hashvalue);
+							pfree(inner_tuple);
+							
+							/* ALWAYS flag that we got a tuple, so it gets probed! */
 							ExecHashGetBucketAndBatch(hashtable_ehj, inner_hashvalue,
 													&inner_bucketno, &dummy_batchno);
 							got_inner = true;
-						}	
+
+							/* Set the flag on overage AFTER saving the probe state */
+							if (hashtable_ehj->spaceUsed >= hashtable_ehj->spaceAllowed)
+								hashtable_ehj->ehj_phase1_done = true;
 						}
 					}
 				}
@@ -388,50 +375,41 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					}
 					else
 					{
-						/*
-						 * Advance the arrival clock exactly once per tuple read,
-						 * here and nowhere else in the call chain.
-						 */
 						hashtable_ehj->ehj_current_tick++;
-
-						/* Same pre-materialization discipline as inner. */
 						outer_tuple = ExecCopySlotMinimalTuple(slot);
-
 						econtext->ecxt_outertuple = slot;
-						if (ExecHashGetHashValue(hashtable_ehj,
-												  econtext,
+
+						if (ExecHashGetHashValue(hashtable_ehj, econtext,
 												  node->hj_OuterHashKeys,
-												  true,  /* outer tuple */
-												  HJ_FILL_OUTER(node),
+												  true, HJ_FILL_OUTER(node),
 												  &outer_hashvalue))
 						{
-						ExecEHJTableInsertOuter(hashtable_ehj, outer_tuple, outer_hashvalue);
-						pfree(outer_tuple);
-						/* Set the flag on overage, but probe regardless (unless now transitioning). */
-						if (hashtable_ehj->spaceUsed >= hashtable_ehj->spaceAllowed)
-							hashtable_ehj->ehj_phase1_done = true;
-						else
-						{
+							ExecEHJTableInsertOuter(hashtable_ehj, outer_tuple, outer_hashvalue);
+							pfree(outer_tuple);
+
+							/* ALWAYS flag that we got a tuple, so it gets probed! */
 							ExecHashGetBucketAndBatch(hashtable_ehj, outer_hashvalue,
 													&outer_bucketno, &dummy_batchno);
 							got_outer = true;
-						}
+
+							/* Set the flag on overage AFTER saving the probe state */
+							if (hashtable_ehj->spaceUsed >= hashtable_ehj->spaceAllowed)
+								hashtable_ehj->ehj_phase1_done = true;
 						}
 					}
 				}
 
-			if (hashtable_ehj->ehj_phase1_done ||
-				(hashtable_ehj->ehj_inner_done &&
-				 hashtable_ehj->ehj_outer_done))
+			/* THE GATE: Wait until pending probes are finished before transitioning! */
+			if ((hashtable_ehj->ehj_phase1_done ||
+				(hashtable_ehj->ehj_inner_done && hashtable_ehj->ehj_outer_done)) &&
+				!got_inner && !got_outer)
 			{
 				if (hashtable_ehj->ehj_inner_done &&
 					hashtable_ehj->ehj_outer_done)
 				{
 					/*
 					 * Both sources exhausted without filling memory: skip
-					 * Phase 2 and go directly to Phase 3 cleanup.  Drain
-					 * any post-freeze buffers (there may be none, but the
-					 * call is safe and cheap).
+					 * Phase 2 and go directly to Phase 3 cleanup.
 					 */
 					ExecEHJFlushAllPartitionBuffers(hashtable_ehj);
 					node->ehj_p3_partno = 0;
@@ -444,9 +422,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				{
 					/*
 					 * Memory filled before sources were exhausted: enter
-					 * Phase 2.  Configure the 5:1 (R:S) reading strategy
-					 * described in Section 4.2 of the EHJ paper and reset
-					 * the per-cycle counters.
+					 * Phase 2.
 					 */
 					hashtable_ehj->ehj_phase1_done = true;
 					node->read_ratio_inner = 5;
@@ -462,7 +438,6 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				}
 				continue;
 			}
-
 				/*
 				 * Transition to probe states.
 				 *
@@ -582,7 +557,6 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					node->hj_CurTuple = NULL;
 				}
 				if (otherqual == NULL || ExecQual(otherqual, econtext)) {
-					elog(INFO, "EHJ_MATCH: hash=%u phase=1 case=Inner_Insert_Probes_Outer", node->hj_CurHashValue);
 					return ExecProject(node->js.ps.ps_ProjInfo);
 				}
 				else
@@ -631,7 +605,6 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					node->hj_CurTuple = NULL;
 				}
 				if (otherqual == NULL || ExecQual(otherqual, econtext)) {
-					elog(INFO, "EHJ_MATCH: hash=%u phase=1 case=Outer_Insert_Probes_Inner", node->hj_CurHashValue);
 					return ExecProject(node->js.ps.ps_ProjInfo);
 				}
 				else
@@ -947,7 +920,6 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					node->hj_CurTuple = NULL;
 				}
 				if (otherqual == NULL || ExecQual(otherqual, econtext)) {
-					elog(INFO, "EHJ_MATCH: hash=%u phase=2 case=Biased_Inner_Insert", node->hj_CurHashValue);
 					return ExecProject(node->js.ps.ps_ProjInfo);
 				}
 				else
@@ -997,7 +969,6 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					node->hj_CurTuple = NULL;
 				}
 				if (otherqual == NULL || ExecQual(otherqual, econtext)) {
-					elog(INFO, "EHJ_MATCH: hash=%u phase=2 case=Biased_Outer_Insert", node->hj_CurHashValue);
 					return ExecProject(node->js.ps.ps_ProjInfo);
 				}
 				else
@@ -1260,10 +1231,9 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 							continue;
 	
 						/* Duplicate-detection timestamp check. */
-						int emit_case = EHJShouldEmitCase(tr_ts, ts_ts,
-										ipart->flush_ts, opart->flush_ts,
-										ipart->is_flushed, opart->is_flushed);
-						if (emit_case == 0)
+						if (!EHJShouldEmit(tr_ts, ts_ts,
+										   ipart->flush_ts, opart->flush_ts,
+										   ipart->is_flushed, opart->is_flushed))
 							continue;
 	
 						/*
@@ -1313,7 +1283,6 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						*/
 						node->ehj_p3_ri = ri;
 						node->ehj_p3_si = si;	/* already advanced past this si */
-						elog(INFO, "EHJ_MATCH: hash=%u phase=3 case=%d", r_hv, emit_case);
 						return ExecProject(node->js.ps.ps_ProjInfo);
 					}
 	
