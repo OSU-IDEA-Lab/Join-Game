@@ -111,21 +111,6 @@ static bool ExecHashJoinNewBatch(HashJoinState *hjstate);
 static bool ExecParallelHashJoinNewBatch(HashJoinState *hjstate);
 static void ExecParallelHashJoinPartitionOuter(HashJoinState *node);
 
-/* EHJ qual-checking helper — see definition just above ExecHashJoinImpl */
-typedef enum EHJQualAction
-{
-	EHJ_QUAL_FILTERED1,		/* hash or join qual rejected: keep scanning */
-	EHJ_QUAL_ANTI_MATCHED,	/* JOIN_ANTI match: abort bucket scan */
-	EHJ_QUAL_EMIT,			/* all quals passed: project and return */
-	EHJ_QUAL_FILTERED2,		/* other qual rejected: keep scanning */
-} EHJQualAction;
-
-static EHJQualAction ExecEHJCheckQuals(HashJoinState *node,
-									   ExprContext *econtext,
-									   ExprState *joinqual,
-									   ExprState *otherqual,
-									   int back_state);
-
 
 /*
  * ExecEHJReadNextTuple
@@ -221,217 +206,6 @@ EHJShouldEmit(int64 tr_ts, int64 ts_ts,
         return true;
 
     return false;
-}
-
-/* ----------------------------------------------------------------
- *		ExecEHJCheckQuals
- *
- *		Evaluate the three qual layers that are identical across all four EHJ
- *		bucket-scan states (SCAN_OUTER_BUCKET, SCAN_INNER_BUCKET,
- *		PHASE2_SCAN_OUTER, PHASE2_SCAN_INNER) and perform any associated state
- *		transitions.
- *
- *		Precondition: econtext->ecxt_innertuple and ecxt_outertuple have been
- *		loaded with the candidate pair to evaluate.
- *
- *		back_state is the hj_JoinState value to install when the scan of the
- *		current bucket ends early (JOIN_ANTI match or single_match promotion).
- *		Pass HJ_EHJ_SYMMETRIC for Phase 1 scan states and HJ_EHJ_PHASE2_LOOP
- *		for Phase 2 scan states.
- *
- *		Side effects:
- *		  - InstrCountFiltered1 is bumped when hashclauses or joinqual rejects.
- *		  - InstrCountFiltered2 is bumped when otherqual rejects.
- *		  - On JOIN_ANTI or single_match, node->hj_JoinState is set to
- *		    back_state and node->hj_CurTuple is cleared.
- *
- *		Note: Phase 3's nested-loop logic (HJ_EHJ_PHASE3_PROBE) has different
- *		control flow (continue/break inside an explicit while loop) and is
- *		intentionally left separate.
- * ----------------------------------------------------------------
- */
-static EHJQualAction
-ExecEHJCheckQuals(HashJoinState *node,
-				  ExprContext   *econtext,
-				  ExprState     *joinqual,
-				  ExprState     *otherqual,
-				  int            back_state)
-{
-	/* * Layer 1: hashclauses.
-	 * We do NOT evaluate hashclauses here. ExecEHJScanOuterBucket and 
-	 * ExecEHJScanInnerBucket already execute ExecQualAndReset() for them.
-	 */
-
-	/* Layer 2: join qual (extra join conditions beyond the hash key). */
-	if (joinqual != NULL && !ExecQual(joinqual, econtext))
-	{
-		InstrCountFiltered1(node, 1);
-		return EHJ_QUAL_FILTERED1;
-	}
-
-	/* Layer 3: other (non-hash, non-join) quals. */
-	if (otherqual != NULL && !ExecQual(otherqual, econtext))
-	{
-		InstrCountFiltered2(node, 1);
-		return EHJ_QUAL_FILTERED2;
-	}
-
-	/* * At this point, we have a definitive match (all quals passed).
-	 * Now we can safely handle special join types and state promotions.
-	 */
-
-	/*
-	 * Anti-join: a successful match means we must *not* emit this pair and
-	 * must stop scanning the current bucket.
-	 */
-	if (node->js.jointype == JOIN_ANTI)
-	{
-		node->hj_JoinState = back_state;
-		node->hj_CurTuple  = NULL;
-		return EHJ_QUAL_ANTI_MATCHED;
-	}
-
-	/*
-	 * Single-match promotion (e.g., SEMI join): we only want one result 
-	 * tuple for this probe. Transition back to the driver state so we 
-	 * don't keep scanning the bucket.
-	 */
-	if (node->js.single_match)
-	{
-		node->hj_JoinState = back_state;
-		node->hj_CurTuple  = NULL;
-	}
-
-	return EHJ_QUAL_EMIT;
-}
-
-/* ----------------------------------------------------------------
- *		ExecEHJFreePartitionArray
- *
- *		Free the flat tuple arrays loaded for one side of a Phase 3 partition
- *		(either inner or outer).  Each element of tups[] was individually
- *		palloc'd, so we pfree every non-NULL entry before freeing the three
- *		spine arrays.  Sets *tups to NULL so the caller can use that as a
- *		"not loaded" sentinel.
- * ----------------------------------------------------------------
- */
-static void
-ExecEHJFreePartitionArray(MinimalTuple **tups,
-						  int64		  **tss,
-						  uint32	  **hvs,
-						  int		    count)
-{
-	int i;
-
-	if (*tups == NULL)
-		return;
-
-	for (i = 0; i < count; i++)
-		if ((*tups)[i])
-			pfree((*tups)[i]);
-
-	pfree(*tups);
-	pfree(*tss);
-	pfree(*hvs);
-
-	*tups = NULL;
-}
-
-/* ----------------------------------------------------------------
- *		ExecEHJLoadPartitionSide
- *
- *		Load all tuples for one side (inner or outer) of a Phase 3 partition
- *		into flat heap-allocated arrays.  Both sources are drained:
- *
- *		  1. If part->disk_file is non-NULL, rewind it and read every record
- *		     written by ExecEHJFlushPartition / ExecEHJFlushPartitionBuffer.
- *		  2. Walk the in-memory bucket chain rooted at bucket_head and copy
- *		     each MinimalTuple so the arrays are self-contained.
- *
- *		The arrays are grown geometrically (doubling) from an initial capacity
- *		of 64.  On return, *tups_out / *tss_out / *hvs_out point to palloc'd
- *		arrays of length *count_out.  Every element of *tups_out was
- *		individually palloc'd and must be freed by ExecEHJFreePartitionArray.
- *
- *		side_name is used only in error messages ("inner" or "outer").
- *
- *		Must be called in the memory context that should own the arrays
- *		(typically ht->hashCxt, as set up by HJ_EHJ_PHASE3_NEXT_PART).
- * ----------------------------------------------------------------
- */
-static void
-ExecEHJLoadPartitionSide(EHJPartData   *part,
-						  HashJoinTuple  bucket_head,
-						  const char    *side_name,
-						  MinimalTuple **tups_out,
-						  int64		 **tss_out,
-						  uint32		 **hvs_out,
-						  int		    *count_out)
-{
-	int			cap = 64;
-	int			cnt = 0;
-	MinimalTuple *tups = (MinimalTuple *) palloc(cap * sizeof(MinimalTuple));
-	int64	   *tss = (int64 *) palloc(cap * sizeof(int64));
-	uint32	   *hvs = (uint32 *) palloc(cap * sizeof(uint32));
-
-/* Grow the three parallel arrays to at least (cnt + 1) slots. */
-#define EHJLOAD_MAYBE_GROW() \
-	do { \
-		if (cnt == cap) { \
-			cap *= 2; \
-			tups = repalloc(tups, cap * sizeof(MinimalTuple)); \
-			tss  = repalloc(tss,  cap * sizeof(int64)); \
-			hvs  = repalloc(hvs,  cap * sizeof(uint32)); \
-		} \
-	} while (0)
-
-	/* Phase A: load spilled tuples from disk (if any). */
-	if (part->disk_file != NULL)
-	{
-		uint32		hv;
-		int64		ts;
-		MinimalTuple tup;
-
-		if (BufFileSeek(part->disk_file, 0, 0L, SEEK_SET))
-			ereport(ERROR,
-					(errcode_for_file_access(),
-					 errmsg("could not rewind EHJ %s partition file: %m",
-							side_name)));
-
-		while (ExecEHJReadNextTuple(part->disk_file, &hv, &ts, &tup))
-		{
-			EHJLOAD_MAYBE_GROW();
-			tups[cnt] = tup;
-			tss[cnt]  = ts;
-			hvs[cnt]  = hv;
-			cnt++;
-		}
-	}
-
-	/* Phase B: load pre-flush in-memory tuples from the bucket chain. */
-	{
-		HashJoinTuple ht_tup = bucket_head;
-
-		while (ht_tup != NULL)
-		{
-			MinimalTuple src = EHJ_HJTUPLE_MINTUPLE(ht_tup);
-
-			EHJLOAD_MAYBE_GROW();
-			tups[cnt] = (MinimalTuple) palloc(src->t_len);
-			memcpy(tups[cnt], src, src->t_len);
-			tss[cnt] = EHJ_HJTUPLE_ARRIVAL_TS(ht_tup);
-			hvs[cnt] = ht_tup->hashvalue;
-			cnt++;
-			ht_tup = ht_tup->next.unshared;
-		}
-	}
-
-#undef EHJLOAD_MAYBE_GROW
-
-	*tups_out  = tups;
-	*tss_out   = tss;
-	*hvs_out   = hvs;
-	*count_out = cnt;
 }
 
 /* ----------------------------------------------------------------
@@ -657,9 +431,36 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					break;
 				}
 
-				if (ExecEHJCheckQuals(node, econtext, joinqual, otherqual,
-									  HJ_EHJ_SYMMETRIC) == EHJ_QUAL_EMIT)
+				if (node->hashclauses != NULL && !ExecQual(node->hashclauses, econtext))
+				{
+					InstrCountFiltered1(node, 1);
+					break;
+				}
+
+				if (joinqual != NULL && !ExecQual(joinqual, econtext))
+				{
+					InstrCountFiltered1(node, 1);
+					break;
+				}
+				
+				if (node->js.jointype == JOIN_ANTI)
+				{
+					node->hj_JoinState = HJ_EHJ_SYMMETRIC;
+					node->hj_CurTuple = NULL;
+					break;
+				}
+				
+				if (node->js.single_match)
+				{
+					node->hj_JoinState = HJ_EHJ_SYMMETRIC;
+					node->hj_CurTuple = NULL;
+				}
+				
+				if (otherqual == NULL || ExecQual(otherqual, econtext)) {
 					return ExecProject(node->js.ps.ps_ProjInfo);
+				} else {
+					InstrCountFiltered2(node, 1);
+				}
 				break;
 			}
 			case HJ_EHJ_SCAN_INNER_BUCKET:
@@ -678,9 +479,35 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					break;
 				}
 
-				if (ExecEHJCheckQuals(node, econtext, joinqual, otherqual,
-									  HJ_EHJ_SYMMETRIC) == EHJ_QUAL_EMIT)
+				/* Filter out hash collisions */
+				if (node->hashclauses != NULL && !ExecQual(node->hashclauses, econtext))
+				{
+					InstrCountFiltered1(node, 1);
+					break;
+				}
+
+				/* Match found — verify with joinqual before emitting */
+				if (joinqual != NULL && !ExecQual(joinqual, econtext))
+				{
+					InstrCountFiltered1(node, 1);
+					break;
+				}
+				if (node->js.jointype == JOIN_ANTI)
+				{
+					node->hj_JoinState = HJ_EHJ_SYMMETRIC;
+					node->hj_CurTuple = NULL;
+					break;
+				}
+				if (node->js.single_match)
+				{
+					node->hj_JoinState = HJ_EHJ_SYMMETRIC;
+					node->hj_CurTuple = NULL;
+				}
+				if (otherqual == NULL || ExecQual(otherqual, econtext)) {
 					return ExecProject(node->js.ps.ps_ProjInfo);
+				}
+				else
+					InstrCountFiltered2(node, 1);
 				break;
 			}
 			case HJ_EHJ_PHASE2_LOOP:
@@ -966,10 +793,36 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					node->hj_JoinState = HJ_EHJ_PHASE2_LOOP;
 					break;
 				}
+	
+				/* Filter out hash collisions */
+				if (node->hashclauses != NULL && !ExecQual(node->hashclauses, econtext))
+				{
+					InstrCountFiltered1(node, 1);
+					break;
+				}
 
-				if (ExecEHJCheckQuals(node, econtext, joinqual, otherqual,
-									  HJ_EHJ_PHASE2_LOOP) == EHJ_QUAL_EMIT)
+				/* Match found — verify with joinqual before emitting */
+				if (joinqual != NULL && !ExecQual(joinqual, econtext))
+				{
+					InstrCountFiltered1(node, 1);
+					break;
+				}
+				if (node->js.jointype == JOIN_ANTI)
+				{
+					node->hj_JoinState = HJ_EHJ_PHASE2_LOOP;
+					node->hj_CurTuple = NULL;
+					break;
+				}
+				if (node->js.single_match)
+				{
+					node->hj_JoinState = HJ_EHJ_PHASE2_LOOP;
+					node->hj_CurTuple = NULL;
+				}
+				if (otherqual == NULL || ExecQual(otherqual, econtext)) {
 					return ExecProject(node->js.ps.ps_ProjInfo);
+				}
+				else
+					InstrCountFiltered2(node, 1);
 				break;
 			}
 	
@@ -989,10 +842,36 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					node->hj_JoinState = HJ_EHJ_PHASE2_LOOP;
 					break;
 				}
+	
+				/* Filter out hash collisions */
+				if (node->hashclauses != NULL && !ExecQual(node->hashclauses, econtext))
+				{
+					InstrCountFiltered1(node, 1);
+					break;
+				}
 
-				if (ExecEHJCheckQuals(node, econtext, joinqual, otherqual,
-									  HJ_EHJ_PHASE2_LOOP) == EHJ_QUAL_EMIT)
+				/* Match found — verify with joinqual before emitting */
+				if (joinqual != NULL && !ExecQual(joinqual, econtext))
+				{
+					InstrCountFiltered1(node, 1);
+					break;
+				}
+				if (node->js.jointype == JOIN_ANTI)
+				{
+					node->hj_JoinState = HJ_EHJ_PHASE2_LOOP;
+					node->hj_CurTuple = NULL;
+					break;
+				}
+				if (node->js.single_match)
+				{
+					node->hj_JoinState = HJ_EHJ_PHASE2_LOOP;
+					node->hj_CurTuple = NULL;
+				}
+				if (otherqual == NULL || ExecQual(otherqual, econtext)) {
 					return ExecProject(node->js.ps.ps_ProjInfo);
+				}
+				else
+					InstrCountFiltered2(node, 1);
 				break;
 			}
 	
@@ -1010,14 +889,28 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				oldcxt = MemoryContextSwitchTo(ht->hashCxt);
 	
 				/* Free arrays from the previous partition, if any. */
-				ExecEHJFreePartitionArray(&node->ehj_p3_inner_tups,
-										  &node->ehj_p3_inner_ts,
-										  &node->ehj_p3_inner_hv,
-										  node->ehj_p3_inner_count);
-				ExecEHJFreePartitionArray(&node->ehj_p3_outer_tups,
-										  &node->ehj_p3_outer_ts,
-										  &node->ehj_p3_outer_hv,
-										  node->ehj_p3_outer_count);
+				if (node->ehj_p3_inner_tups != NULL)
+				{
+					int i;
+					for (i = 0; i < node->ehj_p3_inner_count; i++)
+						if (node->ehj_p3_inner_tups[i])
+							pfree(node->ehj_p3_inner_tups[i]);
+					pfree(node->ehj_p3_inner_tups);
+					pfree(node->ehj_p3_inner_ts);
+					pfree(node->ehj_p3_inner_hv);
+					node->ehj_p3_inner_tups = NULL;
+				}
+				if (node->ehj_p3_outer_tups != NULL)
+				{
+					int i;
+					for (i = 0; i < node->ehj_p3_outer_count; i++)
+						if (node->ehj_p3_outer_tups[i])
+							pfree(node->ehj_p3_outer_tups[i]);
+					pfree(node->ehj_p3_outer_tups);
+					pfree(node->ehj_p3_outer_ts);
+					pfree(node->ehj_p3_outer_hv);
+					node->ehj_p3_outer_tups = NULL;
+				}
 	
 				/* Scan forward to the next eligible partition. */
 				while (node->ehj_p3_partno < n)
@@ -1033,22 +926,118 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						continue;	/* nothing on disk for this partition */
 	
 					/* Load inner (R) tuples for this partition. */
-					ExecEHJLoadPartitionSide(inner_part,
-											 ht->buckets.unshared[p],
-											 "inner",
-											 &node->ehj_p3_inner_tups,
-											 &node->ehj_p3_inner_ts,
-											 &node->ehj_p3_inner_hv,
-											 &node->ehj_p3_inner_count);
+					{
+						int			cap = 64;
+						int			cnt = 0;
+						MinimalTuple *tups = (MinimalTuple *) palloc(cap * sizeof(MinimalTuple));
+						int64	   *tss = (int64 *) palloc(cap * sizeof(int64));
+						uint32	   *hvs = (uint32 *) palloc(cap * sizeof(uint32));
+
+						if (inner_part->disk_file != NULL)
+						{
+							/* Load the spilled tuples from disk. */
+							uint32		hv;
+							int64		ts;
+							MinimalTuple tup;
+
+							if (BufFileSeek(inner_part->disk_file, 0, 0L, SEEK_SET))
+								ereport(ERROR, (errcode_for_file_access(), errmsg("could not rewind EHJ inner partition file: %m")));
+
+							while (ExecEHJReadNextTuple(inner_part->disk_file, &hv, &ts, &tup))
+							{
+								if (cnt == cap) {
+									cap *= 2;
+									tups = repalloc(tups, cap * sizeof(MinimalTuple));
+									tss  = repalloc(tss,  cap * sizeof(int64));
+									hvs  = repalloc(hvs,  cap * sizeof(uint32));
+								}
+								tups[cnt] = tup; tss[cnt] = ts; hvs[cnt] = hv;
+								cnt++;
+							}
+						}
+						
+						/* ALWAYS load the pre-flush tuples from memory. */
+						{
+							HashJoinTuple ht_tup = ht->buckets.unshared[p];
+							while (ht_tup != NULL)
+							{
+								if (cnt == cap) {
+									cap *= 2;
+									tups = repalloc(tups, cap * sizeof(MinimalTuple));
+									tss  = repalloc(tss,  cap * sizeof(int64));
+									hvs  = repalloc(hvs,  cap * sizeof(uint32));
+								}
+								MinimalTuple src = EHJ_HJTUPLE_MINTUPLE(ht_tup);
+								tups[cnt] = (MinimalTuple) palloc(src->t_len);
+								memcpy(tups[cnt], src, src->t_len);
+								tss[cnt] = EHJ_HJTUPLE_ARRIVAL_TS(ht_tup);
+								hvs[cnt] = ht_tup->hashvalue;
+								cnt++;
+								ht_tup = ht_tup->next.unshared;
+							}
+						}
+						node->ehj_p3_inner_tups = tups;
+						node->ehj_p3_inner_ts = tss;
+						node->ehj_p3_inner_hv = hvs;
+						node->ehj_p3_inner_count = cnt;
+					}
 
 					/* Load outer (S) tuples for this partition. */
-					ExecEHJLoadPartitionSide(outer_part,
-											 ht->outer_buckets[p],
-											 "outer",
-											 &node->ehj_p3_outer_tups,
-											 &node->ehj_p3_outer_ts,
-											 &node->ehj_p3_outer_hv,
-											 &node->ehj_p3_outer_count);
+					{
+						int			cap = 64;
+						int			cnt = 0;
+						MinimalTuple *tups = (MinimalTuple *) palloc(cap * sizeof(MinimalTuple));
+						int64	   *tss = (int64 *) palloc(cap * sizeof(int64));
+						uint32	   *hvs = (uint32 *) palloc(cap * sizeof(uint32));
+
+						if (outer_part->disk_file != NULL)
+						{
+							/* Load the spilled tuples from disk. */
+							uint32		hv;
+							int64		ts;
+							MinimalTuple tup;
+
+							if (BufFileSeek(outer_part->disk_file, 0, 0L, SEEK_SET))
+								ereport(ERROR, (errcode_for_file_access(), errmsg("could not rewind EHJ outer partition file: %m")));
+
+							while (ExecEHJReadNextTuple(outer_part->disk_file, &hv, &ts, &tup))
+							{
+								if (cnt == cap) {
+									cap *= 2;
+									tups = repalloc(tups, cap * sizeof(MinimalTuple));
+									tss  = repalloc(tss,  cap * sizeof(int64));
+									hvs  = repalloc(hvs,  cap * sizeof(uint32));
+								}
+								tups[cnt] = tup; tss[cnt] = ts; hvs[cnt] = hv;
+								cnt++;
+							}
+						}
+						
+						/* ALWAYS load the pre-flush tuples from memory. */
+						{
+							HashJoinTuple ht_tup = ht->outer_buckets[p];
+							while (ht_tup != NULL)
+							{
+								if (cnt == cap) {
+									cap *= 2;
+									tups = repalloc(tups, cap * sizeof(MinimalTuple));
+									tss  = repalloc(tss,  cap * sizeof(int64));
+									hvs  = repalloc(hvs,  cap * sizeof(uint32));
+								}
+								MinimalTuple src = EHJ_HJTUPLE_MINTUPLE(ht_tup);
+								tups[cnt] = (MinimalTuple) palloc(src->t_len);
+								memcpy(tups[cnt], src, src->t_len);
+								tss[cnt] = EHJ_HJTUPLE_ARRIVAL_TS(ht_tup);
+								hvs[cnt] = ht_tup->hashvalue;
+								cnt++;
+								ht_tup = ht_tup->next.unshared;
+							}
+						}
+						node->ehj_p3_outer_tups = tups;
+						node->ehj_p3_outer_ts = tss;
+						node->ehj_p3_outer_hv = hvs;
+						node->ehj_p3_outer_count = cnt;
+					}
 					/* Close the disk files — we've loaded everything. */
 					if (inner_part->disk_file)
 					{
