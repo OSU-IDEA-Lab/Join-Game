@@ -192,6 +192,10 @@ def measureTimeForKs(conn, joinQuery, ks, sigma, data_filename, iteration, val, 
             if fetched in ks:
                 res.append([fetched, joinTime, weightedTime])
                 
+            while conn.notices:
+                notice = conn.notices.pop(0)
+                f.write(f"SERVER INFO: {notice}")
+                
         if fetched not in ks:
             res.append([fetched, joinTime, weightedTime])
             
