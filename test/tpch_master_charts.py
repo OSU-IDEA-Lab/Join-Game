@@ -45,11 +45,11 @@ def generate_plots_from_folder(input_dir='results', output_dir='plots'):
         # Setup figure and primary axis
         fig, ax1 = plt.subplots(figsize=(10, 6))
         
-        # Sort by time_sec so the connecting line draws smoothly from left to right
-        df = df.sort_values('time_sec')
+        # --- SWAP: Sort by k_tuples for smooth horizontal drawing ---
+        df = df.sort_values('k_tuples')
 
-        # Draw a faint connecting line to show the overall trajectory (Time vs Tuples)
-        ax1.plot(df['time_sec'], df['k_tuples'], color='gray', alpha=0.3, zorder=1)
+        # --- SWAP: Plot (X=Tuples, Y=Time) ---
+        ax1.plot(df['k_tuples'], df['time_sec'], color='gray', alpha=0.3, zorder=1)
 
         # Overlay the colored scatter points to show the EHJ phases
         for phase in df['phase'].unique():
@@ -59,9 +59,10 @@ def generate_plots_from_folder(input_dir='results', output_dir='plots'):
             phase_data = df[df['phase'] == phase]
             color = phase_colors.get(phase, 'black')
             
+            # --- SWAP: Scatter (X=Tuples, Y=Time) ---
             ax1.scatter(
-                phase_data['time_sec'],
                 phase_data['k_tuples'],
+                phase_data['time_sec'],
                 c=color,
                 s=60,
                 label=f"Phase {int(phase)}",
@@ -73,24 +74,23 @@ def generate_plots_from_folder(input_dir='results', output_dir='plots'):
         max_pct = df['pct_output'].max()
         ratio = (max_pct / max_k) if (max_k > 0 and max_pct > 0) else 0
 
-        # Custom formatter function: takes tick value (y) and returns the multiline string
-        def combined_formatter(y, pos):
-            pct = y * ratio
-            # Use commas for thousands (e.g., 100,000) and format pct to 1 decimal
-            return f"{y:,.0f}\n({pct:.1f}%)"
+        # Custom formatter function: takes tick value (x) and returns the multiline string
+        def combined_formatter(x, pos):
+            pct = x * ratio
+            return f"{x:,.0f}\n({pct:.1f}%)"
 
-        # Apply the custom formatter to the Y-axis
-        ax1.yaxis.set_major_formatter(FuncFormatter(combined_formatter))
+        # --- SWAP: Apply the custom formatter to the X-axis instead of Y ---
+        ax1.xaxis.set_major_formatter(FuncFormatter(combined_formatter))
 
-        # Formatting the primary chart axes
+        # --- SWAP: Update Labels ---
         ax1.grid(True, linestyle='--', alpha=0.6)
-        ax1.set_xlabel('Elapsed Time (seconds)', fontsize=11, fontweight='bold')
-        ax1.set_ylabel('Results Produced (# and %)', fontsize=11, fontweight='bold', color='#333333')
+        ax1.set_xlabel('Results Produced (# and %)', fontsize=11, fontweight='bold', color='#333333')
+        ax1.set_ylabel('Elapsed Time (seconds)', fontsize=11, fontweight='bold')
         
         plt.title(f'EHJ Phase Transitions: {basename}', fontsize=14, fontweight='bold')
         
         # Organize the legend
-        ax1.legend(loc='lower right', framealpha=0.9)
+        ax1.legend(loc='upper left', framealpha=0.9)
         plt.tight_layout()
 
         # Save and close

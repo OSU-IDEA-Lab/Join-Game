@@ -104,6 +104,10 @@ def join_query(conn, server_cur, csv_writer, log_file, total_tuples):
     idx = 0
     result = []
     
+    # --- NEW: Calculate the 10% stop threshold ---
+    # If total_tuples is 0, we set target to infinity to avoid breaking immediately
+    target_tuples = int(total_tuples * 0.10) if total_tuples > 0 else float('inf')
+    
     phase_map = {
         "Entering Phase 2": 2,
         "Entering Phase 3": 3,
@@ -147,8 +151,23 @@ def join_query(conn, server_cur, csv_writer, log_file, total_tuples):
                     log_file.write(f"Timeout: 1 hr reached.\n")
                 break
 
+        # --- NEW: Check if we hit the 10% limit and break early ---
+        if fetched_count >= target_tuples:
+            log_file.write(f"Reached 10% output limit ({fetched_count}/{total_tuples}). Stopping early.\n")
+            break
+
+    # ALWAYS CAPTURE THE FINAL TUPLE COUNT
+    cumulative_time = time() - start_time
+    pct_output = (fetched_count / total_tuples * 100) if total_tuples > 0 else 0.0
+    
+    # Ensure final count is written if it wasn't caught by the ITER_SIZE check
+    if fetched_count % ITER_SIZE != 0 or fetched_count == 0 or fetched_count == target_tuples:
+        csv_writer.writerow([
+            fetched_count, round(cumulative_time, 4), current_phase, round(pct_output, 4)
+        ])
+
     log_file.write("Total joined tuples fetched: %d\n" % fetched_count)
-    log_file.write('Time of current query run: %.2f sec\n\n' % (time() - start_time))
+    log_file.write('Time of current query run: %.2f sec\n\n' % cumulative_time)
     return result
 
 def summary_tests(summary, test_results, Query):
@@ -174,7 +193,7 @@ def summary_tests(summary, test_results, Query):
     return avg_test_results
 
 def run_experiment():
-    sizes = ['01']
+    sizes = ['1']
     # sizes = ['01', '1', '10']
     vals = ['0', '1', '1_5']
     # work_mems = ['64MB', '256MB']
