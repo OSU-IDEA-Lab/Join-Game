@@ -236,7 +236,7 @@ def run_experiment():
                                     continue
                                 
                                 total_tuples = baselines[sch_val]
-                                csv_filename = f"results/{file_prefix}_sch{sch_val}.csv"
+                                csv_filename = f"{file_prefix}_sch{sch_val}.csv"
                                 
                                 print(f"[Test Run] EHJ {q_name} | Mem: {mem} | DB: {db_name} | Z: {val} | Sch: {sch_val}")
                                 

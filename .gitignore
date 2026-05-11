@@ -48,6 +48,8 @@ lib*.pc
 *.txt
 *.swp
 src/tags
+/results
+/plots
 
 # path specific
 /start.sh
