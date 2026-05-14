@@ -1,1 +1,133 @@
 nohup: ignoring input
+
+[Baseline] Q2 | DB: tpch01g | Z: 0 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 8000
+[Test Run] EHJ Q2 | Mem: 256MB | DB: tpch01g | Z: 0 | Sch: 1
+
+[Baseline] Q3 | DB: tpch01g | Z: 0 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ Q3 | Mem: 256MB | DB: tpch01g | Z: 0 | Sch: 1
+
+[Baseline] Q5 | DB: tpch01g | Z: 0 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ Q5 | Mem: 256MB | DB: tpch01g | Z: 0 | Sch: 1
+
+[Baseline] Q8 | DB: tpch01g | Z: 0 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ Q8 | Mem: 256MB | DB: tpch01g | Z: 0 | Sch: 1
+
+[Baseline] Q9 | DB: tpch01g | Z: 0 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 240000
+[Test Run] EHJ Q9 | Mem: 256MB | DB: tpch01g | Z: 0 | Sch: 1
+
+[Baseline] Q9_3R | DB: tpch01g | Z: 0 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 4800000
+[Test Run] EHJ Q9_3R | Mem: 256MB | DB: tpch01g | Z: 0 | Sch: 1
+
+[Baseline] Q10 | DB: tpch01g | Z: 0 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 15000
+[Test Run] EHJ Q10 | Mem: 256MB | DB: tpch01g | Z: 0 | Sch: 1
+
+[Baseline] Q11 | DB: tpch01g | Z: 0 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 365055
+[Test Run] EHJ Q11 | Mem: 256MB | DB: tpch01g | Z: 0 | Sch: 1
+
+[Baseline] Q12 | DB: tpch01g | Z: 0 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ Q12 | Mem: 256MB | DB: tpch01g | Z: 0 | Sch: 1
+
+[Baseline] Q15 | DB: tpch01g | Z: 0 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ Q15 | Mem: 256MB | DB: tpch01g | Z: 0 | Sch: 1
+
+[Baseline] test | DB: tpch01g | Z: 0 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ test | Mem: 256MB | DB: tpch01g | Z: 0 | Sch: 1
+
+[Baseline] Q2 | DB: tpch01g | Z: 1 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 8000
+[Test Run] EHJ Q2 | Mem: 256MB | DB: tpch01g | Z: 1 | Sch: 1
+
+[Baseline] Q3 | DB: tpch01g | Z: 1 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ Q3 | Mem: 256MB | DB: tpch01g | Z: 1 | Sch: 1
+
+[Baseline] Q5 | DB: tpch01g | Z: 1 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ Q5 | Mem: 256MB | DB: tpch01g | Z: 1 | Sch: 1
+
+[Baseline] Q8 | DB: tpch01g | Z: 1 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ Q8 | Mem: 256MB | DB: tpch01g | Z: 1 | Sch: 1
+
+[Baseline] Q9 | DB: tpch01g | Z: 1 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 240000
+[Test Run] EHJ Q9 | Mem: 256MB | DB: tpch01g | Z: 1 | Sch: 1
+
+[Baseline] Q9_3R | DB: tpch01g | Z: 1 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 4800000
+[Test Run] EHJ Q9_3R | Mem: 256MB | DB: tpch01g | Z: 1 | Sch: 1
+
+[Baseline] Q10 | DB: tpch01g | Z: 1 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 15000
+[Test Run] EHJ Q10 | Mem: 256MB | DB: tpch01g | Z: 1 | Sch: 1
+
+[Baseline] Q11 | DB: tpch01g | Z: 1 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 294111
+[Test Run] EHJ Q11 | Mem: 256MB | DB: tpch01g | Z: 1 | Sch: 1
+
+[Baseline] Q12 | DB: tpch01g | Z: 1 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ Q12 | Mem: 256MB | DB: tpch01g | Z: 1 | Sch: 1
+
+[Baseline] Q15 | DB: tpch01g | Z: 1 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ Q15 | Mem: 256MB | DB: tpch01g | Z: 1 | Sch: 1
+
+[Baseline] test | DB: tpch01g | Z: 1 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ test | Mem: 256MB | DB: tpch01g | Z: 1 | Sch: 1
+
+[Baseline] Q2 | DB: tpch01g | Z: 1_5 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 8000
+[Test Run] EHJ Q2 | Mem: 256MB | DB: tpch01g | Z: 1_5 | Sch: 1
+
+[Baseline] Q3 | DB: tpch01g | Z: 1_5 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ Q3 | Mem: 256MB | DB: tpch01g | Z: 1_5 | Sch: 1
+
+[Baseline] Q5 | DB: tpch01g | Z: 1_5 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ Q5 | Mem: 256MB | DB: tpch01g | Z: 1_5 | Sch: 1
+
+[Baseline] Q8 | DB: tpch01g | Z: 1_5 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ Q8 | Mem: 256MB | DB: tpch01g | Z: 1_5 | Sch: 1
+
+[Baseline] Q9 | DB: tpch01g | Z: 1_5 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 240000
+[Test Run] EHJ Q9 | Mem: 256MB | DB: tpch01g | Z: 1_5 | Sch: 1
+
+[Baseline] Q9_3R | DB: tpch01g | Z: 1_5 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 4800000
+[Test Run] EHJ Q9_3R | Mem: 256MB | DB: tpch01g | Z: 1_5 | Sch: 1
+
+[Baseline] Q10 | DB: tpch01g | Z: 1_5 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 15000
+[Test Run] EHJ Q10 | Mem: 256MB | DB: tpch01g | Z: 1_5 | Sch: 1
+
+[Baseline] Q11 | DB: tpch01g | Z: 1_5 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 49090
+[Test Run] EHJ Q11 | Mem: 256MB | DB: tpch01g | Z: 1_5 | Sch: 1
+
+[Baseline] Q12 | DB: tpch01g | Z: 1_5 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ Q12 | Mem: 256MB | DB: tpch01g | Z: 1_5 | Sch: 1
+
+[Baseline] Q15 | DB: tpch01g | Z: 1_5 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ Q15 | Mem: 256MB | DB: tpch01g | Z: 1_5 | Sch: 1
+
+[Baseline] test | DB: tpch01g | Z: 1_5 | Sch: 1 -> Running Merge Join...
+    -> Baseline complete. Total expected rows: 60000
+[Test Run] EHJ test | Mem: 256MB | DB: tpch01g | Z: 1_5 | Sch: 1

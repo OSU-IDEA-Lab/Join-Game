@@ -193,11 +193,9 @@ def summary_tests(summary, test_results, Query):
     return avg_test_results
 
 def run_experiment():
-    sizes = ['1']
-    # sizes = ['01', '1', '10']
+    sizes = ['01']
     vals = ['0', '1', '1_5']
-    # work_mems = ['64MB', '256MB']
-    work_mems = ['64MB']
+    work_mems = ['256MB']
     all_queries = ['Q2', 'Q3', 'Q5', 'Q8', 'Q9', 'Q9_3R', 'Q10', 'Q11', 'Q12', 'Q15', 'test']
 
     # Ensure the output directory exists
