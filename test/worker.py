@@ -68,16 +68,18 @@ def join_query(conn, server_cur, csv_writer, log_file, total_tuples, time_limit)
 
     csv_writer.writerow([fetched_count, round(time() - start_time, 4), current_phase, 10.0])
 
-# Modified to take db_name directly as an argument
-def run_worker(db_name, q_name, val, mem, time_limit, sch_val, sql):
+def run_worker(dataset, dataset_size, q_name, val, mem, time_limit, sch_val, sql):
     time_limit = int(time_limit)
     os.makedirs('results', exist_ok=True)
+    
+    # Construct the full database name for PostgreSQL (e.g., tpch10g)
+    db_name = f"{dataset}{dataset_size}"
     
     total_tuples = get_mj_total(db_name, sql)
     if total_tuples < 0: return
 
-    # Using db_name in the file prefix for organization
-    file_prefix = f"results/{q_name}_{db_name}_z{val}_{mem.lower()}"
+    # Natively build your preferred file format (e.g., Q9_10g_z1_5_256mb)
+    file_prefix = f"results/{q_name}_{dataset_size}_z{val}_{mem.lower()}"
     
     with open(f"{file_prefix}.log", 'w') as log_file, open(f"{file_prefix}_sch{sch_val}.csv", 'w', newline='') as f_csv:
         csv_writer = csv.writer(f_csv)
@@ -85,7 +87,7 @@ def run_worker(db_name, q_name, val, mem, time_limit, sch_val, sql):
         
         conn = psycopg2.connect(dbname=db_name, user=USER, host=HOST, port=PORT)
         with conn.cursor() as setup_cur:
-            setup_cur.execute(f"SET work_mem = '{mem}'; SET statement_timeout = {time_limit * 1000}; SET enable_hashjoin = ON; SET enable_mergejoin = OFF;")
+            setup_cur.execute(f"SET work_mem = '{mem.upper()}'; SET statement_timeout = {time_limit * 1000}; SET enable_hashjoin = ON; SET enable_mergejoin = OFF;")
         conn.commit()
         
         log_file.write(f"========================================================\n")
@@ -98,14 +100,13 @@ def run_worker(db_name, q_name, val, mem, time_limit, sch_val, sql):
             join_query(conn, sc, csv_writer, log_file, total_tuples, time_limit)
         conn.close()
 
-        # Notification content updated to be database-agnostic
         subject = f"Run Complete: {q_name} | DB: {db_name} | Z:{val} | {mem}"
         body = f"The worker has finished processing {q_name} on {db_name} with Z={val} and {mem} memory."
         os.system(f'echo "{body}" | mail -s "{subject}" jinjo@oregonstate.edu')
 
 if __name__ == "__main__":
-    # Updated to expect 7 arguments + script name = 8 total items
-    if len(sys.argv) == 8:
-        run_worker(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7])
+    # Now expecting 8 arguments + script name = 9 total items
+    if len(sys.argv) == 9:
+        run_worker(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7], sys.argv[8])
     else:
-        print("Usage: python3 worker.py <db_name> <q_name> <z_val> <mem> <time_limit_in_seconds> <sch_val> <sql_string>")
+        print("Usage: python3 worker.py <dataset> <dataset_size> <q_name> <z_val> <mem> <time_limit_in_seconds> <sch_val> <sql_string>")

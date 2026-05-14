@@ -3,7 +3,6 @@ import itertools
 import subprocess
 
 def get_queries(q_name, val):
-    """Returns a list of tuples: (SQL query, schema_val) using the z{val} schema format."""
     sch_val = '1' 
     sql = ""
     if q_name == 'Q9': sql = f"select * from z{val}.partsupp, z{val}.lineitem where ps_partkey = l_partkey LIMIT 240000;"
@@ -20,6 +19,7 @@ def get_queries(q_name, val):
     return [(sql, sch_val)] if sql else []
 
 def audit_results(results_dir='results'):
+    dataset = 'tpch'
     sizes = ['01', '1', '10']
     z_vals = ['0', '1', '1_5']
     mems = ['64mb', '256mb']
@@ -30,43 +30,72 @@ def audit_results(results_dir='results'):
     expected_total = len(sizes) * len(z_vals) * len(mems) * len(queries)
     missing_files = []
     header_only_files = []
+    incomplete_files = []
 
     if not os.path.exists(results_dir):
-        print(f"Error: Directory '{results_dir}' not found.")
-        return
+        os.makedirs(results_dir, exist_ok=True)
 
     for size, z, mem, query in itertools.product(sizes, z_vals, mems, queries):
-        # Updated to check for new naming convention: results/{q_name}_tpch{size}g_z{val}_{mem}_sch{sch_val}.csv
-        expected_filename = f"{query}_tpch{size}g_z{z}_{mem}_sch{schema}.csv"
+        dataset_size = f"{size}g"
+        expected_filename = f"{query}_{dataset_size}_z{z}_{mem}_sch{schema}.csv"
         expected_path = os.path.join(results_dir, expected_filename)
         
+        job_item = {'query': query, 'dataset_size': dataset_size, 'z': z, 'mem': mem}
+        
         if not os.path.exists(expected_path):
-            missing_files.append({'query': query, 'size': size, 'z': z, 'mem': mem})
+            missing_files.append(job_item)
         else:
             try:
                 with open(expected_path, 'r') as f:
                     lines = f.readlines()
                     if len(lines) <= 1:
-                        header_only_files.append({'query': query, 'size': size, 'z': z, 'mem': mem})
+                        header_only_files.append(job_item)
+                    else:
+                        # --- NEW: Check if the final recorded output reached 10% ---
+                        last_line = lines[-1].strip()
+                        if last_line:
+                            parts = last_line.split(',')
+                            if len(parts) >= 4:
+                                try:
+                                    final_pct = float(parts[3])
+                                    if final_pct < 9.99:
+                                        incomplete_files.append(job_item)
+                                except ValueError:
+                                    pass
             except Exception as e:
-                print(f"Could not read {expected_filename}: {e}")
+                pass
 
-    valid_count = expected_total - len(missing_files) - len(header_only_files)
-    print(f"--- TPC-H Audit: {valid_count}/{expected_total} Valid CSVs Found ---")
+    valid_count = expected_total - len(missing_files) - len(header_only_files) - len(incomplete_files)
+    print(f"--- {dataset.upper()} Audit: {valid_count}/{expected_total} Complete CSVs Found ---")
 
-    if header_only_files:
-        print("--- RELAUNCHING HEADER-ONLY CASES ---")
-        for item in header_only_files:
-            db_name = f"tpch{item['size']}g"
+    jobs_to_run = missing_files + header_only_files + incomplete_files
+
+    if jobs_to_run:
+        print(f"--- RELAUNCHING {len(jobs_to_run)} CASES IN BACKGROUND ---")
+        if incomplete_files:
+            print(f"(* Note: {len(incomplete_files)} runs timed out or crashed before reaching 10%)")
+            
+        for item in jobs_to_run:
             variations = get_queries(item['query'], item['z'])
+            
             for sql, sch_val in variations:
-                log_out = f"results/rerun_{item['query']}_{db_name}_z{item['z']}_{item['mem']}.nohup.log"
-                # Updated to pass db_name as the first worker argument
-                cmd = ['nohup', 'python3', 'worker.py', db_name, item['query'], item['z'], item['mem'], time_limit, sch_val, sql]
+                log_out = f"results/rerun_{item['query']}_{item['dataset_size']}_z{item['z']}_{item['mem']}.nohup.log"
+                
+                cmd = [
+                    'nohup', 'python3', 'test/worker.py', 
+                    dataset, item['dataset_size'], item['query'], item['z'], item['mem'], time_limit, sch_val, sql
+                ]
                 
                 out_file = open(log_out, 'w')
-                subprocess.Popen(cmd, stdout=out_file, stderr=subprocess.STDOUT, start_new_session=True)
-                print(f"Launched: {db_name} | {item['query']} | Z:{item['z']} | {item['mem']}")
+                subprocess.Popen(
+                    cmd,
+                    stdout=out_file,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True
+                )
+                print(f"Launched -> {item['query']} | DB:{dataset}{item['dataset_size']} | Z:{item['z']} | {item['mem']}")
+                
+        print(f"\nSuccessfully launched {len(jobs_to_run)} background processes.")
 
 if __name__ == "__main__":
     audit_results()

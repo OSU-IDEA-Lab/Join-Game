@@ -2,7 +2,8 @@ import os
 import itertools
 
 def audit_results(results_dir='results'):
-    # Define the exact parameters from your experiment matrix
+    # Define parameters
+    dataset = 'tpch'
     sizes = ['01', '1', '10']
     z_vals = ['0', '1', '1_5']
     mems = ['64mb', '256mb']
@@ -19,23 +20,23 @@ def audit_results(results_dir='results'):
 
     # Generate all 198 combinations
     for size, z, mem, query in itertools.product(sizes, z_vals, mems, queries):
-        expected_filename = f"{query}_{size}g_z{z}_{mem}_sch{schema}.csv"
+        dataset_size = f"{size}g"
+        expected_filename = f"{query}_{dataset_size}_z{z}_{mem}_sch{schema}.csv"
         expected_path = os.path.join(results_dir, expected_filename)
         
         # 1. Check if the file completely failed to generate
         if not os.path.exists(expected_path):
             missing_files.append({
-                'query': query, 'size': f"{size}g", 'z': z, 'mem': mem
+                'query': query, 'dataset_size': dataset_size, 'z': z, 'mem': mem
             })
         else:
             # 2. Check if the file only contains a header (1 line or less)
             try:
                 with open(expected_path, 'r') as f:
-                    # Read the lines to see how many there are
                     lines = f.readlines()
                     if len(lines) <= 1:
                         header_only_files.append({
-                            'query': query, 'size': f"{size}g", 'z': z, 'mem': mem
+                            'query': query, 'dataset_size': dataset_size, 'z': z, 'mem': mem
                         })
             except Exception as e:
                 print(f"Could not read {expected_filename}: {e}")
@@ -44,7 +45,7 @@ def audit_results(results_dir='results'):
     valid_count = expected_total - len(missing_files) - len(header_only_files)
     
     print(f"=====================================")
-    print(f"       TPC-H Experiment Audit        ")
+    print(f"       {dataset.upper()} Experiment Audit        ")
     print(f"=====================================")
     print(f"Expected CSVs:       {expected_total}")
     print(f"Valid Data CSVs:     {valid_count}")
@@ -55,17 +56,17 @@ def audit_results(results_dir='results'):
     if missing_files:
         print("--- COMPLETELY MISSING --- (Failed to start or save)")
         for item in missing_files:
-            print(f"DB: tpch{item['size']:<3} | Z: {item['z']:<3} | Mem: {item['mem']:<5} | Query: {item['query']}")
+            print(f"DB: {dataset}{item['dataset_size']:<4} | Z: {item['z']:<3} | Mem: {item['mem']:<5} | Query: {item['query']}")
         print("")
 
     if header_only_files:
         print("--- HEADER ONLY --- (Started, but crashed before finding matches)")
         for item in header_only_files:
-            print(f"DB: tpch{item['size']:<3} | Z: {item['z']:<3} | Mem: {item['mem']:<5} | Query: {item['query']}")
+            print(f"DB: {dataset}{item['dataset_size']:<4} | Z: {item['z']:<3} | Mem: {item['mem']:<5} | Query: {item['query']}")
         print("")
 
     if not missing_files and not header_only_files:
-        print("🎉 All 198 CSV files are present and contain data!")
+        print(f"🎉 All {expected_total} CSV files are present and contain data!")
 
 if __name__ == "__main__":
     audit_results()
