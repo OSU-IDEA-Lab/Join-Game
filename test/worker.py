@@ -3,6 +3,7 @@ import sys
 import datetime
 import psycopg2
 import csv
+import re
 from time import time
 import os
 
@@ -42,11 +43,42 @@ def join_query(conn, server_cur, csv_writer, log_file, total_tuples, time_limit)
     prev_time, factor, idx = start_time, SIGMA, 0
     target_tuples = int(total_tuples * 0.10) if total_tuples > 0 else float('inf')
     
+    # Track states for individual nodes
+    node_phases = {}
+    
     for _ in server_cur:
         while conn.notices:
             notice = conn.notices.pop(0)
-            if "Phase 2" in notice: current_phase = 2
-            elif "Phase 3" in notice: current_phase = 3
+            
+            # Extract Node ID if present
+            match = re.search(r"\[Node (\d+)\]", notice)
+            
+            # Determine which phase the node transitioned to
+            new_p = None
+            if "Starting Phase 1" in notice: new_p = 1
+            elif "Entering Phase 2" in notice: new_p = 2
+            elif "Entering Phase 3" in notice: new_p = 3
+            
+            if match and new_p:
+                nid = int(match.group(1))
+                node_phases[nid] = new_p
+            elif new_p:
+                # Fallback for old logs or 2-relation joins without Node IDs
+                current_phase = new_p
+
+        # Combine states if tracking a multi-node pipeline
+        if node_phases:
+            if len(node_phases) == 1:
+                # 2-relation join (1 EHJ node)
+                current_phase = list(node_phases.values())[0]
+            else:
+                # 3-relation join (2 EHJ nodes)
+                # Lower nodes are deeper in the tree, so they have a LARGER plan_node_id
+                upper_id = min(node_phases.keys())
+                lower_id = max(node_phases.keys())
+                
+                # Output formats as a 2-digit integer (e.g. Lower P2 + Upper P1 = 21)
+                current_phase = (node_phases[lower_id] * 10) + node_phases[upper_id]
 
         fetched_count += 1
         current_time = time()
@@ -72,13 +104,11 @@ def run_worker(dataset, dataset_size, q_name, val, mem, time_limit, sch_val, sql
     time_limit = int(time_limit)
     os.makedirs('results', exist_ok=True)
     
-    # Construct the full database name for PostgreSQL (e.g., tpch10g)
     db_name = f"{dataset}{dataset_size}"
     
     total_tuples = get_mj_total(db_name, sql)
     if total_tuples < 0: return
 
-    # Natively build your preferred file format (e.g., Q9_10g_z1_5_256mb)
     file_prefix = f"results/{q_name}_{dataset_size}_z{val}_{mem.lower()}"
     
     with open(f"{file_prefix}.log", 'w') as log_file, open(f"{file_prefix}_sch{sch_val}.csv", 'w', newline='') as f_csv:
@@ -105,7 +135,6 @@ def run_worker(dataset, dataset_size, q_name, val, mem, time_limit, sch_val, sql
         os.system(f'echo "{body}" | mail -s "{subject}" jinjo@oregonstate.edu')
 
 if __name__ == "__main__":
-    # Now expecting 8 arguments + script name = 9 total items
     if len(sys.argv) == 9:
         run_worker(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7], sys.argv[8])
     else:

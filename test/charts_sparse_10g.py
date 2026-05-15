@@ -13,28 +13,48 @@ def generate_combined_plots(input_dir='results', output_dir='plots'):
     relations_2 = ['Q9', 'Q10', 'Q11', 'Q12', 'Q15']
     relations_3 = ['Q2', 'Q3', 'Q5', 'Q8', 'Q9_3R', 'test']
     
-    # --- UPDATED: Only pull files for the 10g dataset size ---
+    # Bundle the relation groups for the loop
+    rel_groups = [
+        ('2_Relations', relations_2),
+        ('3_Relations', relations_3)
+    ]
+    
+    # Restrict to 10g dataset size
     sizes = ['10']
     z_vals = ['0', '1', '1_5']
     mems = ['64mb', '256mb']
 
-    configs = [
-        ('2_Relations', relations_2, '64mb'),
-        ('2_Relations', relations_2, '256mb'),
-        ('3_Relations', relations_3, '64mb'),
-        ('3_Relations', relations_3, '256mb')
-    ]
+    # Map the phase codes to (linestyle, marker) tuples
+    styles_map = {
+        # 3-Relation (Lower Node, Upper Node)
+        11: ('-', '.'),   # L1, U1: Solid, Point
+        21: ('--', '.'),  # L2, U1: Dashed, Point
+        31: (':', '.'),   # L3, U1: Dotted, Point
+        12: ('-', '*'),   # L1, U2: Solid, Asterisk
+        22: ('--', '*'),  # L2, U2: Dashed, Asterisk
+        32: (':', '*'),   # L3, U2: Dotted, Asterisk
+        13: ('-', 'h'),   # L1, U3: Solid, Hexagram
+        23: ('--', 'h'),  # L2, U3: Dashed, Hexagram
+        33: (':', 'h'),   # L3, U3: Dotted, Hexagram
+        
+        # Default fallbacks for 2-Relation (Single Node)
+        1: ('-', '.'), 
+        2: ('--', '.'), 
+        3: (':', '.')
+    }
 
+    # Get the default Matplotlib color cycle
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
-    count = 0
 
-    for rel_name, query_list, mem in configs:
-        fig, ax = plt.subplots(figsize=(14, 8)) 
+    count = 0
+    # Automatically iterate through the 12 resulting combinations
+    for (rel_name, query_list), size, z, mem in itertools.product(rel_groups, sizes, z_vals, mems):
+        fig, ax = plt.subplots(figsize=(10, 8))
         lines_plotted = 0
         color_idx = 0
 
-        # Iterate through every combination for this chart (which is now just the 10g size)
-        for q, size, z in itertools.product(query_list, sizes, z_vals):
+        # Iterate only through the queries for this specific chart's relation group
+        for q in query_list:
             filename = f"{q}_{size}g_z{z}_{mem}_sch1.csv"
             filepath = os.path.join(input_dir, filename)
 
@@ -46,42 +66,46 @@ def generate_combined_plots(input_dir='results', output_dir='plots'):
                         df = df[(df['pct_output'] > 0) & (df['time_sec'] > 0)]
                         
                         if not df.empty:
+                            # Reset index is critical here for the gap-stitching logic to work
                             df = df.sort_values('pct_output').reset_index(drop=True)
                             
-                            label = f"{q} | {size}g | Z:{z}"
+                            label = f"{q}"
                             line_color = colors[color_idx % len(colors)]
                             color_idx += 1
                             
                             label_added = False
-                            styles = {1: '-', 2: ':', 3: '--'}
                             
                             for phase in sorted(df['phase'].dropna().unique()):
                                 idx = df.index[df['phase'] == phase].tolist()
                                 if not idx: continue
                                 
-                                # Stitch the gap
+                                # Stitch the gap: Connect to the last point of the previous phase
                                 if min(idx) > 0:
                                     idx = [min(idx) - 1] + idx
                                     
                                 phase_df = df.iloc[idx]
                                 lbl = label if not label_added else None
                                 
+                                # Fetch the requested line style and marker from the new map
+                                ls, mk = styles_map.get(phase, ('-', '.'))
+                                
                                 ax.plot(
                                     phase_df['pct_output'], 
                                     phase_df['time_sec'], 
                                     color=line_color, 
-                                    linestyle=styles.get(phase, '-'), 
-                                    marker='.', 
-                                    markersize=4, 
+                                    linestyle=ls, 
+                                    marker=mk, 
+                                    markersize=8, 
                                     label=lbl, 
-                                    alpha=0.8
+                                    alpha=0.85
                                 )
-                                label_added = True
+                                label_added = True # Only add the label to the legend once per query
                                 
                             lines_plotted += 1
                 except Exception as e:
                     print(f"Error reading {filename}: {e}")
 
+        # Only format and save the chart if at least one query line was successfully plotted
         if lines_plotted > 0:
             ax.set_xscale('log', base=10)
             ax.set_yscale('log', base=10)
@@ -93,20 +117,22 @@ def generate_combined_plots(input_dir='results', output_dir='plots'):
             ax.set_xlabel('Output (%)', fontsize=12, fontweight='bold')
             ax.set_ylabel('Delay (seconds)', fontsize=12, fontweight='bold')
             
-            # External legend
-            ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", fontsize='small', ncol=2)
+            plt.title(f'EHJ Performance: {rel_name} ({mem.upper()})\nDataset: tpch{size}g | Skew: Z={z}', fontsize=14, fontweight='bold')
+
+            ax.legend(loc="upper left", fontsize='medium', framealpha=0.9)
             plt.tight_layout()
             
-            out_path = os.path.join(output_dir, f"combined_{rel_name.lower()}_{mem}.png")
+            out_path = os.path.join(output_dir, f"combined_{rel_name.lower()}_{size}g_z{z}_{mem}.png")
             
-            open(out_path, 'w').close()
-            plt.savefig(out_path, dpi=300, bbox_inches="tight")
-            print(f"Saved: {out_path} (Contains {lines_plotted} configurations)")
+            # Explicitly overwrite at the start of execution
+            open(out_path, 'w').close() 
+            plt.savefig(out_path, dpi=300)
+            print(f"Saved: {out_path} (Contains {lines_plotted} queries)")
             count += 1
             
         plt.close()
         
-    print(f"\nSuccess! {count} dense charts generated in '{output_dir}/'.")
+    print(f"\nSuccess! {count} sparse charts generated in '{output_dir}/'.")
 
 if __name__ == "__main__":
     target_dir = sys.argv[1] if len(sys.argv) > 1 else 'results'

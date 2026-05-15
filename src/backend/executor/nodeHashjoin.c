@@ -289,7 +289,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				/* First entry: create the EHJ hash table. */
 				if (hashtable_ehj == NULL)
 				{
-					elog(INFO, "EHJ Status: Starting Phase 1 (Symmetric Ping-Pong) execution.");
+					elog(INFO, "[Node %d] EHJ Status: Starting Phase 1 (Symmetric Ping-Pong) execution.", node->js.ps.plan->plan_node_id);
 					hashtable_ehj = ExecEHJHashTableCreate(
 						hashNode_ehj, node->hj_HashOperators, HJ_FILL_INNER(node));
 					node->hj_HashTable = hashtable_ehj;
@@ -311,7 +311,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						ExecEHJFlushAllPartitionBuffers(hashtable_ehj);
 						node->ehj_p3_partno = 0;
 						node->hj_JoinState = HJ_EHJ_PHASE3_NEXT_PART;
-						elog(INFO, "EHJ Status: Phase 1 complete (sources exhausted). Entering Phase 3 cleanup.");
+						elog(INFO, "[Node %d] EHJ Status: Phase 1 complete (sources exhausted). Entering Phase 3 cleanup.", node->js.ps.plan->plan_node_id);
 					}
 					else
 					{
@@ -320,7 +320,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						node->reads_from_inner = 0;
 						node->reads_from_outer = 0;
 						node->hj_JoinState = HJ_EHJ_PHASE2_LOOP;
-						elog(INFO, "EHJ Status: Phase 1 complete (memory full). Entering Phase 2.");
+						elog(INFO, "[Node %d] EHJ Status: Phase 1 complete (memory full). Entering Phase 2.", node->js.ps.plan->plan_node_id);
 					}
 					continue;
 				}
@@ -539,8 +539,8 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					node->ehj_p3_partno = 0;
 					node->hj_JoinState = HJ_EHJ_PHASE3_NEXT_PART;
 					elog(INFO,
-						"EHJ Status: Phase 2 complete. "
-						"Entering Phase 3 cleanup.");
+						"[Node %d] EHJ Status: Phase 2 complete. "
+						"Entering Phase 3 cleanup.", node->js.ps.plan->plan_node_id);
 					continue;
 				}
 	
@@ -1072,7 +1072,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 					MemoryContextSwitchTo(oldcxt);
 					ExecHashTableDestroy(node->hj_HashTable);
 					node->hj_HashTable = NULL;
-					elog(INFO, "EHJ Status: Phase 3 cleanup complete. Join finished.");
+					elog(INFO, "[Node %d] EHJ Status: Phase 3 cleanup complete. Join finished.", node->js.ps.plan->plan_node_id);
 					return NULL;
 				}
 				
