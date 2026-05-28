@@ -19,6 +19,8 @@ STEP_SIZE = 1.5
 ITER_SIZE = 100
 TEST_NUMBER = 1
 
+TARGET_PCT_OUTPUT = 1.0 
+
 data_points = [int(ITER_SIZE * (STEP_SIZE ** i)) for i in range(100)]
 
 def get_mj_total(db_name, sql):
@@ -26,7 +28,7 @@ def get_mj_total(db_name, sql):
         conn = psycopg2.connect(dbname=db_name, user=USER, host=HOST, port=PORT)
         conn.autocommit = False 
         with conn.cursor() as setup_cur:
-            setup_cur.execute("SET work_mem = '64kB'; SET statement_timeout = 3600000;")
+            setup_cur.execute("SET work_mem = '500MB'; SET statement_timeout = 3600000;")
             setup_cur.execute("SET enable_hashjoin=off; SET enable_mergejoin=on; SET enable_nestloop=off;")
         conn.commit()
         with conn.cursor(name='mj_cur') as mj_cur:
@@ -41,7 +43,9 @@ def get_mj_total(db_name, sql):
 def join_query(conn, server_cur, csv_writer, log_file, total_tuples, time_limit):
     current_phase, start_time, fetched_count, weighted_time = 1, time(), 0, 0
     prev_time, factor, idx = start_time, SIGMA, 0
-    target_tuples = int(total_tuples * 0.10) if total_tuples > 0 else float('inf')
+    
+    # --- UPDATED: Calculate stop threshold using the new constant ---
+    target_tuples = int(total_tuples * (TARGET_PCT_OUTPUT / 100.0)) if total_tuples > 0 else float('inf')
     
     # Track states for individual nodes
     node_phases = {}
@@ -49,6 +53,7 @@ def join_query(conn, server_cur, csv_writer, log_file, total_tuples, time_limit)
     for _ in server_cur:
         while conn.notices:
             notice = conn.notices.pop(0)
+            log_file.write(f"SERVER INFO: {notice}\n")
             
             # Extract Node ID if present
             match = re.search(r"\[Node (\d+)\]", notice)
@@ -73,11 +78,8 @@ def join_query(conn, server_cur, csv_writer, log_file, total_tuples, time_limit)
                 current_phase = list(node_phases.values())[0]
             else:
                 # 3-relation join (2 EHJ nodes)
-                # Lower nodes are deeper in the tree, so they have a LARGER plan_node_id
                 upper_id = min(node_phases.keys())
                 lower_id = max(node_phases.keys())
-                
-                # Output formats as a 2-digit integer (e.g. Lower P2 + Upper P1 = 21)
                 current_phase = (node_phases[lower_id] * 10) + node_phases[upper_id]
 
         fetched_count += 1
@@ -96,9 +98,13 @@ def join_query(conn, server_cur, csv_writer, log_file, total_tuples, time_limit)
                 if cumulative_time >= time_limit:
                     log_file.write(f"Timeout: {time_limit} sec reached.\n")
                 break
-        if fetched_count >= target_tuples: break
+                
+        if fetched_count >= target_tuples: 
+            break
 
-    csv_writer.writerow([fetched_count, round(time() - start_time, 4), current_phase, 10.0])
+    # --- UPDATED: Dynamically calculate final completion percentage ---
+    final_pct = round((fetched_count / total_tuples) * 100, 4) if total_tuples > 0 else 0.0
+    csv_writer.writerow([fetched_count, round(time() - start_time, 4), current_phase, final_pct])
 
 def run_worker(dataset, dataset_size, q_name, val, mem, time_limit, sch_val, sql):
     time_limit = int(time_limit)
@@ -117,12 +123,14 @@ def run_worker(dataset, dataset_size, q_name, val, mem, time_limit, sch_val, sql
         
         conn = psycopg2.connect(dbname=db_name, user=USER, host=HOST, port=PORT)
         with conn.cursor() as setup_cur:
-            setup_cur.execute(f"SET work_mem = '{mem.upper()}'; SET statement_timeout = {time_limit * 1000}; SET enable_hashjoin = ON; SET enable_mergejoin = OFF;")
+            # Added SET enable_nestloop = OFF; to ensure stacked EHJ pipelines
+            setup_cur.execute(f"SET work_mem = '{mem.upper()}'; SET statement_timeout = {time_limit * 1000}; SET enable_hashjoin = ON; SET enable_mergejoin = OFF; SET enable_nestloop = OFF;")
         conn.commit()
         
         log_file.write(f"========================================================\n")
         log_file.write(f"Time: {datetime.datetime.now()} | Database: {db_name} | Query: {q_name}\n")
         log_file.write(f"Executing: {sql}\n")
+        log_file.write(f"Total Merge Join Tuples (Baseline): {total_tuples}\n")
         
         with conn.cursor(name='ehj_cursor') as sc:
             sc.itersize = ITER_SIZE
