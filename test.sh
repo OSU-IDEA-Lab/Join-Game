@@ -1,0 +1,1 @@
+nohup python3 test/tpch_manager.py pl_shuff1 --limit > tpch_manager_q11.log 2>&1 &

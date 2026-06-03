@@ -6,7 +6,8 @@ import os
 import itertools
 import sys
 
-def generate_combined_plots(input_dir='results', output_dir='plots'):
+def generate_combined_plots(input_dir='results'):
+    output_dir = "plots_"+input_dir
     os.makedirs(output_dir, exist_ok=True)
 
     # Define the groupings based on relation count

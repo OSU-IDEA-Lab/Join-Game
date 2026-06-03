@@ -20,7 +20,7 @@ def get_queries(q_name, val):
 
 def audit_results(results_dir='results'):
     dataset = 'tpch'
-    sizes = ['01', '1', '10']
+    sizes = ['10']
     z_vals = ['0', '1', '1_5']
     mems = ['64mb', '256mb']
     queries = ['Q2', 'Q3', 'Q5', 'Q8', 'Q9', 'Q9_3R', 'Q10', 'Q11', 'Q12', 'Q15', 'test']
@@ -70,32 +70,32 @@ def audit_results(results_dir='results'):
 
     jobs_to_run = missing_files + header_only_files + incomplete_files
 
-    if jobs_to_run:
-        print(f"--- RELAUNCHING {len(jobs_to_run)} CASES IN BACKGROUND ---")
-        if incomplete_files:
-            print(f"(* Note: {len(incomplete_files)} runs timed out or crashed before reaching 10%)")
+    # if jobs_to_run:
+    #     print(f"--- RELAUNCHING {len(jobs_to_run)} CASES IN BACKGROUND ---")
+    #     if incomplete_files:
+    #         print(f"(* Note: {len(incomplete_files)} runs timed out or crashed before reaching 10%)")
             
-        for item in jobs_to_run:
-            variations = get_queries(item['query'], item['z'])
+    #     for item in jobs_to_run:
+    #         variations = get_queries(item['query'], item['z'])
             
-            for sql, sch_val in variations:
-                log_out = f"results/rerun_{item['query']}_{item['dataset_size']}_z{item['z']}_{item['mem']}.nohup.log"
+    #         for sql, sch_val in variations:
+    #             log_out = f"results/rerun_{item['query']}_{item['dataset_size']}_z{item['z']}_{item['mem']}.nohup.log"
                 
-                cmd = [
-                    'nohup', 'python3', 'test/worker.py', 
-                    dataset, item['dataset_size'], item['query'], item['z'], item['mem'], time_limit, sch_val, sql
-                ]
+    #             cmd = [
+    #                 'nohup', 'python3', 'test/worker.py', 
+    #                 dataset, item['dataset_size'], item['query'], item['z'], item['mem'], time_limit, sch_val, sql
+    #             ]
                 
-                out_file = open(log_out, 'w')
-                subprocess.Popen(
-                    cmd,
-                    stdout=out_file,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True
-                )
-                print(f"Launched -> {item['query']} | DB:{dataset}{item['dataset_size']} | Z:{item['z']} | {item['mem']}")
+    #             out_file = open(log_out, 'w')
+    #             subprocess.Popen(
+    #                 cmd,
+    #                 stdout=out_file,
+    #                 stderr=subprocess.STDOUT,
+    #                 start_new_session=True
+    #             )
+    #             print(f"Launched -> {item['query']} | DB:{dataset}{item['dataset_size']} | Z:{item['z']} | {item['mem']}")
                 
-        print(f"\nSuccessfully launched {len(jobs_to_run)} background processes.")
+    #     print(f"\nSuccessfully launched {len(jobs_to_run)} background processes.")
 
 if __name__ == "__main__":
     audit_results()

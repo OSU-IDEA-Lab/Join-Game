@@ -45,6 +45,7 @@ lib*.pc
 
 # Output logs
 *.out
+*.log
 *.txt
 *.swp
 src/tags
@@ -59,3 +60,6 @@ src/tags
 /build.sh
 /rebuild.sh
 replacements/
+/*results*/
+/*shuff*/
+/*plots*/

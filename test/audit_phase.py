@@ -11,12 +11,11 @@ def check_3_relation_phases(results_dir='results'):
         print(f"Error: Directory '{results_dir}' not found.")
         return
 
-    # Target only 10g CSV files
-    search_pattern = os.path.join(results_dir, '*_10g_*.csv')
+    search_pattern = os.path.join(results_dir, '*.csv')
     all_files = glob.glob(search_pattern)
     
     if not all_files:
-        print(f"No 10g CSV files found in '{results_dir}'.")
+        print(f"No CSV files found in '{results_dir}'.")
         return
 
     exceptions = []
@@ -57,7 +56,7 @@ def check_3_relation_phases(results_dir='results'):
             
     # --- Print Summary Report ---
     print("="*60)
-    print("       3-Relation Phase Audit (10g Dataset)       ")
+    print("       3-Relation Phase Audit     ")
     print("="*60)
     print(f"Files Checked: {checked_count}")
     print(f"Exceptions Found (Nested Loops): {len(exceptions)}\n")

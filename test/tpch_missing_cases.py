@@ -4,7 +4,8 @@ import itertools
 def audit_results(results_dir='results'):
     # Define parameters
     dataset = 'tpch'
-    sizes = ['01', '1', '10']
+    sizes = ['10']
+    # sizes = ['01','1','10']
     z_vals = ['0', '1', '1_5']
     mems = ['64mb', '256mb']
     queries = ['Q2', 'Q3', 'Q5', 'Q8', 'Q9', 'Q9_3R', 'Q10', 'Q11', 'Q12', 'Q15', 'test']

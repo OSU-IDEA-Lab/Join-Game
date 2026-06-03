@@ -6,7 +6,8 @@ import os
 import itertools
 import sys
 
-def generate_combined_plots(input_dir='results', output_dir='plots'):
+def generate_combined_plots(input_dir):
+    output_dir = "plots_"+input_dir
     os.makedirs(output_dir, exist_ok=True)
 
     # Define the groupings based on relation count
@@ -135,5 +136,5 @@ def generate_combined_plots(input_dir='results', output_dir='plots'):
     print(f"\nSuccess! {count} sparse charts generated in '{output_dir}/'.")
 
 if __name__ == "__main__":
-    target_dir = sys.argv[1] if len(sys.argv) > 1 else 'results'
+    target_dir = sys.argv[1] if len(sys.argv) > 1 else 'results2'
     generate_combined_plots(input_dir=target_dir)
