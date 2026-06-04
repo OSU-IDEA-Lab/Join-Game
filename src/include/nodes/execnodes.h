@@ -921,11 +921,10 @@ typedef struct DummyBanditState
 }DummyBanditState;
 
 
-#define MEAN_CALCULATION_CACHE_SIZE 10000
-#define PGNST8_LEFT_PAGE_MAX_SIZE 100000
-#define PGNST8_LEFT_REM_EXPLORED 10000
-#define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 10000
-#define OUTER_RELATION_SIZE 800000
+#define PGNST8_LEFT_PAGE_MAX_SIZE 10000000
+#define PGNST8_LEFT_REM_EXPLORED 10000000
+#define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 10000000
+#define OUTER_RELATION_SIZE 80000000
 
 typedef struct PlanState
 {
@@ -985,29 +984,33 @@ typedef struct PlanState
 	*/
 
     bool nl_needNewOuterPage; // Used to know if we need a new outer page
-	TupleTableSlot* pgNst8LeftPage[PGNST8_LEFT_PAGE_MAX_SIZE]; //Used to store MEAN_CALCULATION_CACHE_SIZE number of outer tuples
-    unsigned long long pgNst8LeftPageHead; // Variable to know on which tuple we are currently working on
-    unsigned long long pgNst8LeftPageSize; // Store the size of the left page which contain the tuples.
+	TupleTableSlot* pgNst8LeftPage[PGNST8_LEFT_PAGE_MAX_SIZE]; //Used to store PGNST8_LEFT_PAGE_MAX_SIZE number of outer tuples 
+    unsigned int pgNst8LeftPageHead; // Variable to know on which tuple we are currently working on
+    unsigned int pgNst8LeftPageSize; // Store the size of the left page which contain the tuples.
+	TupleTableSlot* Exploit_cache[PGNST8_LEFT_PAGE_MAX_SIZE];
+	unsigned int exploitCacheIndex[PGNST8_LEFT_PAGE_MAX_SIZE];
+	unsigned int exploitCacheSize;
+	unsigned int exploitTurns;
+	unsigned int exploitCacheHead;
+	unsigned int outerTupCount;
 	bool pgNst8LeftParsedFully; //Used to know if we have completely gone through the left page
-    unsigned long long pgNst8InnerTableParseCount; // Used to keep track of the Inner tuple on which we are
+    unsigned int pgNst8InnerTableParseCount; // Used to keep track of the Inner tuple on which we are
 
 	TupleTableSlot *pgNst8_innertuple[1]; // Stores one inner tuple at a time
 
-	unsigned long long pgReward[PGNST8_LEFT_PAGE_MAX_SIZE]; //Stores the reward values of each of the left tuples in the left page
-	unsigned long long outerIndex[PGNST8_LEFT_PAGE_MAX_SIZE]; // Stores the index value of the tuple in the left table and not the index in the left cache
-	bool duplicate[PGNST8_LEFT_PAGE_MAX_SIZE];
-	unsigned long long cursorReward; // Index pointing to where we store the next reward
+	unsigned int pgReward[PGNST8_LEFT_PAGE_MAX_SIZE]; //Stores the reward values of each of the left tuples in the left page
+	unsigned int outerIndex[PGNST8_LEFT_PAGE_MAX_SIZE]; // Stores the index value of the tuple in the left table and not the index in the left cache
+	unsigned int cursorReward; // Index pointing to where we store the next reward
 	
 	TupleTableSlot* pgNst8LeftRem[PGNST8_LEFT_REM_EXPLORED]; // Cache that stores the tuples with 0 reward
-	unsigned long long Rem_pgReward[PGNST8_LEFT_REM_EXPLORED]; // Reward of the tuple in pgNst8LeftRem 
+	unsigned int Rem_pgReward[PGNST8_LEFT_REM_EXPLORED]; // Reward of the tuple in pgNst8LeftRem 
 	unsigned int Rem_outerIndex[PGNST8_LEFT_REM_EXPLORED]; //Stores the index value of the tuple in the left table and not the index in the pgNst8LeftRem cache
-    unsigned long long pgNst8LeftRemSize; //Stores the current number of tuples in the pgNst8LeftRem cache
+    unsigned int pgNst8LeftRemSize; //Stores the current number of tuples in the pgNst8LeftRem cache
 
-	bool canReplace; // Used to know if any zero rewarding tuples exist in the left cache and if we can replace them with a higher-reward tuple
-	bool replaced[MEAN_CALCULATION_CACHE_SIZE];
+	bool zeroRewardExists; // Used to know if any zero rewarding tuples exist in the left cache and if we can replace them with a higher-reward tuple
 	
 	//estimation
-	unsigned long long outerTupIdx; // It's a counter that keeps track of the i'th outer tuple that is being used
+	unsigned int outerTupIdx; // It's a counter that keeps track of the i'th outer tuple that is being used
 	
 
 	/*
@@ -1016,18 +1019,17 @@ typedef struct PlanState
 	/* Right Table and Trackers */
 	bool oslBnd8RightTableCacheInitialized;
 	TupleTableSlot* oslBnd8RightTableCache[OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE]; // Stores a certain number of right table tuples
-    unsigned long long oslBnd8RightTableCacheHead; // Used to know which right table tuple we are currently on
-    unsigned long long oslBnd8RightTableCacheSize; // Used to know the current size of the right table
+    unsigned int oslBnd8RightTableCacheHead; // Used to know which right table tuple we are currently on
+    unsigned int oslBnd8RightTableCacheSize; // Used to know the current size of the right table
 
 	/* Exploration Trackers */
 	// bool oslBnd8InExplorationPhase;
 	// bool oslBnd8InExplorationPhaseInitComplete;
 	TupleTableSlot *oslBnd8_currExploreTuple; //Tuple that stores the info of the current left tuple that is being used in exploration
-	float oslBnd8_currExploreTupleReward; // The reward of the tuple being used in exploration
-	unsigned long long oslBnd8_currExploreTupleFailureCount; // Keeps track of the failure count of the current exploration tuple
-	unsigned long long oslBnd8_numTuplesExplored; // Keeps track of track of the number of left tuples that have been explored
+	unsigned int oslBnd8_currExploreTupleReward; // The reward of the tuple being used in exploration
+	unsigned int oslBnd8_currExploreTupleFailureCount; // Keeps track of the failure count of the current exploration tuple
+	unsigned int oslBnd8_numTuplesExplored; // Keeps track of track of the number of left tuples that have been explored
 	bool oslBnd8_ExplorationStarted; // Used to know if exploration has started
-	long totalReward;
 
 
 } PlanState;
@@ -1800,28 +1802,26 @@ struct estInfo {
 };
 
 struct tupleInfo {
-	unsigned long long tupidx;
-    unsigned long long explore_num_trails;
-	unsigned long long explore_success_count;
-	unsigned long long explore_Nvalue;
+	unsigned int tupidx;
+    unsigned int explore_num_trails;
+	unsigned int explore_success_count;
+	unsigned int explore_Nvalue;
 	double explore_reward_ratio;
 	double h_explore;
 	double p_r;
-    unsigned long long exploit_num_trails;
-	unsigned long long exploit_success_count;
+    unsigned int exploit_num_trails;
+	unsigned int exploit_success_count;
 	double exploit_reward_ratio;
 	double prob_e_exploit;
+	bool selected;
 	double h_exploit;
 	double tuple_mean;
 	double tuple_variance;
 	double mean_numr;
 	double mean_denr;
-	unsigned long long total_trails;
-	unsigned long long estimate_flag;
+	unsigned int total_trails;
+	unsigned int estimate_flag;
 	struct estInfo* outerestinfo;
-	bool replaced;
-	double sum_gamma;
-	double h_value;
 };
 
 //struct outerTupleNum {
@@ -1851,69 +1851,68 @@ typedef struct NestLoopState
 	TupleTableSlot *nl_NullInnerTupleSlot;
     ScanState*  ss;
 
-	long long activeRelationPages;
+	int activeRelationPages;
 	RelationPage *outerPage;
 	RelationPage *innerPage;
 
-	long long lastReward; // used to store the reward of the last outer tuple
-	long long reward; // Used to store the reward of the current outer tuple
+	int lastReward; // used to store the reward of the last outer tuple
+	int reward; // Used to store the reward of the current outer tuple
 	bool isExploring; // Used to know if we are still in exploring phase
 	long innerPageNumber; // Used to know on which page of inner table we are
 	long outerPageNumber; // Same as above, but for outer table
-	long long sqrtOfInnerPages;
+	int sqrtOfInnerPages;
 
 	bool needOuterPage; // Used to know if we need a new outer page
 	bool needInnerPage; //Same as above for inner table
-	long long exploreStepCounter;
-	long long exploitStepCounter;
-	long long innerPageCounter;
-	long long innerPageCounterTotal;
-	long long outerPageCounter;
+	int exploreStepCounter;
+	int exploitStepCounter;
+	int innerPageCounter;
+	int innerPageCounterTotal;
+	int outerPageCounter;
 	bool reachedEndOfOuter; // Used to know if we have reached the end of the outer table
 	bool reachedEndOfInner; //Same as above for inner table
-	unsigned long long innerTupleCounter;
-	unsigned long long outerTupleCounter;
-	long long nestloopInstance;
-	long long generatedJoins; //Used to store the number of joins
-	long long rescanCount;
+	unsigned long innerTupleCounter;
+	unsigned long outerTupleCounter;
+	int nestloopInstance;
+	int generatedJoins; //Used to store the number of joins
+	int rescanCount;
 
     struct tupleRewards* tidRewards;
 	//struct outerPgNum* outerpages;
 	//struct outerTupleNum* outertupnum;
 	struct tupleInfo* outertupleinfo; // Used to store the Outer tuple info
 	struct indexedReward* idxreward;
-	long long* xids;
-	long long* rewards;
-	long long pageIndex;
-	long long lastPageIndex;
+	long total_zeros;
+	long totalReward;
+	int* xids;
+	int* rewards;
+	int pageIndex;
+	int lastPageIndex;
 	ScanKey xidScanKey;
-	long long nFailure;
-	unsigned long long genExploit;
-	unsigned long long genExplore;
-	long long pageNum;
+	int nFailure;
+	unsigned int genExploit;
+	unsigned int genExplore;
+	int pageNum;
 	unsigned long long T_steps;
 	double reRatio;
 	unsigned int numOuterTuples;
 	unsigned int numInnerTuples;
-	long long numOuterPages;
-	long long remOuterPages;
-	long long outerAttrNum;
-	long long innerAttrNum;
-	long long pageSuccessCounter;
-	unsigned long long overallCount;
-	unsigned long long currentCount;
-	unsigned long long exploreCount;
-	unsigned long long numExplored; //Stores the number of explored tuples
-	unsigned long long curNumJoins; //Stores the number of joins
+	int numOuterPages;
+	int remOuterPages;
+	int outerAttrNum;
+	int innerAttrNum;
+	int pageSuccessCounter;
+	unsigned int overallCount;
+	unsigned int currentCount;
+	unsigned int exploreCount;
+	unsigned int numExplored; //Stores the number of explored tuples
+	unsigned int curNumJoins; //Stores the number of joins
 	double correctionFactor;
 	double hExplore;
 	double hExploit;
 	unsigned long long totalSteps;
-	unsigned long long innerIdx;
-	unsigned long long lastExploredIdx;
-	unsigned long long cacheSize;
-	unsigned long long outerIndex[MEAN_CALCULATION_CACHE_SIZE]; // Stores the index value of the tuple in the left table and not the index in the left cache
-
+	unsigned int innerIdx;
+	unsigned int lastExploredIdx;
 
 } NestLoopState;
 

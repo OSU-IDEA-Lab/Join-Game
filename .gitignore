@@ -49,6 +49,6 @@ lib*.pc
 src/tags
 
 # Custom
-DemoDir
+/DemoDir/
 /Join-Game/test/
 /Join-Game/customer_order/
