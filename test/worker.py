@@ -133,7 +133,7 @@ def join_query(conn, server_cur, csv_writer, log_file, txt_file, total_tuples, t
     final_pct = round((fetched_count / total_tuples) * 100, 4) if total_tuples > 0 else 0.0
     csv_writer.writerow([fetched_count, round(time() - start_time, 4), current_phase, final_pct, round(weighted_time, 4), r1_raw, r2_raw, r3_raw])
 
-def run_worker(dataset, dataset_size, q_name, val, mem, time_limit, sch_val, results_dir, sql):
+def run_worker(dataset, dataset_size, q_name, z_val, mem, time_limit, sch_val, results_dir, sql):
     time_limit = int(time_limit)
     os.makedirs(results_dir, exist_ok=True)
     
@@ -142,7 +142,7 @@ def run_worker(dataset, dataset_size, q_name, val, mem, time_limit, sch_val, res
     total_tuples = get_mj_total(db_name, sql)
     if total_tuples < 0: return
 
-    file_prefix = os.path.join(results_dir, f"{q_name}_{dataset_size}_z{val}_{mem.lower()}")
+    file_prefix = os.path.join(results_dir, f"{q_name}_{dataset_size}_z{z_val}_{mem.lower()}")
     
     with open(f"{file_prefix}.log", 'w') as log_file, \
          open(f"{file_prefix}_sch{sch_val}.csv", 'w', newline='') as f_csv, \
@@ -172,8 +172,8 @@ def run_worker(dataset, dataset_size, q_name, val, mem, time_limit, sch_val, res
             
         conn.close()
 
-        subject = f"Run Complete: {q_name} | DB: {db_name} | Z:{val} | {mem}"
-        body = f"The worker has finished processing {q_name} on {db_name} with Z={val} and {mem} memory.\nData saved to: {results_dir}/"
+        subject = f"Run Complete: {q_name} | DB: {db_name} | Z:{z_val} | {mem}"
+        body = f"The worker has finished processing {q_name} on {db_name} with Z={z_val} and {mem} memory.\nData saved to: {results_dir}/"
         os.system(f'echo "{body}" | mail -s "{subject}" jinjo@oregonstate.edu')
 
 if __name__ == "__main__":

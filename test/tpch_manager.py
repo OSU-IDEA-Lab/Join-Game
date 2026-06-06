@@ -62,7 +62,7 @@ def run_worker(cmd, log_out):
 
 def manage(base_dir, apply_limits):
     sizes = ['10']
-    vals = ['0', '1']
+    zvals = ['0', '1']
     work_mems = ['500MB']
     
     # 2R queries
@@ -70,7 +70,9 @@ def manage(base_dir, apply_limits):
     # 3R queries
     # queries = ['Q2', 'Q3', 'Q5', 'Q8', 'Q9_3R']
     # Paper queries
-    queries = ['Q2', 'Q3', 'Q5', 'Q9', 'Q10', 'Q11', 'Q15']
+    # queries = ['Q2', 'Q3', 'Q5', 'Q9', 'Q10', 'Q11', 'Q15']
+    # Not in Paper queries
+    queries = ['Q8', 'Q9_3R']
     # All queries
     # queries = ['Q2', 'Q3', 'Q5', 'Q8', 'Q9', 'Q9_3R', 'Q10', 'Q11', 'Q12', 'Q15', 'test']
 
@@ -87,7 +89,7 @@ def manage(base_dir, apply_limits):
     os.makedirs(dir_3r, exist_ok=True)
 
     with ThreadPoolExecutor(max_workers=6) as executor:
-        for size, z, mem, q in itertools.product(sizes, vals, work_mems, queries):
+        for size, z, mem, q in itertools.product(sizes, zvals, work_mems, queries):
             variations = get_queries(q, z, apply_limits)        
             
             # Unpacking all 3 returned variables
