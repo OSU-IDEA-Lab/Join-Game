@@ -921,10 +921,10 @@ typedef struct DummyBanditState
 }DummyBanditState;
 
 
-#define PGNST8_LEFT_PAGE_MAX_SIZE 10000000
-#define PGNST8_LEFT_REM_EXPLORED 10000000
-#define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 10000000
-#define OUTER_RELATION_SIZE 80000000
+#define PGNST8_LEFT_PAGE_MAX_SIZE 10000
+#define PGNST8_LEFT_REM_EXPLORED 10000
+#define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 10000
+#define OUTER_RELATION_SIZE 800000
 
 typedef struct PlanState
 {
@@ -990,7 +990,6 @@ typedef struct PlanState
 	TupleTableSlot* Exploit_cache[PGNST8_LEFT_PAGE_MAX_SIZE];
 	unsigned int exploitCacheIndex[PGNST8_LEFT_PAGE_MAX_SIZE];
 	unsigned int exploitCacheSize;
-	unsigned int exploitTurns;
 	unsigned int exploitCacheHead;
 	unsigned int outerTupCount;
 	bool pgNst8LeftParsedFully; //Used to know if we have completely gone through the left page
@@ -1881,9 +1880,9 @@ typedef struct NestLoopState
 	//struct outerPgNum* outerpages;
 	//struct outerTupleNum* outertupnum;
 	struct tupleInfo* outertupleinfo; // Used to store the Outer tuple info
-	struct indexedReward* idxreward;
 	long total_zeros;
 	long totalReward;
+	struct indexedReward* idxreward;
 	int* xids;
 	int* rewards;
 	int pageIndex;

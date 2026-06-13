@@ -1534,21 +1534,21 @@ python similarity_Cars.py full_similarity sum_similarity ripple
 
 # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # Movies LV = 8
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop -m immediate
-# sed -i '50s~.*~#define MEMORY_MAX        33784~' /data/saketh_temp/PSQL1506/Join-Game/src/backend/executor/nodeNestloop.c
-# sed -i '226s~.*~		double actual_count = 441028105215.0;~' /data/saketh_temp/PSQL1506/Join-Game/src/backend/executor/nodeNestloop.c
-# sed -i '164s~.*~    long long total = (long long)node->numOuterTuples * node->numInnerTuples;~' /data/saketh_temp/PSQL1506/Join-Game/src/backend/executor/nodeNestloop.c
-# make
-# make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
-# # python similarity_Cars.py full_similarity sum_similarity ripple
-# psql -p 1506 -h localhost -d mettas <<EOF
-# SET max_parallel_workers_per_gather = 0;
-# SET join_collapse_limit = 1;
-# SET from_collapse_limit = 1;
-# EXPLAIN ANALYSE SELECT imdb1.title, omdbMovies1.title FROM imdb1 JOIN omdbMovies1 ON levenshtein(trim(imdb1.title::varchar(10)), trim(omdbMovies1.title::varchar(10))) <= 8 LIMIT 4410281;
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop -m immediate
+sed -i '50s~.*~#define MEMORY_MAX        33784~' /data/saketh_temp/PSQL1506/Join-Game/src/backend/executor/nodeNestloop.c
+sed -i '214s~.*~		double actual_count = 441028105215.0;~' /data/saketh_temp/PSQL1506/Join-Game/src/backend/executor/nodeNestloop.c
+sed -i '164s~.*~    long long total = (long long)node->numOuterTuples * node->numInnerTuples;~' /data/saketh_temp/PSQL1506/Join-Game/src/backend/executor/nodeNestloop.c
+make
+make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+# python similarity_Cars.py full_similarity sum_similarity ripple
+psql -p 1506 -h localhost -d mettas <<EOF
+SET max_parallel_workers_per_gather = 0;
+SET join_collapse_limit = 1;
+SET from_collapse_limit = 1;
+EXPLAIN ANALYSE SELECT imdb1.title, omdbMovies1.title FROM imdb1 JOIN omdbMovies1 ON levenshtein(trim(imdb1.title::varchar(10)), trim(omdbMovies1.title::varchar(10))) <= 8 LIMIT 4410281;
 
-# EOF
+EOF
 
 # /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop -m immediate
 # make
@@ -1870,10 +1870,10 @@ python similarity_Cars.py full_similarity sum_similarity ripple
 
 # EOF
 
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop -m immediate
-# make
-# make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop -m immediate
+make
+make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
 # # python similarity_Cars.py full_similarity sum_similarity ripple
 # psql -p 1506 -h localhost -d mettas <<EOF
 # SET max_parallel_workers_per_gather = 0;

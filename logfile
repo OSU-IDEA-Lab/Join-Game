@@ -1,0 +1,70 @@
+2026-06-04 17:14:03.578 PDT [27729] LOG:  listening on IPv6 address "::1", port 1506
+2026-06-04 17:14:03.578 PDT [27729] LOG:  listening on IPv4 address "127.0.0.1", port 1506
+2026-06-04 17:14:03.579 PDT [27729] LOG:  listening on Unix socket "/tmp/.s.PGSQL.1506"
+2026-06-04 17:14:03.603 PDT [27729] LOG:  redirecting log output to logging collector process
+2026-06-04 17:14:03.603 PDT [27729] HINT:  Future log output will appear in directory "log".
+2026-06-04 17:21:20.028 PDT [31778] LOG:  listening on IPv6 address "::1", port 1506
+2026-06-04 17:21:20.028 PDT [31778] LOG:  listening on IPv4 address "127.0.0.1", port 1506
+2026-06-04 17:21:20.029 PDT [31778] LOG:  listening on Unix socket "/tmp/.s.PGSQL.1506"
+2026-06-04 17:21:20.054 PDT [31778] LOG:  redirecting log output to logging collector process
+2026-06-04 17:21:20.054 PDT [31778] HINT:  Future log output will appear in directory "log".
+2026-06-05 12:09:02.457 PDT [13378] LOG:  listening on IPv6 address "::1", port 1506
+2026-06-05 12:09:02.457 PDT [13378] LOG:  listening on IPv4 address "127.0.0.1", port 1506
+2026-06-05 12:09:02.458 PDT [13378] LOG:  listening on Unix socket "/tmp/.s.PGSQL.1506"
+2026-06-05 12:09:02.483 PDT [13378] LOG:  redirecting log output to logging collector process
+2026-06-05 12:09:02.483 PDT [13378] HINT:  Future log output will appear in directory "log".
+2026-06-05 13:32:01.114 PDT [5722] LOG:  listening on IPv6 address "::1", port 1506
+2026-06-05 13:32:01.114 PDT [5722] LOG:  listening on IPv4 address "127.0.0.1", port 1506
+2026-06-05 13:32:01.116 PDT [5722] LOG:  listening on Unix socket "/tmp/.s.PGSQL.1506"
+2026-06-05 13:32:01.140 PDT [5722] LOG:  redirecting log output to logging collector process
+2026-06-05 13:32:01.140 PDT [5722] HINT:  Future log output will appear in directory "log".
+2026-06-05 13:36:03.341 PDT [9204] LOG:  listening on IPv6 address "::1", port 1506
+2026-06-05 13:36:03.341 PDT [9204] LOG:  listening on IPv4 address "127.0.0.1", port 1506
+2026-06-05 13:36:03.342 PDT [9204] LOG:  listening on Unix socket "/tmp/.s.PGSQL.1506"
+2026-06-05 13:36:03.368 PDT [9204] LOG:  redirecting log output to logging collector process
+2026-06-05 13:36:03.368 PDT [9204] HINT:  Future log output will appear in directory "log".
+2026-06-05 14:19:36.620 PDT [21512] LOG:  listening on IPv6 address "::1", port 1506
+2026-06-05 14:19:36.620 PDT [21512] LOG:  listening on IPv4 address "127.0.0.1", port 1506
+2026-06-05 14:19:36.620 PDT [21512] LOG:  listening on Unix socket "/tmp/.s.PGSQL.1506"
+2026-06-05 14:19:36.645 PDT [21512] LOG:  redirecting log output to logging collector process
+2026-06-05 14:19:36.645 PDT [21512] HINT:  Future log output will appear in directory "log".
+2026-06-05 14:22:29.134 PDT [24768] LOG:  listening on IPv6 address "::1", port 1506
+2026-06-05 14:22:29.134 PDT [24768] LOG:  listening on IPv4 address "127.0.0.1", port 1506
+2026-06-05 14:22:29.135 PDT [24768] LOG:  listening on Unix socket "/tmp/.s.PGSQL.1506"
+2026-06-05 14:22:29.160 PDT [24768] LOG:  redirecting log output to logging collector process
+2026-06-05 14:22:29.160 PDT [24768] HINT:  Future log output will appear in directory "log".
+2026-06-05 15:00:42.758 PDT [3604] LOG:  listening on IPv6 address "::1", port 1506
+2026-06-05 15:00:42.758 PDT [3604] LOG:  listening on IPv4 address "127.0.0.1", port 1506
+2026-06-05 15:00:42.759 PDT [3604] LOG:  listening on Unix socket "/tmp/.s.PGSQL.1506"
+2026-06-05 15:00:42.784 PDT [3604] LOG:  redirecting log output to logging collector process
+2026-06-05 15:00:42.784 PDT [3604] HINT:  Future log output will appear in directory "log".
+2026-06-05 16:40:27.096 PDT [30790] LOG:  listening on IPv6 address "::1", port 1506
+2026-06-05 16:40:27.096 PDT [30790] LOG:  listening on IPv4 address "127.0.0.1", port 1506
+2026-06-05 16:40:27.097 PDT [30790] LOG:  listening on Unix socket "/tmp/.s.PGSQL.1506"
+2026-06-05 16:40:27.122 PDT [30790] LOG:  redirecting log output to logging collector process
+2026-06-05 16:40:27.122 PDT [30790] HINT:  Future log output will appear in directory "log".
+2026-06-05 17:19:07.641 PDT [11436] LOG:  listening on IPv6 address "::1", port 1506
+2026-06-05 17:19:07.641 PDT [11436] LOG:  listening on IPv4 address "127.0.0.1", port 1506
+2026-06-05 17:19:07.642 PDT [11436] LOG:  listening on Unix socket "/tmp/.s.PGSQL.1506"
+2026-06-05 17:19:07.666 PDT [11436] LOG:  redirecting log output to logging collector process
+2026-06-05 17:19:07.666 PDT [11436] HINT:  Future log output will appear in directory "log".
+2026-06-12 16:53:57.803 PDT [18745] LOG:  listening on IPv6 address "::1", port 1506
+2026-06-12 16:53:57.803 PDT [18745] LOG:  listening on IPv4 address "127.0.0.1", port 1506
+2026-06-12 16:53:57.804 PDT [18745] LOG:  listening on Unix socket "/tmp/.s.PGSQL.1506"
+2026-06-12 16:53:57.826 PDT [18745] LOG:  redirecting log output to logging collector process
+2026-06-12 16:53:57.826 PDT [18745] HINT:  Future log output will appear in directory "log".
+2026-06-12 16:55:29.147 PDT [19259] LOG:  listening on IPv6 address "::1", port 1506
+2026-06-12 16:55:29.147 PDT [19259] LOG:  listening on IPv4 address "127.0.0.1", port 1506
+2026-06-12 16:55:29.150 PDT [19259] LOG:  listening on Unix socket "/tmp/.s.PGSQL.1506"
+2026-06-12 16:55:29.232 PDT [19259] LOG:  redirecting log output to logging collector process
+2026-06-12 16:55:29.232 PDT [19259] HINT:  Future log output will appear in directory "log".
+2026-06-12 16:56:07.120 PDT [20411] LOG:  listening on IPv6 address "::1", port 1506
+2026-06-12 16:56:07.120 PDT [20411] LOG:  listening on IPv4 address "127.0.0.1", port 1506
+2026-06-12 16:56:07.121 PDT [20411] LOG:  listening on Unix socket "/tmp/.s.PGSQL.1506"
+2026-06-12 16:56:07.145 PDT [20411] LOG:  redirecting log output to logging collector process
+2026-06-12 16:56:07.145 PDT [20411] HINT:  Future log output will appear in directory "log".
+2026-06-12 16:59:14.982 PDT [22017] LOG:  listening on IPv6 address "::1", port 1506
+2026-06-12 16:59:14.983 PDT [22017] LOG:  listening on IPv4 address "127.0.0.1", port 1506
+2026-06-12 16:59:14.983 PDT [22017] LOG:  listening on Unix socket "/tmp/.s.PGSQL.1506"
+2026-06-12 16:59:15.008 PDT [22017] LOG:  redirecting log output to logging collector process
+2026-06-12 16:59:15.008 PDT [22017] HINT:  Future log output will appear in directory "log".

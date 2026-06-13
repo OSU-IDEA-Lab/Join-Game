@@ -47,250 +47,250 @@ similarity_script_rosl="python similarity_averager.py rosl"
 
 #OSL, CL and ICL for Cars
 
-# M=1588
-# cp "$osl_c" "$c_file"
-# cp "$osl_exec" "$exec_file"
-# sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
+M=1588
+cp "$osl_c" "$c_file"
+cp "$osl_exec" "$exec_file"
+sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
 
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
-# make; make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
+make; make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
 
-# if [ $? -eq 0 ]; then
-#     echo "Compilation successful, running Python script with M=$M"
-#     $cars_script_osl
-# else
-#     echo "Compilation failed for M=$M"
-# fi
+if [ $? -eq 0 ]; then
+    echo "Compilation successful, running Python script with M=$M"
+    $cars_script_osl
+else
+    echo "Compilation failed for M=$M"
+fi
 
-# cp "$cl_c" "$c_file"
-# cp "$cl_exec" "$exec_file"
-# sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
+cp "$cl_c" "$c_file"
+cp "$cl_exec" "$exec_file"
+sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
 
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
-# make; make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
+make; make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
 
-# if [ $? -eq 0 ]; then
-#     echo "Compilation successful, running Python script with M=$M"
-#     $cars_script_cl
-# else
-#     echo "Compilation failed for M=$M"
-# fi
+if [ $? -eq 0 ]; then
+    echo "Compilation successful, running Python script with M=$M"
+    $cars_script_cl
+else
+    echo "Compilation failed for M=$M"
+fi
 
-# cp "$icl_c" "$c_file"
-# cp "$icl_exec" "$exec_file"
-# sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
+cp "$icl_c" "$c_file"
+cp "$icl_exec" "$exec_file"
+sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
 
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
-# make; make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
+make; make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
 
-# if [ $? -eq 0 ]; then
-#     echo "Compilation successful, running Python script with M=$M"
-#     $cars_script_icl
-# else
-#     echo "Compilation failed for M=$M"
-# fi
+if [ $? -eq 0 ]; then
+    echo "Compilation successful, running Python script with M=$M"
+    $cars_script_icl
+else
+    echo "Compilation failed for M=$M"
+fi
 
-# #OSL, CL and ICL for WDC
+#OSL, CL and ICL for WDC
 
-# M=3318
-# cp "$osl_c" "$c_file"
-# cp "$osl_exec" "$exec_file"
-# sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
+M=3318
+cp "$osl_c" "$c_file"
+cp "$osl_exec" "$exec_file"
+sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
 
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
-# make; make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
+make; make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
 
-# if [ $? -eq 0 ]; then
-#     echo "Compilation successful, running Python script with M=$M"
-#     $wdc_script_osl
-# else
-#     echo "Compilation failed for M=$M"
-# fi
+if [ $? -eq 0 ]; then
+    echo "Compilation successful, running Python script with M=$M"
+    $wdc_script_osl
+else
+    echo "Compilation failed for M=$M"
+fi
 
-# cp "$cl_c" "$c_file"
-# cp "$cl_exec" "$exec_file"
-# sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
+cp "$cl_c" "$c_file"
+cp "$cl_exec" "$exec_file"
+sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
 
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
-# make; make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
+make; make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
 
-# if [ $? -eq 0 ]; then
-#     echo "Compilation successful, running Python script with M=$M"
-#     $wdc_script_cl
-# else
-#     echo "Compilation failed for M=$M"
-# fi
+if [ $? -eq 0 ]; then
+    echo "Compilation successful, running Python script with M=$M"
+    $wdc_script_cl
+else
+    echo "Compilation failed for M=$M"
+fi
 
-# cp "$icl_c" "$c_file"
-# cp "$icl_exec" "$exec_file"
-# sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
+cp "$icl_c" "$c_file"
+cp "$icl_exec" "$exec_file"
+sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
 
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
-# make; make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
+make; make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
 
-# if [ $? -eq 0 ]; then
-#     echo "Compilation successful, running Python script with M=$M"
-#     $wdc_script_icl
-# else
-#     echo "Compilation failed for M=$M"
-# fi
+if [ $? -eq 0 ]; then
+    echo "Compilation successful, running Python script with M=$M"
+    $wdc_script_icl
+else
+    echo "Compilation failed for M=$M"
+fi
 
-# #Ripple and ORL for Cars
+#Ripple and ORL for Cars
 
-# M=25302
-# cp "$ripple_c" "$c_file"
-# cp "$ripple_exec" "$exec_file"
-# sed -i "s/^#define MEMORY_MAX .*/#define MEMORY_MAX $M/" "$c_file"
+M=25302
+cp "$ripple_c" "$c_file"
+cp "$ripple_exec" "$exec_file"
+sed -i "s/^#define MEMORY_MAX .*/#define MEMORY_MAX $M/" "$c_file"
 
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
-# make; make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
+make; make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
 
-# if [ $? -eq 0 ]; then
-#     echo "Compilation successful, running Python script with M=$M"
-#     $cars_script_ripple
-# else
-#     echo "Compilation failed for M=$M"
-# fi
+if [ $? -eq 0 ]; then
+    echo "Compilation successful, running Python script with M=$M"
+    $cars_script_ripple
+else
+    echo "Compilation failed for M=$M"
+fi
 
-# cp "$orl_c" "$c_file"
-# cp "$orl_exec" "$exec_file"
-# sed -i "s/^#define MEMORY_MAX .*/#define MEMORY_MAX $M/" "$c_file"
+cp "$orl_c" "$c_file"
+cp "$orl_exec" "$exec_file"
+sed -i "s/^#define MEMORY_MAX .*/#define MEMORY_MAX $M/" "$c_file"
 
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
-# make; make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
+make; make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
 
-# if [ $? -eq 0 ]; then
-#     echo "Compilation successful, running Python script with M=$M"
-#     $cars_script_orl
-# else
-#     echo "Compilation failed for M=$M"
-# fi
+if [ $? -eq 0 ]; then
+    echo "Compilation successful, running Python script with M=$M"
+    $cars_script_orl
+else
+    echo "Compilation failed for M=$M"
+fi
 
-# # #Ripple and ORL for WDC
+# #Ripple and ORL for WDC
 
-# M=160116
-# cp "$ripple_c" "$c_file"
-# cp "$ripple_exec" "$exec_file"
-# sed -i "s/^#define MEMORY_MAX .*/#define MEMORY_MAX $M/" "$c_file"
+M=160116
+cp "$ripple_c" "$c_file"
+cp "$ripple_exec" "$exec_file"
+sed -i "s/^#define MEMORY_MAX .*/#define MEMORY_MAX $M/" "$c_file"
 
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
-# make; make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
+make; make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
 
-# if [ $? -eq 0 ]; then
-#     echo "Compilation successful, running Python script with M=$M"
-#     $wdc_script_ripple
-# else
-#     echo "Compilation failed for M=$M"
-# fi
+if [ $? -eq 0 ]; then
+    echo "Compilation successful, running Python script with M=$M"
+    $wdc_script_ripple
+else
+    echo "Compilation failed for M=$M"
+fi
 
-# cp "$orl_c" "$c_file"
-# cp "$orl_exec" "$exec_file"
-# sed -i "s/^#define MEMORY_MAX .*/#define MEMORY_MAX $M/" "$c_file"
+cp "$orl_c" "$c_file"
+cp "$orl_exec" "$exec_file"
+sed -i "s/^#define MEMORY_MAX .*/#define MEMORY_MAX $M/" "$c_file"
 
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
-# make; make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
+make; make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
 
-# if [ $? -eq 0 ]; then
-#     echo "Compilation successful, running Python script with M=$M"
-#     $wdc_script_orl
-# else
-#     echo "Compilation failed for M=$M"
-# fi
+if [ $? -eq 0 ]; then
+    echo "Compilation successful, running Python script with M=$M"
+    $wdc_script_orl
+else
+    echo "Compilation failed for M=$M"
+fi
 
-# # #OSL, ICL, CL for Movies dataset
+# #OSL, ICL, CL for Movies dataset
 
-# M=1498
-# cp "$osl_c" "$c_file"
-# cp "$osl_exec" "$exec_file"
-# sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
+M=1498
+cp "$osl_c" "$c_file"
+cp "$osl_exec" "$exec_file"
+sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
 
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
-# make; make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
+make; make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
 
-# if [ $? -eq 0 ]; then
-#     echo "Compilation successful, running Python script with M=$M"
-#     $movies_script_osl
-# else
-#     echo "Compilation failed for M=$M"
-# fi
+if [ $? -eq 0 ]; then
+    echo "Compilation successful, running Python script with M=$M"
+    $movies_script_osl
+else
+    echo "Compilation failed for M=$M"
+fi
 
-# cp "$cl_c" "$c_file"
-# cp "$cl_exec" "$exec_file"
-# sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
+cp "$cl_c" "$c_file"
+cp "$cl_exec" "$exec_file"
+sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
 
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
-# make; make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
+make; make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
 
-# if [ $? -eq 0 ]; then
-#     echo "Compilation successful, running Python script with M=$M"
-#     $movies_script_cl
-# else
-#     echo "Compilation failed for M=$M"
-# fi
+if [ $? -eq 0 ]; then
+    echo "Compilation successful, running Python script with M=$M"
+    $movies_script_cl
+else
+    echo "Compilation failed for M=$M"
+fi
 
-# cp "$icl_c" "$c_file"
-# cp "$icl_exec" "$exec_file"
-# sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
+cp "$icl_c" "$c_file"
+cp "$icl_exec" "$exec_file"
+sed -i "s/^#define MUST_EXPLORE_TUPLE_COUNT_N .*/#define MUST_EXPLORE_TUPLE_COUNT_N $M/" "$c_file"
 
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
-# make; make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
+make; make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
 
-# if [ $? -eq 0 ]; then
-#     echo "Compilation successful, running Python script with M=$M"
-#     $movies_script_icl
-# else
-#     echo "Compilation failed for M=$M"
-# fi
+if [ $? -eq 0 ]; then
+    echo "Compilation successful, running Python script with M=$M"
+    $movies_script_icl
+else
+    echo "Compilation failed for M=$M"
+fi
 
-# # #Ripple and ORL for Movies dataset
+# #Ripple and ORL for Movies dataset
 
-# M=33784
-# cp "$ripple_c" "$c_file"
-# cp "$ripple_exec" "$exec_file"
-# sed -i "s/^#define MEMORY_MAX .*/#define MEMORY_MAX $M/" "$c_file"
+M=33784
+cp "$ripple_c" "$c_file"
+cp "$ripple_exec" "$exec_file"
+sed -i "s/^#define MEMORY_MAX .*/#define MEMORY_MAX $M/" "$c_file"
 
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
-# make; make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
+make; make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
 
-# if [ $? -eq 0 ]; then
-#     echo "Compilation successful, running Python script with M=$M"
-#     $movies_script_ripple
-# else
-#     echo "Compilation failed for M=$M"
-# fi
+if [ $? -eq 0 ]; then
+    echo "Compilation successful, running Python script with M=$M"
+    $movies_script_ripple
+else
+    echo "Compilation failed for M=$M"
+fi
 
-# cp "$orl_c" "$c_file"
-# cp "$orl_exec" "$exec_file"
-# sed -i "s/^#define MEMORY_MAX .*/#define MEMORY_MAX $M/" "$c_file"
+cp "$orl_c" "$c_file"
+cp "$orl_exec" "$exec_file"
+sed -i "s/^#define MEMORY_MAX .*/#define MEMORY_MAX $M/" "$c_file"
 
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
-# make; make install
-# /data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile stop
+make; make install
+/data/saketh_temp/PSQL1506/executables/bin/pg_ctl -D /data/saketh_temp/PSQL1506/Join-Game/DemoDir -o "-p 1506" -l logfile start
 
-# if [ $? -eq 0 ]; then
-#     echo "Compilation successful, running Python script with M=$M"
-#     $movies_script_orl
-# else
-#     echo "Compilation failed for M=$M"
-# fi
+if [ $? -eq 0 ]; then
+    echo "Compilation successful, running Python script with M=$M"
+    $movies_script_orl
+else
+    echo "Compilation failed for M=$M"
+fi
 
-# $similarity_script_osl
-# $similarity_script_ripple
-# $similarity_script_cl
-# $similarity_script_icl
-# $similarity_script_orl
+$similarity_script_osl
+$similarity_script_ripple
+$similarity_script_cl
+$similarity_script_icl
+$similarity_script_orl
 $similarity_script_rosl

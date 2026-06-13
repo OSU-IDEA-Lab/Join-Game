@@ -47,7 +47,7 @@
  *		If none is found, next tuple from the outer relation is retrieved
  *		and the inner relation is scanned from the beginning again to join
  *		with the outer tuple.
- *
+#define MEMORY_MAX        33784
  *		NULL is returned if all the remaining outer tuples are tried and
  *		all fail to join with the inner tuples.
  *
@@ -66,37 +66,10 @@
  * ----------------------------------------------------------------
  */
 
-#define PGNST8_LEFT_PAGE_MAX_SIZE 100
+#define PGNST8_LEFT_PAGE_MAX_SIZE (1588/3)*1  //(1588/3)*1
 #define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 3 * PGNST8_LEFT_PAGE_MAX_SIZE// 3226 // In Memory Size Right Table Cache Size, used for exploration. 
-#define MUST_EXPLORE_TUPLE_COUNT_N 1588
+#define MUST_EXPLORE_TUPLE_COUNT_N 1588 //3226 // Number of tuples that must be explored before Exploitation can happen. 
 #define FAILURE_COUNT_N 100 // Number of failures allowed during exploration, before jumping into next outer tuple, for exploration
-
-static char*
-LogSlotRelation(PlanState *ps, const char *label)
-{
-    if (ps == NULL)
-        return;
-
-    if (IsA(ps, MaterialState))
-    {
-        PlanState *child = outerPlanState(ps);
-        LogSlotRelation(child, label);
-        return;
-    }
-
-    if (IsA(ps, SeqScanState)        ||
-        IsA(ps, IndexScanState)      ||
-        IsA(ps, IndexOnlyScanState)  ||
-        IsA(ps, BitmapHeapScanState))
-    {
-        ScanState *ss = (ScanState *) ps;
-        if (ss->ss_currentRelation)
-            return RelationGetRelationName(ss->ss_currentRelation);
-		return NULL;
-    }
-
-	return NULL;
-}
 
 static void calculateConfidenceInterval(NestLoopState *node) {
 	double totalmean = 0.0;
@@ -119,14 +92,7 @@ static void calculateConfidenceInterval(NestLoopState *node) {
 	double x = 0.0;
 	double y = 0.0;
 	unsigned int tuple_trails = 0;
-	PlanState  *innerPlan;
-	PlanState  *outerPlan;
-	outerPlan = outerPlanState(node);
-	innerPlan = innerPlanState(node);
-
-	// char* outerRelation = LogSlotRelation(outerPlan, "outer");
-	// char* innerRelation = LogSlotRelation(innerPlan, "inner");
-	// elog(INFO, "THe relations are %s and %s", outerRelation, innerRelation);
+	
 	for (i = 0; i < (node->numExplored); i++){
 		node->outertupleinfo[i].mean_numr = 0.0;
 		node->outertupleinfo[i].mean_denr = 0.0;
@@ -182,10 +148,9 @@ static void calculateConfidenceInterval(NestLoopState *node) {
 	}
 	
 	totalmean = (double) temp_mean / (double) node->T_steps;
-    long long total = (long long)node->numOuterTuples * node->numInnerTuples;
 	temp_mean = 0.0;
 	double est_count = 0.0;
-	est_count = (double) (totalmean * total);
+	est_count = (double) (totalmean * node->numInnerTuples * node->numOuterTuples);
 	
 	//Variance calculation
 	for (i = 0; i < (node->numExplored); i++){
@@ -196,9 +161,9 @@ static void calculateConfidenceInterval(NestLoopState *node) {
 		if (tuple_variance_denr != 0) {
 			node->outertupleinfo[i].tuple_variance = (double) (tuple_variance_numr / tuple_variance_denr);
 		}
-		tuple_variance_numr = 0.0;
+    long long total = (long long)node->numOuterTuples * node->numInnerTuples;
 		tuple_variance_denr = 0.0;
-	}
+    }
 	
 	
 	double overall_variance_numr = 0.0;
@@ -214,15 +179,15 @@ static void calculateConfidenceInterval(NestLoopState *node) {
 	overall_variance = (double) (overall_variance_numr / total_observations);
 	mean_std = (double) sqrt(overall_variance / node->T_steps);
 	
-	z_score = 1.96;
+    z_score = 1.96;
 	half_width = z_score * mean_std;
 
-	// Calculate the lower and upper bounds of the confidence interval
-	lower_bound = totalmean - half_width;
-	upper_bound = totalmean + half_width;
+    // Calculate the lower and upper bounds of the confidence interval
+    lower_bound = totalmean - half_width;
+    upper_bound = totalmean + half_width;
 	
-	est_lower_bound = (double) lower_bound * total;
-	est_upper_bound = (double) upper_bound * total;
+	est_lower_bound = (double) lower_bound * node->numOuterTuples * node->numInnerTuples;
+	est_upper_bound = (double) upper_bound * node->numOuterTuples * node->numInnerTuples;
 	
 	
 	// double actual_count = 240000000.0; //q9 - 10gig - 240000000
@@ -246,16 +211,14 @@ static void calculateConfidenceInterval(NestLoopState *node) {
 	// double actual_count = 1096082288421912.0; //WDC 3 relation LV3
 	// double actual_count = 684922675194.0; //Movies 3 relation LV6
 	// double actual_count = 4116968483912.0; //Movies 3 relation LV7
-	// double actual_count = 23377957242619.0; //Movies 3 relation LV8
-	// double actual_count = 8000000.0;
-double actual_count = 731365682.0;
+double actual_count = 441028105215.0;
 
 	x = (double) (node->overallCount / actual_count) * 100;
 	y = (double) (fabs(actual_count - est_count) / actual_count) * 100;
-	// if (outerRelation != NULL) return;
+	
 	elog(INFO, "Mean calculation: (%f %f)", x, y);
 	elog(INFO, "Variance: (%u %f %f %f)", node->overallCount, est_lower_bound, est_count, est_upper_bound);
-	// elog(INFO, "%s and %s", outerRelation, innerRelation);
+	
 }
 
 static TupleTableSlot *
@@ -310,8 +273,6 @@ seedToExploitLeftPage(PlanState *pstate){
 		outerPlan->oslBnd8_numTuplesExplored=0;
 		outerPlan->pgNst8LeftPageHead = 0;
 		outerPlan->pgNst8LeftPageSize = 0;
-		node->total_zeros = 0;
-		node->totalReward = 0;
 		outerPlan->exploitCacheHead = 0;
 		outerPlan->exploitCacheSize = 0;
 		outerPlan->oslBnd8_ExplorationStarted=true;
@@ -452,7 +413,7 @@ seedToExploitLeftPage(PlanState *pstate){
 			if ( (node->overallCount%100 == 0) && (node->overallCount != node->currentCount) ) {
 				node->currentCount = node->overallCount;
 
-				// calculateConfidenceInterval(node);
+				calculateConfidenceInterval(node);
 			}
 		}
 		else{
@@ -481,11 +442,6 @@ seedToExploitLeftPage(PlanState *pstate){
 			outerPlan->oslBnd8RightTableCacheHead = 0;
 			node->outertupleinfo[outerPlan->outerTupIdx].tupidx = outerPlan->outerTupIdx;
 			node->numExplored++;
-			if (node->outertupleinfo[outerPlan->outerTupIdx].explore_success_count == 0){
-				node->total_zeros += 1;  // Assign small reward for zero-reward tuples
-			}else{
-				node->totalReward += node->outertupleinfo[outerPlan->outerTupIdx].explore_success_count;
-			}
 			if (outerPlan->outerTupIdx != node->numOuterTuples - 1) {
 				node->outertupleinfo[outerPlan->outerTupIdx + 1].explore_reward_ratio
 					= (double) pow( (1 - node->outertupleinfo[outerPlan->outerTupIdx].p_r), node->outertupleinfo[outerPlan->outerTupIdx].explore_Nvalue ) / (double) (node->numOuterTuples - node->numExplored) ;
@@ -503,51 +459,6 @@ seedToExploitLeftPage(PlanState *pstate){
 				outerPlan->pgNst8LeftPageHead++;
 				outerPlan->pgNst8LeftPageSize++;
 			}
-			// Otherwise, they will be parsed.
-			// else{
-			// 	if (outerPlan->oslBnd8_currExploreTupleReward > 0){
-			// 		bool replaced = false;
-					
-			// 		if (outerPlan->zeroRewardExists) {
-			// 			while (outerPlan->cursorReward < MUST_EXPLORE_TUPLE_COUNT_N) {
-			// 				if (outerPlan->pgReward[outerPlan->cursorReward] == 0) {
-			// 					ExecCopySlot(outerPlan->pgNst8LeftPage[outerPlan->cursorReward], outerPlan->oslBnd8_currExploreTuple);
-			// 					outerPlan->pgReward[outerPlan->cursorReward] = outerPlan->oslBnd8_currExploreTupleReward;
-			// 					outerPlan->outerIndex[outerPlan->cursorReward] = outerPlan->outerTupIdx;
-			// 					node->outertupleinfo[outerPlan->outerTupIdx].estimate_flag = 1;
-			// 					outerPlan->cursorReward++;
-			// 					replaced = true;
-			// 					break;
-			// 				}
-			// 				outerPlan->cursorReward++;
-			// 			}
-					
-			// 			if (!replaced) {
-			// 				outerPlan->zeroRewardExists = false;
-			// 			}
-			// 		}
-					
-			// 		if (!replaced) {
-			// 			int lowestIndex = -1;
-			// 			int lowestReward = INT_MAX;
-			// 			int i;
-			// 			for (i = 0; i < MUST_EXPLORE_TUPLE_COUNT_N; i++) {
-			// 				if (outerPlan->pgReward[i] < lowestReward) {
-			// 					lowestReward = outerPlan->pgReward[i];
-			// 					lowestIndex = i;
-			// 				}
-			// 			}
-					
-			// 			if (lowestReward < outerPlan->oslBnd8_currExploreTupleReward) {
-			// 				ExecCopySlot(outerPlan->pgNst8LeftPage[lowestIndex], outerPlan->oslBnd8_currExploreTuple);
-			// 				outerPlan->pgReward[lowestIndex] = outerPlan->oslBnd8_currExploreTupleReward;
-			// 				outerPlan->outerIndex[lowestIndex] = outerPlan->outerTupIdx;
-			// 				node->outertupleinfo[outerPlan->outerTupIdx].estimate_flag = 1;
-			// 			}
-			// 		}
-			// 		//new
-			// 	}
-			// }
 			outerPlan->outerTupIdx++;
 		}
 
@@ -622,16 +533,28 @@ ExecNestLoop(PlanState *pstate)
 			}
 
 			int i;
+			double totalReward = 1.0;
 			double total_prob_e_exploit = 0.0;
 			int selectedCount = 0;
 			double randomValue = 0.0;
+			int total_zeros = 0;
+			
+			
+			// Assign a small baseline reward to zero-reward tuples and calculate total reward
+			for (i = 0; i < node->numExplored; i++) {
+				if (node->outertupleinfo[i].explore_success_count == 0){
+					total_zeros += 1;  // Assign small reward for zero-reward tuples
+				}
+				totalReward += node->outertupleinfo[i].explore_success_count;
+			}
+
 			
 			for (i = 0; i < node->numExplored; i++) {
 				if (node->outertupleinfo[i].estimate_flag != 2){
 					if (node->outertupleinfo[i].explore_success_count == 0){
-						node->outertupleinfo[i].prob_e_exploit = 0.1 / node->total_zeros;
+						node->outertupleinfo[i].prob_e_exploit = 0.1 / total_zeros;
 					}else{
-						node->outertupleinfo[i].prob_e_exploit =  ( (double)node->outertupleinfo[i].explore_success_count / node->totalReward ) * 0.9;
+						node->outertupleinfo[i].prob_e_exploit =  ( (double)node->outertupleinfo[i].explore_success_count / totalReward ) * 0.9;
 					}
 					
 					node->outertupleinfo[i].exploit_reward_ratio = node->outertupleinfo[i].prob_e_exploit;
@@ -652,14 +575,23 @@ ExecNestLoop(PlanState *pstate)
 			
 			int j = 0;
 			int count = -1;
+			double total = 0.0;
+			
 
 			for(i=0; i < PGNST8_LEFT_PAGE_MAX_SIZE; i++){
-				if (TupIsNull(outerPlan->Exploit_cache[i])) {outerPlan->Exploit_cache[i] = MakeSingleTupleTableSlot(outerPlan->oslBnd8_currExploreTuple->tts_tupleDescriptor);}				
-				ExecCopySlot(outerPlan->Exploit_cache[i], outerPlan->pgNst8LeftPage[i]);
-				outerPlan->exploitCacheIndex[i] = i;
-				outerPlan->exploitCacheSize++;
-				outerPlan->exploitCacheHead = outerPlan->exploitCacheSize;
-				
+				randomValue = (double) rand() / ((double) RAND_MAX + 1.0);
+				total = 0.0;
+				for(j=0; j<MUST_EXPLORE_TUPLE_COUNT_N; j++){
+					total += node->outertupleinfo[j].prob_e_exploit;
+					if(total >= randomValue){
+						if (TupIsNull(outerPlan->Exploit_cache[i])) {outerPlan->Exploit_cache[i] = MakeSingleTupleTableSlot(outerPlan->oslBnd8_currExploreTuple->tts_tupleDescriptor);}				
+						ExecCopySlot(outerPlan->Exploit_cache[i], outerPlan->pgNst8LeftPage[j]);
+						outerPlan->exploitCacheIndex[i] = i;
+						outerPlan->exploitCacheSize++;
+						outerPlan->exploitCacheHead = outerPlan->exploitCacheSize;
+						break;
+					}
+				}
 			}
 			elog(INFO, "The exploit cache size is %d", outerPlan->exploitCacheSize);
 			outerPlan->nl_needNewOuterPage = false;	
@@ -844,7 +776,7 @@ ExecNestLoop(PlanState *pstate)
 				if ( (node->overallCount%100 == 0) && (node->overallCount != node->currentCount) ) {
 					node->currentCount = node->overallCount;
 					
-					// calculateConfidenceInterval(node);
+					calculateConfidenceInterval(node);
 				}
 				return ExecProject(node->js.ps.ps_ProjInfo);
 			}
@@ -981,10 +913,10 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 		
 	nlstate->totalSteps = nlstate->numOuterTuples * nlstate->numInnerTuples;
 	
-	nlstate->outertupleinfo = palloc(sizeof(struct tupleInfo) * 10000);
+	nlstate->outertupleinfo = palloc(sizeof(struct tupleInfo) * 100000);
 	int i;
 	int j;
-	for (i = 0; i < 10000; i++) {
+	for (i = 0; i < 100000; i++) {
 		nlstate->outertupleinfo[i].outerestinfo = palloc(sizeof(struct estInfo) * 1000);
 	}
 	
@@ -1072,7 +1004,7 @@ ExecEndNestLoop(NestLoopState *node)
 	}
 
 	// Free up the Memory
-	for (i = 0; i < (10000); i++) {
+	for (i = 0; i < (100000); i++) {
 		pfree(node->outertupleinfo[i].outerestinfo);
 	}
 	pfree(node->outertupleinfo);
