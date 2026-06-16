@@ -88,7 +88,7 @@ def manage(base_dir, apply_limits):
     
     base_name = base_dir if base_dir else "results"
 
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         for size, z, mem, q, shuff in itertools.product(sizes, zvals, work_mems, queries, shuffles):
             
             variations = get_queries(q, z, shuff, apply_limits)        
