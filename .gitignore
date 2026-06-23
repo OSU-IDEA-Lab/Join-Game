@@ -47,8 +47,14 @@ lib*.pc
 *.out
 *.swp
 src/tags
+*.log
+*.txt
+*.swp
+src/tags
+/results
+/plots
 
 # Custom
 /DemoDir/
 /Join-Game/test/
-/Join-Game/customer_order/
+

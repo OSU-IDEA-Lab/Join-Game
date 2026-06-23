@@ -945,6 +945,15 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 	{
+		{"enable_rosl", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Enables the ROSL sampling nested-loop join estimator."),
+			NULL
+		},
+		&enable_rosl,
+		false,
+		NULL, NULL, NULL
+	},
+	{
 		{"enable_gathermerge", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of gather merge plans."),
 			NULL

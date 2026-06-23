@@ -1913,6 +1913,8 @@ typedef struct NestLoopState
 	unsigned int innerIdx;
 	unsigned int lastExploredIdx;
 
+	void	   *rosl;		/* ROSL sampling-join working state (nodeNestloop.c) */
+
 } NestLoopState;
 
 /* ----------------

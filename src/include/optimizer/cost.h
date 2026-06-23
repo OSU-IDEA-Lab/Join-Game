@@ -69,6 +69,7 @@ extern PGDLLIMPORT bool enable_hashjoin;
 extern PGDLLIMPORT bool enable_fastjoin;
 extern PGDLLIMPORT bool enable_block;
 extern PGDLLIMPORT bool enable_fliporder;
+extern PGDLLIMPORT bool enable_rosl;
 extern PGDLLIMPORT bool enable_gathermerge;
 extern PGDLLIMPORT bool enable_partitionwise_join;
 extern PGDLLIMPORT bool enable_partitionwise_aggregate;
