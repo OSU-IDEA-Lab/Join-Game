@@ -100,6 +100,11 @@ RE_ROUND = re.compile(
     r"\(round=(\d+) pairs_seen=([\d.eE+-]+) sample_matches=(\d+)\)"
 )
 
+# Fired by PH_NEW_MBLOCK the instant the outer relation is exhausted.
+# This is the authoritative signal that ROSL has finished; we stop fetching
+# as soon as we see it rather than relying solely on ROSL_TIMEOUT_S.
+RE_DONE = re.compile(r"ROSL done: sampling join complete")
+
 # ── timing trick: timestamp NOTICEs the instant they arrive ──────────────────
 
 class _TimestampedNotices(collections.deque):
@@ -228,31 +233,78 @@ def configure_rosl(conn):
     conn.commit()
 
 def run_estimate(conn, join_sql):
-    """Run the join under ROSL, trigger phase 1 with a single fetch, and return
-    (rounds, call_wall_sec).  The full join is NOT run to completion -- we
-    only need the estimate, which is finalised in phase 1.
+    """Run the join under ROSL and pull rows until the engine says it is done,
+    returning (rounds, call_wall_sec, n_rows).
 
-    rounds[i] now carries elapsed_sec (time since this call's fetchone()
-    started) and delta_sec (time since the previous round) alongside the
-    existing accuracy fields, recovered via the _TimestampedNotices trick
-    described up top.  call_wall_sec is the wall time of the whole fetchone()
-    call, independent of NOTICE parsing, for the repeat-level summary."""
-    conn.notices = _TimestampedNotices(maxlen=NOTICE_CAP)   # uncap the 50-item default
+    WHY THE OLD single-fetchone() NO LONGER WORKS
+    -----------------------------------------------
+    The new nodeNestloop.c is streaming: PH_PROBE now calls ExecProject() and
+    returns a real tuple for every sample match, one per ExecNestLoop() call.
+    A single fetchone() therefore returns only the *first* matched row, not
+    "all of phase 1".  All subsequent per-round NOTICEs -- and crucially the
+    "ROSL done" NOTICE emitted in PH_NEW_MBLOCK when the outer relation is
+    exhausted -- only arrive during later fetches that the old code never made.
+    Consequences of stopping after one fetch:
 
-    sc = conn.cursor(name="rosl_cur")    # server-side cursor
-    sc.itersize = 1
+      1. Only round 1's NOTICE is seen; pct_of_final_pairs normalises every
+         repeat against that single tiny slice (0→100% means nothing across
+         repeats or configs).
+      2. The "ROSL done" NOTICE is never observed, so we can't detect
+         completion early and must rely on ROSL_TIMEOUT_S as the only exit.
+      3. conn.rollback() closes the cursor mid-stream, leaving ROSL in an
+         arbitrary internal state -- harmless for accuracy but wastes the
+         work already done.
+
+    THE FIX
+    -------
+    Loop fetchone() until it returns None *or* we see RE_DONE in conn.notices.
+    The "done" NOTICE and the final None are effectively simultaneous (PH_DONE
+    sets st->phase then returns NULL in the same ExecNestLoop call as the
+    NOTICE fires), so checking both is belt-and-suspenders, not two distinct
+    events.  n_rows counts actual sample-match rows pulled through (their
+    contents are never inspected -- only the NOTICE stream matters for accuracy
+    and timing).
+
+    pct_of_final_pairs is still normalised against this repeat's own last
+    round's pairs_seen (rounds[-1]["pairs_seen"]), preserving the 0→100%
+    semantics -- but now "last round" means ROSL's actual last round, not
+    just whatever happened before the first row came back.
+    """
+    conn.notices = _TimestampedNotices(maxlen=NOTICE_CAP)
+
+    sc = conn.cursor(name="rosl_cur")    # server-side cursor; itersize=1 keeps
+    sc.itersize = 1                      # each fetch a single round-trip
     sc.execute(join_sql)
     t_start = time.time()
-    sc.fetchone()                        # one fetch -> all of phase 1 runs + emits notices
+    n_rows = 0
+
+    while True:
+        row = sc.fetchone()
+
+        # Check for the "done" NOTICE before testing row==None: the NOTICE
+        # is appended to conn.notices *during* the fetchone() that returns
+        # None, so by the time we arrive here it is already present.
+        done_seen = any(RE_DONE.search(msg) for msg in conn.notices)
+
+        if row is None or done_seen:
+            break
+        n_rows += 1
+
+        if len(conn.notices) >= NOTICE_CAP:
+            # Buffer full mid-stream; stop now rather than losing more data.
+            print("  WARNING: notice buffer full -- trajectory TRUNCATED mid-run. "
+                  "Use a smaller scale factor.", flush=True)
+            break
+
     call_wall_sec = time.time() - t_start
     notices    = list(conn.notices)
     arrival_ts = list(conn.notices.timestamps)
     sc.close()
-    conn.rollback()                      # discard the partial join we won't read
+    conn.rollback()
 
-    if len(notices) >= NOTICE_CAP:
-        print("  WARNING: notice buffer full -- trajectory TRUNCATED. "
-              "Use a smaller scale factor.", flush=True)
+    if not done_seen:
+        print("  WARNING: ROSL done notice never seen -- run may have been "
+              "cut off by statement_timeout or notice-buffer overflow.", flush=True)
 
     rounds = []
     prev_ts = t_start
@@ -270,7 +322,7 @@ def run_estimate(conn, join_sql):
             })
             prev_ts = ts
     rounds.sort(key=lambda r: r["round"])
-    return rounds, call_wall_sec
+    return rounds, call_wall_sec, n_rows
 
 # ── entry point ───────────────────────────────────────────────────────────────
 
@@ -320,9 +372,11 @@ def main():
     with open(traj_path, "w") as traj_f, open(summ_path, "w") as summ_f:
         traj_f.write("size,query,zval,shuffle,repeat,round,pairs_seen,sample_matches,"
                      "mean_per_pair,est_join,truth,ratio,rel_error,"
-                     "elapsed_sec,delta_sec,pct_of_final_pairs\n")
+                     "elapsed_sec,delta_sec,pct_of_truth_output\n")
+        # n_rows column added: actual sample-match rows pulled through the
+        # cursor (contents ignored; count is a sanity-check on streaming output).
         summ_f.write("size,query,zval,shuffle,repeat,truth,final_est,final_ratio,n_rounds,"
-                     "repeat_wall_sec,truth_compute_sec\n")
+                     "n_rows,repeat_wall_sec,truth_compute_sec\n")
 
         configure_rosl(conn)
 
@@ -330,21 +384,25 @@ def main():
             ts = datetime.datetime.now().strftime("%H:%M:%S")
             print(f"  [{ts}] estimate {key} repeat {rep}/{REPEATS}", flush=True)
             try:
-                rounds, call_wall_sec = run_estimate(conn, join_sql)
+                rounds, call_wall_sec, n_rows = run_estimate(conn, join_sql)
             except Exception as e:
                 print(f"  [estimate] FAILED rep {rep}: {e}", flush=True)
                 conn.rollback()
                 continue
 
-            # Normalize each round's pairs_seen against this repeat's own final
-            # round, giving a 0-100% progress axis (same role as worker.py's
-            # pct_output) without assuming a fixed denominator for ROSL.
-            final_pairs = rounds[-1]["pairs_seen"] if rounds else None
-
             for r in rounds:
                 ratio = (r["est_join"] / truth) if truth else float("nan")
                 rerr  = ((r["est_join"] - truth) / truth) if truth else float("nan")
-                pct   = (r["pairs_seen"] / final_pairs * 100.0) if final_pairs else float("nan")
+                # pct_of_truth_output: fraction of ground-truth join rows that
+                # ROSL's sampling has produced so far.  sample_matches is the
+                # cumulative count of actual join-result rows emitted by the
+                # engine; truth is the exact join cardinality from the hash join
+                # or JSON cache.  This gives a meaningful x-axis (how much of
+                # the real output have we seen?) rather than pairs_seen/truth,
+                # which mixed two unrelated quantities (pair coverage vs. output
+                # cardinality), or pairs_seen/final_pairs, which was only
+                # self-comparable within a single repeat.
+                pct   = (r["sample_matches"] / truth * 100.0) if truth else float("nan")
                 traj_f.write("%s,%s,%s,%s,%d,%d,%.0f,%d,%.10f,%.2f,%d,%.6f,%.6f,%.4f,%.4f,%.4f\n" % (
                     size, q_name, z_val, shuffle, rep, r["round"], r["pairs_seen"],
                     r["sample_matches"], r["mean_per_pair"], r["est_join"],
@@ -353,11 +411,12 @@ def main():
             if rounds:
                 fe = rounds[-1]["est_join"]
                 fr = (fe / truth) if truth else float("nan")
-                summ_f.write("%s,%s,%s,%s,%d,%d,%.2f,%.6f,%d,%.3f,%.3f\n" % (
+                summ_f.write("%s,%s,%s,%s,%d,%d,%.2f,%.6f,%d,%d,%.3f,%.3f\n" % (
                     size, q_name, z_val, shuffle, rep, truth, fe, fr, len(rounds),
-                    call_wall_sec, truth_compute_sec))
+                    n_rows, call_wall_sec, truth_compute_sec))
                 print(f"      final est={fe:,.0f}  truth={truth:,}  ratio={fr:.4f}  "
-                      f"rounds={len(rounds)}  wall={call_wall_sec:.1f}s", flush=True)
+                      f"rounds={len(rounds)}  n_rows={n_rows}  wall={call_wall_sec:.1f}s",
+                      flush=True)
             else:
                 print(f"      no ROSL notices parsed (wall={call_wall_sec:.1f}s) -- is "
                       "enable_rosl wired and the plan a plain nested loop?", flush=True)
