@@ -1,7 +1,7 @@
-# ROSL — Reward-Ordered Sampling Loop Join
+# ROSL — Alternative Version, Epsilon Greedy on Observed Joinability
 
 A sampling-based join operator for PostgreSQL that replaces the inner loop of
-the executor's nested-loop node with a reward-guided (bandit-style) sampler, and
+the executor's nested-loop node with a joinability-guided (bandit-style) sampler, and
 produces a **running estimate of the total join size** as it streams matching
 rows. ROSL trades exactness for early, progressively-accurate estimates: it can
 report an approximate `|R ⋈ S|` long before a full join would finish.
@@ -20,17 +20,18 @@ Given outer relation `R` and inner relation `S`, ROSL:
    of `S` in **K-blocks** of `k_lim` tuples. Each (M-block, K-block) pair is a
    **round**.
 2. Within a round it builds a non-uniform probability distribution over the
-   M-block's tuples from accumulated **rewards** (a tuple's reward is how many
-   matches it has produced so far), blended with an exploration term controlled
-   by `ε`.
+   M-block's tuples from accumulated **average joinability** — each tuple's
+   cumulative match count divided by its cumulative probe count; untried tuples
+   are optimistically assigned full joinability (1) — blended with an
+   exploration term controlled by `ε`.
 3. Draws `exp_cache_lim` tuples **with replacement** from that distribution,
    deduplicates them into an **exploit cache**, and probes the cache against the
    current K-block, emitting matches as output rows.
-4. Updates rewards and, in the estimator variant, folds a per-round
-   **Horvitz–Thompson** estimate into a running total to produce `Ĵ`, the
-   estimated join size.
+4. Updates match counts and probe attempt counters, and in the estimator
+   variant folds a per-round **Horvitz–Thompson** estimate into a running
+   total to produce `Ĵ`, the estimated join size.
 
-The bandit logic concentrates probing on tuples that have matched before
+The bandit logic concentrates probing on tuples with high empirical joinability
 (exploitation) while retaining a floor of random exploration so every tuple
 keeps a non-zero chance of being sampled.
 
@@ -84,16 +85,25 @@ beyond the pair counts already in the denominator.
 
 ### Sampling distribution (custom ε-smoothing)
 
-For each tuple `t` in M-block `A` (with `A⁺` the tuples having positive reward
-and `R_total = Σ_{t ∈ A⁺} r(t)`):
+For each tuple `t` in M-block `A`, define its **average joinability**:
 
 ```
-p(t) = (1 − ε)·r(t)/R_total + ε/|A|     if t ∈ A⁺
-p(t) = ε/|A|                            otherwise
+q(t) = r(t) / a(t)     if a(t) > 0
+q(t) = 1               if a(t) = 0   (untried: optimistically fully joinable)
 ```
 
-This is an exploitation term (reward-proportional) blended with a uniform
-exploration term of mass `ε`. The construction already sums to 1 over `A`.
+where `r(t)` is cumulative match successes and `a(t)` is cumulative probe
+attempts (incremented by `|K|` each round `t` appears in the cache). With
+`Q_total = Σ_{t ∈ A} q(t)`:
+
+```
+p(t) = (1 − ε)·q(t)/Q_total + ε/|A|     if Q_total > 0
+p(t) = 1/|A|                             if Q_total = 0
+```
+
+`Q_total = 0` arises when every tuple has been probed and none has ever
+joined; the distribution falls back to uniform since there is no joinability
+signal to weight by. The construction sums to 1 over `A` in both cases.
 
 ### Epsilon floor
 
@@ -114,15 +124,17 @@ estimate stable in late, exploit-heavy rounds.
 
 **Known limitations of the current sampler** (from the design notes):
 
-- Never-sampled tuples are currently treated as zero-reward tuples. A genuinely
-  high-match tuple that isn't picked early by exploration becomes less likely to
-  be sampled later — the procedure tends to re-select tuples it has already
-  selected. A planned improvement is to give never-sampled tuples a separate
-  (optimistic) probability mass, distinct from observed zero-reward tuples.
 - The distribution is rebuilt every round rather than fixed once after an
-  exploration phase. This may let exploitation track reward more closely as
-  trials accumulate, but carries a per-round cost whose justification is still
-  under investigation.
+  exploration phase. This allows exploitation to track joinability more closely
+  as trials accumulate, but carries a per-round cost whose justification is
+  still under investigation.
+
+The earlier reward-based version also had the weakness that never-sampled
+tuples were indistinguishable from observed zero-reward tuples, biasing the
+sampler toward re-selecting already-seen tuples. The joinability distribution
+addresses this by assigning `q(t) = 1` to untried tuples — treating them as
+optimistically fully joinable — so they compete on equal footing with
+high-reward tuples during early exploration.
 
 ---
 
@@ -152,7 +164,7 @@ Defined at the top of the file:
 | `ROSL_M_LIM`          | 1588      | Outer (R) tuples per M-block                          |
 | `ROSL_K_LIM`          | 1588      | Inner (S) tuples per K-block                          |
 | `ROSL_EXP_CACHE_LIM`  | 529       | With-replacement draws per round (`L`)                |
-| `ROSL_EPSILON_FLOOR`  | 0.5       | Minimum exploration threshold (`ε_floor`)             |
+| `ROSL_EPSILON_FLOOR`  | 0.2       | Minimum exploration threshold (`ε_floor`)             |
 | `ROSL_TRAJ_CAP`       | 1,000,000 | Max per-round trajectory rows retained for the dump   |
 
 ### State machine
@@ -161,10 +173,15 @@ A single `ExecNestLoop` call advances a small phase machine and yields at most
 one row per call (resume cursors let a round span many calls):
 
 - **`PH_NEW_MBLOCK`** — load the next outer block; if `R` is exhausted, go to
-  `PH_DONE`. On the first non-empty block, the per-round timing clock starts.
-- **`PH_NEW_SBLOCK`** — load the next inner block; build the distribution from
-  current rewards and `ε`; draw and deduplicate the exploit cache; reset
-  per-round match counts.
+  `PH_DONE`. Zero both `reward[]` and `attempts[]` for the new block, reset
+  `ε` to 1 (full exploration), and rewind the inner relation. On the first
+  non-empty block, the per-round timing clock starts.
+- **`PH_NEW_SBLOCK`** — load the next inner block; build the
+  joinability-weighted distribution (`q(t) = r(t)/a(t)` for probed tuples,
+  `q(t) = 1` for untried) blended with exploration mass `ε`; draw and
+  deduplicate the exploit cache; advance `a(t)` by `|K|` for every cached
+  tuple (before probing, so inclusion probabilities depend only on prior
+  rounds); reset per-round match counts.
 - **`PH_PROBE`** — probe the exploit cache against the K-block, emitting matches
   one per call. When the round's last pair is probed, fold the Horvitz–Thompson
   estimate (`finalize_round`), decay `ε`, advance to the next K-block.
