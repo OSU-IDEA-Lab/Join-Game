@@ -24,7 +24,7 @@
  *
  * The ROSL path is single-phase.  It consumes R in M-blocks and, for each
  * M-block, scans all of S in K-blocks.  Each (M-block, K-block) round draws
- * a reward-weighted, epsilon-smoothed exploit cache of outer tuples and probes
+ * a joinability-weighted, epsilon-smoothed exploit cache of outer tuples and probes
  * it against the K-block.  Matching pairs are emitted immediately (one per
  * call via resume cursors probe_ci / probe_kj); rewards and per-round match
  * counts are accumulated simultaneously so the Horvitz-Thompson estimator is
@@ -40,7 +40,7 @@
  * R (outer) is consumed in M-blocks of ROSL_M_LIM tuples; for each M-block
  * all of S (inner) is scanned in K-blocks of ROSL_K_LIM tuples.  Each
  * (M-block, K-block) round draws an exploit cache of unique outer tuples
- * from a reward-weighted, epsilon-smoothed distribution and probes it
+ * from a joinability-weighted, epsilon-smoothed distribution and probes it
  * against the K-block, emitting matching rows directly.  Cache fill is one
  * cumulative-probability pass plus a binary search per draw; deduplication
  * is a sort of the drawn indices and a single linear pass.  probe_ci and
@@ -74,7 +74,7 @@ bool		enable_rosl = false;
 #define ROSL_M_LIM			1588	/* outer (R) tuples per M-block          */
 #define ROSL_K_LIM			1588	/* inner (S) tuples per K-block          */
 #define ROSL_EXP_CACHE_LIM	529		/* with-replacement draws per round (L)  */
-#define ROSL_EPSILON_FLOOR  0.5    /* Minimum exploration threshold         */
+#define ROSL_EPSILON_FLOOR  0.2    /* Minimum exploration threshold         */
 
 /*
  * Per-round trajectory is buffered in C and dumped once at executor teardown
@@ -109,7 +109,8 @@ typedef struct RoslJoinState
 	/* outer (R) block buffer */
 	TupleTableSlot **m_slots;		/* [m_lim] copies of current M-block      */
 	int			m_count;			/* tuples in current M-block (Mn)         */
-	int		   *reward;				/* [m_lim] cumulative reward within block */
+	int		   *reward;				/* [m_lim] successful joins r(t) in block */
+	int		   *attempts;			/* [m_lim] join attempts a(t) in block    */
 
 	/* inner (S) block buffer */
 	TupleTableSlot **k_slots;		/* [k_lim] copies of current K-block      */
@@ -242,15 +243,22 @@ load_inner_block(RoslJoinState *st, PlanState *innerPlan)
 }
 
 /*
- * Custom epsilon-greedy smoothing over the current M-block, using the rewards
- * accumulated so far in this M-block and the current epsilon:
+ * Custom epsilon-greedy smoothing over the current M-block, using the average
+ * joinability accumulated so far in this M-block and the current epsilon.
  *
- * p(t) = (1-eps) * r(t)/R_total + eps/|A|     if r(t) > 0
- * = eps/|A|                              otherwise
+ * For each tuple t, the average joinability is
  *
- * Normalised to a proper distribution.  Normalisation also gives the correct
- * fallback when no tuple has positive reward yet (every p is eps/|A|, which
- * after normalisation is uniform).
+ *   q(t) = r(t) / a(t)   if a(t) > 0   (successes over attempts so far)
+ *        = 1            if a(t) = 0   (untried tuples treated as fully joinable)
+ *
+ * Let Qtotal = sum over t in A of q(t).  The single-draw distribution is
+ *
+ *   p(t) = (1-eps) * q(t)/Qtotal + eps/|A|   if Qtotal > 0
+ *        = 1/|A|                             if Qtotal = 0
+ *
+ * The Qtotal = 0 case (every tuple has been tried and none has joined yet)
+ * falls back to a uniform draw, since there is no joinability signal left to
+ * weight by.  The result is normalised to a proper distribution.
  */
 static void
 build_distribution(RoslJoinState *st)
@@ -259,21 +267,31 @@ build_distribution(RoslJoinState *st)
 	int			t;
 	double		eps = st->epsilon;
 	double		Mn = (double) n;
-	double		Rtot = 0.0;
+	double		Qtot = 0.0;
 	double		sum = 0.0;
 
+	/* per-tuple average joinability q(t); untried tuples get q(t) = 1 */
 	for (t = 0; t < n; t++)
-		if (st->reward[t] > 0)
-			Rtot += (double) st->reward[t];
+	{
+		double		q;
+
+		if (st->attempts[t] == 0)
+			q = 1.0;
+		else
+			q = (double) st->reward[t] / (double) st->attempts[t];
+
+		st->p[t] = q;				/* stash q(t) here; rescaled below */
+		Qtot += q;
+	}
 
 	for (t = 0; t < n; t++)
 	{
 		double		pt;
 
-		if (st->reward[t] > 0 && Rtot > 0.0)
-			pt = (1.0 - eps) * ((double) st->reward[t] / Rtot) + eps / Mn;
+		if (Qtot > 0.0)
+			pt = (1.0 - eps) * (st->p[t] / Qtot) + eps / Mn;
 		else
-			pt = eps / Mn;
+			pt = 1.0 / Mn;
 		st->p[t] = pt;
 		sum += pt;
 	}
@@ -451,6 +469,7 @@ rosl_state_init(NestLoopState *node)
 		st->k_slots[i] = MakeSingleTupleTableSlot(innerDesc);
 
 	st->reward = (int *) palloc(sizeof(int) * st->m_lim);
+	st->attempts = (int *) palloc(sizeof(int) * st->m_lim);
 	st->round_match = (int *) palloc(sizeof(int) * st->m_lim);
 	st->p = (double *) palloc(sizeof(double) * st->m_lim);
 	st->cum = (double *) palloc(sizeof(double) * st->m_lim);
@@ -591,7 +610,7 @@ ExecStockNestLoop(NestLoopState *node)
  *		ExecRoslNestLoop  --  streaming ROSL sampling join with HT estimator
  *
  *		Single-phase driver.  Consumes R in M-blocks; for each M-block scans
- *		all of S in K-blocks.  Each round draws a reward-weighted exploit cache
+ *		all of S in K-blocks.  Each round draws a joinability-weighted exploit cache
  *		and probes it against the current K-block, emitting matching rows one
  *		per call.  Resume cursors (probe_ci, probe_kj) track position within a
  *		round across calls.  At round end, finalize_round() folds the
@@ -647,8 +666,9 @@ ExecRoslNestLoop(NestLoopState *node)
 						st->t_started = true;
 					}
 
-					/* fresh M-block: zero rewards, full exploration, rewind S */
+					/* fresh M-block: zero rewards & attempts, full exploration, rewind S */
 					memset(st->reward, 0, sizeof(int) * st->m_count);
+					memset(st->attempts, 0, sizeof(int) * st->m_count);
 					st->epsilon = 1.0;
 					ExecReScan(innerPlan);
 					st->phase = PH_NEW_SBLOCK;
@@ -665,10 +685,27 @@ ExecRoslNestLoop(NestLoopState *node)
 						break;
 					}
 
-					build_distribution(st);		/* p[] from rewards, eps   */
+					build_distribution(st);		/* p[] from joinability, eps */
 					build_cumulative(st);		/* cum[]                   */
 					draw_and_dedup_cache(st);	/* -> cache_midx[]         */
 					memset(st->round_match, 0, sizeof(int) * st->m_count);
+
+					/*
+					 * Account join attempts for this round up front: every
+					 * unique cached tuple is probed against all k_count tuples
+					 * in the current K-block, so a(t) += |K| for each.  Doing
+					 * this here (rather than inside the resumable probe loop)
+					 * keeps a(t) correct regardless of how the per-call resume
+					 * cursors slice the probing, and matches the pseudocode's
+					 * "a(texp M) += |K|" before the inner K scan.
+					 */
+					{
+						int		c;
+
+						for (c = 0; c < st->cache_count; c++)
+							st->attempts[st->cache_midx[c]] += st->k_count;
+					}
+
 					st->probe_ci = 0;			/* start cache scan from beginning */
 					st->probe_kj = 0;			/* start K-block scan from beginning */
 					st->phase = PH_PROBE;
@@ -950,6 +987,7 @@ ExecEndNestLoop(NestLoopState *node)
 		pfree(st->m_slots);
 		pfree(st->k_slots);
 		pfree(st->reward);
+		pfree(st->attempts);
 		pfree(st->round_match);
 		pfree(st->p);
 		pfree(st->cum);
