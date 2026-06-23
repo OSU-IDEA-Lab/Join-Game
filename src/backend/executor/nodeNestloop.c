@@ -14,13 +14,13 @@
  *
  * BEHAVIOUR IS SELECTED BY THE GUC `enable_rosl` (default OFF):
  *
- *   enable_rosl = off  -> exact stock nested loop.  This is what initdb,
- *                         the system catalogs, and every ordinary query
- *                         use, so normal database operation is unchanged.
+ * enable_rosl = off  -> exact stock nested loop.  This is what initdb,
+ * the system catalogs, and every ordinary query
+ * use, so normal database operation is unchanged.
  *
- *   enable_rosl = on   -> ROSL sampling join + running estimate.  Turn this
- *                         on only for the experimental join queries you want
- *                         estimated:  SET enable_rosl = on;
+ * enable_rosl = on   -> ROSL sampling join + running estimate.  Turn this
+ * on only for the experimental join queries you want
+ * estimated:  SET enable_rosl = on;
  *
  * The ROSL path is single-phase.  It consumes R in M-blocks and, for each
  * M-block, scans all of S in K-blocks.  Each (M-block, K-block) round draws
@@ -32,21 +32,21 @@
  * an approximate join intended for cardinality estimation workloads.
  *
  * INTEGRATION (unchanged):
- *   - execnodes.h: add `void *rosl;` to struct NestLoopState.
- *   - guc.c: register the bool GUC `enable_rosl` (see notes at end of file).
- *   - nodeNestloop.h: unchanged.
+ * - execnodes.h: add `void *rosl;` to struct NestLoopState.
+ * - guc.c: register the bool GUC `enable_rosl` (see notes at end of file).
+ * - nodeNestloop.h: unchanged.
  *
  * ROSL ALGORITHM NOTES:
- *   R (outer) is consumed in M-blocks of ROSL_M_LIM tuples; for each M-block
- *   all of S (inner) is scanned in K-blocks of ROSL_K_LIM tuples.  Each
- *   (M-block, K-block) round draws an exploit cache of unique outer tuples
- *   from a reward-weighted, epsilon-smoothed distribution and probes it
- *   against the K-block, emitting matching rows directly.  Cache fill is one
- *   cumulative-probability pass plus a binary search per draw; deduplication
- *   is a sort of the drawn indices and a single linear pass.  probe_ci and
- *   probe_kj are resume cursors so PH_PROBE can yield one row per call.
- *   Assumes a non-parameterised inner (nestParams == NIL) and targets
- *   INNER-join cardinality.
+ * R (outer) is consumed in M-blocks of ROSL_M_LIM tuples; for each M-block
+ * all of S (inner) is scanned in K-blocks of ROSL_K_LIM tuples.  Each
+ * (M-block, K-block) round draws an exploit cache of unique outer tuples
+ * from a reward-weighted, epsilon-smoothed distribution and probes it
+ * against the K-block, emitting matching rows directly.  Cache fill is one
+ * cumulative-probability pass plus a binary search per draw; deduplication
+ * is a sort of the drawn indices and a single linear pass.  probe_ci and
+ * probe_kj are resume cursors so PH_PROBE can yield one row per call.
+ * Assumes a non-parameterised inner (nestParams == NIL) and targets
+ * INNER-join cardinality.
  *-------------------------------------------------------------------------
  */
 
@@ -62,6 +62,7 @@
 #include "miscadmin.h"
 #include "nodes/bitmapset.h"
 #include "utils/memutils.h"
+#include "utils/timestamp.h"
 
 /*
  * GUC.  Defined here, registered in src/backend/utils/misc/guc.c.  Default
@@ -73,6 +74,17 @@ bool		enable_rosl = false;
 #define ROSL_M_LIM			1588	/* outer (R) tuples per M-block          */
 #define ROSL_K_LIM			1588	/* inner (S) tuples per K-block          */
 #define ROSL_EXP_CACHE_LIM	529		/* with-replacement draws per round (L)  */
+#define ROSL_EPSILON_FLOOR  0.5    /* Minimum exploration threshold         */
+
+/*
+ * Per-round trajectory is buffered in C and dumped once at executor teardown
+ * (see PrintRoslCounters), Saketh-style -- nothing is emitted mid-stream, so
+ * the client never has to parse a NOTICE to recover accuracy or timing.  This
+ * caps how many rounds we retain; if a run exceeds it we keep the first
+ * ROSL_TRAJ_CAP rounds and flag truncation in the final dump.  At ~64 bytes a
+ * row this is a few MB, comfortably inside the backend's memory budget.
+ */
+#define ROSL_TRAJ_CAP		1000000	/* max per-round trajectory rows retained */
 
 /* State-machine phases for the streaming ROSL driver. */
 typedef enum RoslPhase
@@ -128,6 +140,26 @@ typedef struct RoslJoinState
 	long		rounds;
 	long		t_steps;			/* total predicate evaluations            */
 	long		sample_matches;		/* cache matches observed so far          */
+
+	/*
+	 * Per-round trajectory, buffered in C and dumped once at teardown.
+	 * Replaces the old per-round elog(NOTICE) that the Python client used to
+	 * parse off the wire mid-stream.  Each array is [ROSL_TRAJ_CAP]; index
+	 * traj_count is the next free slot.  Parallel arrays (rather than an array
+	 * of structs) keep the dump loop trivial and avoid a second typedef.
+	 */
+	long	   *traj_round;			/* round number (1-based)                 */
+	double	   *traj_mean_per_pair;	/* mu_hat at this round                   */
+	double	   *traj_est_join;		/* J_hat at this round                    */
+	double	   *traj_pairs_seen;	/* est_den (cumulative Mn*Kn)             */
+	long	   *traj_sample_matches;/* cumulative sample_matches at this round */
+	double	   *traj_elapsed_ms;	/* ms from first-row start to this round  */
+	int			traj_count;			/* rounds recorded so far                 */
+	bool		traj_truncated;		/* set if we hit ROSL_TRAJ_CAP            */
+
+	/* timing anchors (in-C, source-measured -- not libpq flush time) */
+	TimestampTz	t_start;			/* set when the first M-block is loaded   */
+	bool		t_started;			/* whether t_start has been set yet       */
 } RoslJoinState;
 
 
@@ -213,8 +245,8 @@ load_inner_block(RoslJoinState *st, PlanState *innerPlan)
  * Custom epsilon-greedy smoothing over the current M-block, using the rewards
  * accumulated so far in this M-block and the current epsilon:
  *
- *     p(t) = (1-eps) * r(t)/R_total + eps/|A|     if r(t) > 0
- *          = eps/|A|                              otherwise
+ * p(t) = (1-eps) * r(t)/R_total + eps/|A|     if r(t) > 0
+ * = eps/|A|                              otherwise
  *
  * Normalised to a proper distribution.  Normalisation also gives the correct
  * fallback when no tuple has positive reward yet (every p is eps/|A|, which
@@ -310,11 +342,11 @@ draw_and_dedup_cache(RoslJoinState *st)
  * Horvitz-Thompson success estimate to the running totals and log the current
  * mean-per-pair and extrapolated join-size estimate.
  *
- *     Y_hat_round = sum over cached t of  round_match(t) / pi(t)
- *     pi(t)       = 1 - (1 - p(t))^L
- *     est_den    += Mn * Kn          (FULL-slice pairs)
- *     mu_hat      = est_num / est_den
- *     J_hat       = mu_hat * |R| * |S|
+ * Y_hat_round = sum over cached t of  round_match(t) / pi(t)
+ * pi(t)       = 1 - (1 - p(t))^L
+ * est_den    += Mn * Kn          (FULL-slice pairs)
+ * mu_hat      = est_num / est_den
+ * J_hat       = mu_hat * |R| * |S|
  */
 static void
 finalize_round(RoslJoinState *st)
@@ -341,10 +373,46 @@ finalize_round(RoslJoinState *st)
 		double		mu = st->est_num / st->est_den;
 		double		Jhat = mu * st->num_outer * st->num_inner;
 
-		elog(INFO,
-			 "ROSL estimate: mean_per_pair=%.10f est_join=%.2f "
-			 "(round=%ld pairs_seen=%.0f sample_matches=%ld)",
-			 mu, Jhat, st->rounds, st->est_den, st->sample_matches);
+		/*
+		 * Record this round into the in-C trajectory buffer instead of
+		 * emitting a mid-stream NOTICE.  Nothing crosses the wire here: the
+		 * client drains rows only, and the whole trajectory is dumped once at
+		 * teardown by PrintRoslCounters().  This is the Saketh communication
+		 * model -- measurement delivery is fully decoupled from row delivery,
+		 * so a server-side cursor can never deadlock on notice flushing.
+		 *
+		 * Timing is taken here, at the source, via GetCurrentTimestamp()
+		 * relative to t_start (set when the first M-block loaded).  This is
+		 * strictly better than the old client-side _TimestampedNotices hack,
+		 * which could only observe when libpq happened to flush the NOTICE.
+		 */
+		if (st->traj_count < ROSL_TRAJ_CAP)
+		{
+			double		elapsed_ms = 0.0;
+
+			if (st->t_started)
+			{
+				/*
+				 * TimestampTz is an int64 count of microseconds; subtracting
+				 * two of them directly avoids depending on the platform's
+				 * TimestampDifference() out-param signature (long vs int64),
+				 * which has changed across PG versions.
+				 */
+				TimestampTz now = GetCurrentTimestamp();
+
+				elapsed_ms = (double) (now - st->t_start) / 1000.0;
+			}
+
+			st->traj_round[st->traj_count]          = st->rounds;
+			st->traj_mean_per_pair[st->traj_count]  = mu;
+			st->traj_est_join[st->traj_count]       = Jhat;
+			st->traj_pairs_seen[st->traj_count]     = st->est_den;
+			st->traj_sample_matches[st->traj_count] = st->sample_matches;
+			st->traj_elapsed_ms[st->traj_count]     = elapsed_ms;
+			st->traj_count++;
+		}
+		else
+			st->traj_truncated = true;
 	}
 }
 
@@ -388,6 +456,18 @@ rosl_state_init(NestLoopState *node)
 	st->cum = (double *) palloc(sizeof(double) * st->m_lim);
 	st->interim = (int *) palloc(sizeof(int) * st->exp_cache_lim);
 	st->cache_midx = (int *) palloc(sizeof(int) * st->exp_cache_lim);
+
+	/* per-round trajectory buffers (dumped once at teardown) */
+	st->traj_round          = (long *)   palloc(sizeof(long) * ROSL_TRAJ_CAP);
+	st->traj_mean_per_pair  = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
+	st->traj_est_join       = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
+	st->traj_pairs_seen     = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
+	st->traj_sample_matches = (long *)   palloc(sizeof(long) * ROSL_TRAJ_CAP);
+	st->traj_elapsed_ms     = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
+	st->traj_count          = 0;
+	st->traj_truncated      = false;
+
+	st->t_started = false;
 
 	st->epsilon = 1.0;
 	st->phase = PH_NEW_MBLOCK;
@@ -544,31 +624,27 @@ ExecRoslNestLoop(NestLoopState *node)
 					{
 						/*
 						 * Outer exhausted: no further M-blocks, so no further
-						 * rounds will ever run.  This is the one point where
-						 * we know for certain that this call -- and every
-						 * call after it -- returns NULL.  Emit a one-time
-						 * NOTICE here (rather than waiting for
-						 * ExecEndNestLoop, which only runs at executor
-						 * teardown) so an external test harness can detect
-						 * completion as soon as it happens.
+						 * rounds will ever run.  We do NOT emit anything here:
+						 * matching Saketh's model, the only mid-stream signal
+						 * the client gets is the cursor returning NULL.  The
+						 * full estimate + trajectory is dumped once at teardown
+						 * (PrintRoslCounters in ExecEndNestLoop).  Completion is
+						 * therefore detected client-side purely by fetchone()
+						 * returning None -- no NOTICE parsing, no deadlock.
 						 */
-						if (st->est_den > 0.0)
-						{
-							double		mu = st->est_num / st->est_den;
-							double		Jhat = mu * st->num_outer * st->num_inner;
-
-							elog(NOTICE,
-								 "ROSL done: sampling join complete, no more rows "
-								 "(rounds=%ld sample_matches=%ld est_join=%.2f)",
-								 st->rounds, st->sample_matches, Jhat);
-						}
-						else
-							elog(NOTICE,
-								 "ROSL done: sampling join complete, no more rows "
-								 "(outer relation was empty, rounds=0)");
-
 						st->phase = PH_DONE;
 						break;
+					}
+
+					/*
+					 * Anchor per-round timing at the first non-empty M-block,
+					 * i.e. the moment real work begins.  Measured in C so it is
+					 * independent of when the client fetches or libpq flushes.
+					 */
+					if (!st->t_started)
+					{
+						st->t_start = GetCurrentTimestamp();
+						st->t_started = true;
 					}
 
 					/* fresh M-block: zero rewards, full exploration, rewind S */
@@ -655,7 +731,10 @@ ExecRoslNestLoop(NestLoopState *node)
 
 					/* Round complete: fold HT estimate, decay epsilon, next K */
 					finalize_round(st);
-					st->epsilon /= 2.0;
+					
+					/* Asymptotic decay: epsilon safely approaches the floor instead of 0 */
+					st->epsilon = (st->epsilon + ROSL_EPSILON_FLOOR) / 2.0;
+					
 					st->probe_ci = 0;
 					st->probe_kj = 0;
 					st->phase = PH_NEW_SBLOCK;
@@ -769,6 +848,70 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 
 
 /* ----------------------------------------------------------------
+ *		PrintRoslCounters  --  dump the full ROSL trajectory + summary
+ *
+ *		The single point of measurement communication, called once from
+ *		ExecEndNestLoop at executor teardown.  Mirrors Saketh's
+ *		PrintNodeCounters: everything goes to the server log via elog(INFO),
+ *		nothing to the client mid-stream.  A test harness recovers accuracy
+ *		and timing by parsing the *server log* after the cursor has drained,
+ *		never from the row/notice stream during the join.
+ *
+ *		Two record kinds are emitted, both prefixed so they are easy to grep:
+ *		  ROSL_TRAJ  -- one line per round (round, mu, est_join, pairs_seen,
+ *		                sample_matches, elapsed_ms)
+ *		  ROSL_SUMM  -- one final summary line (final est_join, total rounds,
+ *		                total sample_matches, total pairs_seen, t_steps)
+ * ----------------------------------------------------------------
+ */
+static void
+PrintRoslCounters(RoslJoinState *st)
+{
+	int			i;
+
+	if (st == NULL)
+		return;
+
+	/* per-round trajectory: one INFO line per recorded round */
+	for (i = 0; i < st->traj_count; i++)
+	{
+		elog(INFO,
+			 "ROSL_TRAJ round=%ld mean_per_pair=%.10f est_join=%.2f "
+			 "pairs_seen=%.0f sample_matches=%ld elapsed_ms=%.3f",
+			 st->traj_round[i],
+			 st->traj_mean_per_pair[i],
+			 st->traj_est_join[i],
+			 st->traj_pairs_seen[i],
+			 st->traj_sample_matches[i],
+			 st->traj_elapsed_ms[i]);
+	}
+
+	if (st->traj_truncated)
+		elog(INFO,
+			 "ROSL_TRAJ truncated: more than %d rounds; trajectory capped "
+			 "(use a smaller scale factor)", ROSL_TRAJ_CAP);
+
+	/* final summary */
+	if (st->est_den > 0.0)
+	{
+		double		mu = st->est_num / st->est_den;
+		double		est_join = mu * st->num_outer * st->num_inner;
+
+		elog(INFO,
+			 "ROSL_SUMM final_est_join=%.2f rounds=%ld sample_matches=%ld "
+			 "pairs_seen=%.0f t_steps=%ld num_outer=%.0f num_inner=%.0f",
+			 est_join, st->rounds, st->sample_matches, st->est_den,
+			 st->t_steps, st->num_outer, st->num_inner);
+	}
+	else
+		elog(INFO,
+			 "ROSL_SUMM final_est_join=0.00 rounds=0 sample_matches=%ld "
+			 "(no completed rounds: outer empty or join produced no pairs)",
+			 st->sample_matches);
+}
+
+
+/* ----------------------------------------------------------------
  *		ExecEndNestLoop
  * ----------------------------------------------------------------
  */
@@ -790,17 +933,12 @@ ExecEndNestLoop(NestLoopState *node)
 	{
 		int			i;
 
-		if (st->est_den > 0.0)
-		{
-			double		mu = st->est_num / st->est_den;
-			double		est_join = mu * st->num_outer * st->num_inner;
-
-			elog(INFO,
-				 "ROSL final: est_join=%.2f "
-				 "(rounds=%ld sample_matches=%ld pairs_seen=%.0f)",
-				 est_join,
-				 st->rounds, st->sample_matches, st->est_den);
-		}
+		/*
+		 * Single point of measurement communication: dump the full per-round
+		 * trajectory and final summary to the server log, once, at teardown.
+		 * Nothing was emitted to the client during the join (Saketh model).
+		 */
+		PrintRoslCounters(st);
 
 		for (i = 0; i < st->m_lim; i++)
 			if (!TupIsNull(st->m_slots[i]))
@@ -817,6 +955,12 @@ ExecEndNestLoop(NestLoopState *node)
 		pfree(st->cum);
 		pfree(st->interim);
 		pfree(st->cache_midx);
+		pfree(st->traj_round);
+		pfree(st->traj_mean_per_pair);
+		pfree(st->traj_est_join);
+		pfree(st->traj_pairs_seen);
+		pfree(st->traj_sample_matches);
+		pfree(st->traj_elapsed_ms);
 		pfree(st);
 		node->rosl = NULL;
 	}
@@ -865,5 +1009,10 @@ ExecReScanNestLoop(NestLoopState *node)
 		st->rounds = 0;
 		st->t_steps = 0;
 		st->sample_matches = 0;
+
+		/* fresh run: discard prior trajectory and re-anchor timing */
+		st->traj_count = 0;
+		st->traj_truncated = false;
+		st->t_started = false;
 	}
 }

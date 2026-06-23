@@ -17,6 +17,31 @@ per-repeat timing already inside each job's own CSVs.
 Each worker's stdout/stderr is captured into a .nohup.log file in results_dir,
 matching the convention from tpch_manager.py.
 
+COMMUNICATION MODEL (log-only; see worker.py for detail)
+--------------------------------------------------------
+The ROSL C node dumps its per-round trajectory + summary to the PostgreSQL
+SERVER LOG at executor teardown (elog INFO: ROSL_TRAJ / ROSL_SUMM); each worker
+reads back only its own statement's lines via backend-PID + unique-sentinel
+filtering.  This requires the alt cluster to have:
+    logging_collector = on        (managed logfile exists on disk)
+    log_min_messages  = info      (INFO actually reaches the log)
+    log_line_prefix   includes %p (per-backend PID attribution)
+The worker sets log_min_messages=info per session, but logging_collector is a
+restart-only GUC and must already be on.  No measurement crosses the client
+connection (client_min_messages is kept at warning), so the named-cursor
+notice-flush deadlock from the previous design is structurally impossible.
+
+LOG ROTATION ON LONG RUNS
+-------------------------
+Long-draining jobs (large scale, Q9/Q11) can run long enough that the collector
+rotates the logfile mid-run (defaults: log_rotation_size=10MB, log_rotation_age
+=1d), so the teardown ROSL_TRAJ/ROSL_SUMM dump lands in a NEWER file.  The
+worker now follows rotation (it re-reads sibling log files touched since the run
+started), but for the cleanest behaviour on a big sweep, pin a single logfile:
+    log_rotation_size = 0
+    log_rotation_age  = 0
+then SELECT pg_reload_conf();  (these are SIGHUP-level, no restart needed).
+
 Usage:
     nohup python3 test/tpch_manager.py [results_dir] [--workers N] [--limit] > [logfile_name] 2>&1 &
 
@@ -35,8 +60,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 # ── sweep parameters (must match worker.py) ───────────────────
 SIZES    = ["01", "1"]              # tpch{size}g databases; add "10" if available
-ZVALS    = ["0", "1", "1_5"]       # uniform -> increasingly skewed
-SHUFFLES = ["1", "2", "3"]         # repeated data layouts (variance)
+# SIZES    = ["01", "1", "10"]              # tpch{size}g databases; add "10" if available
+ZVALS    = ["0", "1"]       # uniform -> increasingly skewed
+# ZVALS    = ["0", "1", "1_5"]       # uniform -> increasingly skewed
+SHUFFLES = ["1","2", "3"]         # repeated data layouts (variance)
 QUERIES  = ["Q9", "Q10", "Q11", "Q12", "Q15"]
 
 # ── per-query output limits (edit here to adjust; must stay in sync with worker) ──
