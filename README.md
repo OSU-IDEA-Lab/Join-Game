@@ -1,7 +1,7 @@
-# ROSL — Reward-Ordered Sampling Loop Join
+# ROSL — Alternative Version<br>Fixed Number of Deterministic Exploration Probes<br>Epsilon Greedy on Observed Joinability in Exploitation
 
 A sampling-based join operator for PostgreSQL that replaces the inner loop of
-the executor's nested-loop node with a reward-guided (bandit-style) sampler, and
+the executor's nested-loop node with a joinability-guided (bandit-style) sampler, and
 produces a **running estimate of the total join size** as it streams matching
 rows. ROSL trades exactness for early, progressively-accurate estimates: it can
 report an approximate `|R ⋈ S|` long before a full join would finish.
@@ -14,23 +14,28 @@ communicates results and how the benchmark harness consumes them.
 
 ## 1. What ROSL does
 
-Given outer relation `R` and inner relation `S`, ROSL:
+Given outer relation `R` and inner relation `S`, ROSL operates in two phases
+per M-block:
 
-1. Consumes `R` in **M-blocks** of `m_lim` tuples. For each M-block it scans all
-   of `S` in **K-blocks** of `k_lim` tuples. Each (M-block, K-block) pair is a
-   **round**.
-2. Within a round it builds a non-uniform probability distribution over the
-   M-block's tuples from accumulated **rewards** (a tuple's reward is how many
-   matches it has produced so far), blended with an exploration term controlled
-   by `ε`.
-3. Draws `exp_cache_lim` tuples **with replacement** from that distribution,
-   deduplicates them into an **exploit cache**, and probes the cache against the
-   current K-block, emitting matches as output rows.
-4. Updates rewards and, in the estimator variant, folds a per-round
-   **Horvitz–Thompson** estimate into a running total to produce `Ĵ`, the
+1. Consumes `R` in **M-blocks** of `m_lim` tuples. On the first M-block, all
+   of `S` is **materialised once** into a shared buffer. The first `n_probes`
+   tuples form the fixed **exploration prefix P**; the remainder is the
+   **exploitation body B = S \ P** (`|B| = |S| − n_probes`).
+2. **Exploration (region R × P):** every tuple `t` in the M-block is probed
+   against all `n_probes` prefix tuples. Because `a(t) = n_probes` is the same
+   known constant for every tuple, the empirical join rate `q(t) = r(t) /
+   n_probes` is unambiguous with no untried-tuple edge case. These pairs are
+   observed with probability 1 — each match is emitted and tallied exactly into
+   `expl_exact`; no inverse-probability weighting is applied.
+3. **Exploitation (region R × B):** with `q(t)` frozen from exploration and
+   `ε` fixed as a hyperparameter, an exploit cache is drawn from the
+   joinability-weighted distribution once per K-block and probed against each
+   body K-block in turn, emitting matches as output rows.
+4. A per-round **Horvitz–Thompson** estimate of the body region is folded into
+   a running total; combined with `expl_exact` it gives `Ĵ`, the two-region
    estimated join size.
 
-The bandit logic concentrates probing on tuples that have matched before
+The bandit logic concentrates probing on tuples with high empirical joinability
 (exploitation) while retaining a floor of random exploration so every tuple
 keeps a non-zero chance of being sampled.
 
@@ -38,12 +43,13 @@ keeps a non-zero chance of being sampled.
 
 ## 2. The estimator (Horvitz–Thompson)
 
-ROSL's estimate is unbiased-by-design through inverse-probability weighting.
+ROSL's estimate is unbiased-by-design through inverse-probability weighting on
+the body region only; the exploration region is counted exactly.
 
-### Per-round estimate
+### Per-round estimate (body only)
 
-For round `(i, j)` — M-block `Mᵢ` against K-block `Kⱼ` — with deduplicated
-exploit cache `Cᵢⱼ`:
+For exploitation round `(i, j)` — M-block `Mᵢ` against body K-block `Kⱼ` —
+with deduplicated exploit cache `Cᵢⱼ`:
 
 ```
 Ŷ_ij = Σ_{t ∈ Cᵢⱼ}  ( Σ_{s ∈ Kⱼ} 1[t ⋈ s] )  /  π_ij(t)
@@ -67,62 +73,62 @@ across cache tuples. The single-draw distribution `p` is normalized to sum to 1
 over the M-block before sampling; `π` then follows directly from the binomial
 "drawn at least once" probability.
 
-### Pooling rounds into a running estimate
+### Two-region running estimate
 
-Because outer blocks partition `R` and each is probed against all of `S`, the
-slices `Mᵢ × Kⱼ` are disjoint and tile `R × S`. The per-round estimates pool
-into a single mean, scaled by the known pair count:
+`R × S` is partitioned into two disjoint regions. The prefix region `R × P` is
+observed in full (M-blocks tile `R`; each tuple is probed against all of `P`),
+so its matches are counted exactly. Only the body region `R × B` requires
+statistical estimation. The running total is:
 
 ```
-μ̂ = ( Σ_{(i,j) ∈ P} Ŷ_ij ) / ( Σ_{(i,j) ∈ P} |Mᵢ|·|Kⱼ| )
-Ĵ = μ̂ · |R| · |S|
+μ̂_B = ( Σ_{(i,j) ∈ P} Ŷ_ij ) / ( Σ_{(i,j) ∈ P} |Mᵢ|·|Kⱼ| )
+Ĵ   = expl_exact  +  μ̂_B · |R| · |B|
 ```
 
-`μ̂` is the estimated mean join successes per tuple-pair over all pairs processed
-so far; `Ĵ` is the running estimate of `|R ⋈ S|`. No per-block weight is needed
-beyond the pair counts already in the denominator.
+`μ̂_B` is the estimated mean join successes per body tuple-pair over all body
+rounds processed so far; `|B| = |S| − n_probes` is the body size. Pairing the
+body-only denominator with the body-only multiplier `|B|` (rather than `|S|`)
+keeps the estimate unbiased; scaling the body mean by the full `|S|` would
+double-count the prefix. Removing `R × P` from the estimated population also
+reduces variance, since those `n_probes · |R|` prefix pairs contribute exact
+outcomes and no estimator noise.
 
 ### Sampling distribution (custom ε-smoothing)
 
-For each tuple `t` in M-block `A` (with `A⁺` the tuples having positive reward
-and `R_total = Σ_{t ∈ A⁺} r(t)`):
+Because every tuple in the M-block is probed exactly `n_probes` times during
+exploration, `a(t) = n_probes` is a known positive constant and the average
+joinability reduces to:
 
 ```
-p(t) = (1 − ε)·r(t)/R_total + ε/|A|     if t ∈ A⁺
-p(t) = ε/|A|                            otherwise
+q(t) = r(t) / n_probes
 ```
 
-This is an exploitation term (reward-proportional) blended with a uniform
-exploration term of mass `ε`. The construction already sums to 1 over `A`.
-
-### Epsilon floor
-
-`ε` starts at 1 (full exploration) at each new M-block and decays **toward a
-floor** at the end of every round:
+There is no untried-tuple edge case. With `Q_total = Σ_{t ∈ A} q(t)`:
 
 ```
-ε ← (ε + ε_floor) / 2
+p(t) = (1 − ε)·q(t)/Q_total + ε/|A|     if Q_total > 0
+p(t) = 1/|A|                             if Q_total = 0
 ```
 
-This is asymptotic: `ε` approaches but never drops below `ε_floor ∈ (0, 1]`.
-Holding `ε` above the floor keeps every `p(t) ≥ ε_floor/|A|`, so no tuple's
-selection probability collapses toward 0. This matters for the estimator: a
-vanishing `p(t)` would make `π(t)` saturate and the inverse-probability weight
-`1/π(t)` blow up, producing large spikes whenever a near-zero-probability tuple
-happens to be selected and match. The floor bounds the weights and keeps the
-estimate stable in late, exploit-heavy rounds.
+`Q_total = 0` arises when no tuple joined during exploration; the distribution
+falls back to uniform since there is no joinability signal. `q(t)` and `ε` are
+both **fixed for the entire M-block** — `q(t)` is frozen when exploration ends
+and `ε` is a hyperparameter, not a decaying schedule — so every exploitation
+round within one M-block draws from the identical distribution.
+
+### Fixed epsilon
+
+`ε` is a single fixed hyperparameter (`ROSL_EPSILON`) shared across all rounds
+and all M-blocks. There is no decay schedule. Keeping `ε > 0` guarantees every
+`p(t) ≥ ε/|A|`, bounding the inverse-probability weights and preventing
+estimator spikes from near-zero-probability tuples.
 
 **Known limitations of the current sampler** (from the design notes):
 
-- Never-sampled tuples are currently treated as zero-reward tuples. A genuinely
-  high-match tuple that isn't picked early by exploration becomes less likely to
-  be sampled later — the procedure tends to re-select tuples it has already
-  selected. A planned improvement is to give never-sampled tuples a separate
-  (optimistic) probability mass, distinct from observed zero-reward tuples.
-- The distribution is rebuilt every round rather than fixed once after an
-  exploration phase. This may let exploitation track reward more closely as
-  trials accumulate, but carries a per-round cost whose justification is still
-  under investigation.
+- The distribution is rebuilt every K-block round rather than stored once. In
+  the fixed-probe design `q(t)` and `ε` are both frozen, so each rebuild
+  produces the identical distribution; the cost is O(|M|) per round and small
+  relative to probing, but the recomputation itself is redundant.
 
 ---
 
@@ -147,27 +153,37 @@ GUC requires the usual entry in `guc.c`.
 
 Defined at the top of the file:
 
-| Constant              | Value     | Meaning                                              |
-|-----------------------|-----------|------------------------------------------------------|
-| `ROSL_M_LIM`          | 1588      | Outer (R) tuples per M-block                          |
-| `ROSL_K_LIM`          | 1588      | Inner (S) tuples per K-block                          |
-| `ROSL_EXP_CACHE_LIM`  | 529       | With-replacement draws per round (`L`)                |
-| `ROSL_EPSILON_FLOOR`  | 0.5       | Minimum exploration threshold (`ε_floor`)             |
-| `ROSL_TRAJ_CAP`       | 1,000,000 | Max per-round trajectory rows retained for the dump   |
+| Constant              | Value     | Meaning                                                      |
+|-----------------------|-----------|--------------------------------------------------------------|
+| `ROSL_M_LIM`          | 1588      | Outer (R) tuples per M-block                                  |
+| `ROSL_K_LIM`          | 1588      | Inner (S) body tuples per K-block                             |
+| `ROSL_EXP_CACHE_LIM`  | 529       | With-replacement draws per exploitation round (`L`)           |
+| `ROSL_N_PROBES`       | 100       | Shared exploration prefix size; `a(t)` for every M-tuple      |
+| `ROSL_EPSILON`        | 0.2       | Fixed exploration mass (`ε` hyperparameter)                   |
+| `ROSL_TRAJ_CAP`       | 1,000,000 | Max per-round trajectory rows retained for the dump           |
 
 ### State machine
 
 A single `ExecNestLoop` call advances a small phase machine and yields at most
-one row per call (resume cursors let a round span many calls):
+one row per call (resume cursors let each phase span many calls):
 
 - **`PH_NEW_MBLOCK`** — load the next outer block; if `R` is exhausted, go to
-  `PH_DONE`. On the first non-empty block, the per-round timing clock starts.
-- **`PH_NEW_SBLOCK`** — load the next inner block; build the distribution from
-  current rewards and `ε`; draw and deduplicate the exploit cache; reset
+  `PH_DONE`. On the first M-block, materialise all of `S` into the shared
+  buffer (reused unchanged by every subsequent M-block); zero `reward[]` for
+  the new block; transition to `PH_EXPLORE`.
+- **`PH_EXPLORE`** — probe every M-tuple against the shared prefix
+  `s_slots[0 .. n_probes)`, incrementing `r(t)` on each join and accumulating
+  exact matches into `expl_exact`. Resume cursors `expl_mi` / `expl_pi` let
+  the phase yield one row per call. When all M-tuples are done, `q(t)` is
+  frozen and the body scan begins at `k_start = n_probes`.
+- **`PH_NEW_SBLOCK`** — take the next contiguous K-block from the body
+  (`s_slots[k_start .. k_start + k_count)`); build the distribution from
+  frozen `q(t)` and fixed `ε`; draw and deduplicate the exploit cache; reset
   per-round match counts.
-- **`PH_PROBE`** — probe the exploit cache against the K-block, emitting matches
-  one per call. When the round's last pair is probed, fold the Horvitz–Thompson
-  estimate (`finalize_round`), decay `ε`, advance to the next K-block.
+- **`PH_PROBE`** — probe the exploit cache against the body K-block, emitting
+  matches one per call. When the round is complete, fold the Horvitz–Thompson
+  body estimate (`finalize_round`) and advance `k_start` to the next K-block.
+  `ε` is fixed; there is no decay step.
 - **`PH_DONE`** — outer relation exhausted; the cursor returns NULL.
 
 Completion is signalled to the client purely by the cursor returning NULL — no
@@ -191,11 +207,14 @@ impossible.
 
 ### Log line formats
 
-Per-round trajectory (one line per round):
+Per-round trajectory (one line per exploitation round):
 
 ```
-ROSL_TRAJ round=<n> mean_per_pair=<μ̂> est_join=<Ĵ> pairs_seen=<den> sample_matches=<m> elapsed_ms=<t>
+ROSL_TRAJ round=<n> mean_per_pair=<μ̂_B> est_join=<Ĵ> pairs_seen=<den> sample_matches=<m> elapsed_ms=<t>
 ```
+
+`mean_per_pair` records `μ̂_B` — the HT mean over body pairs only. `est_join`
+is the two-region total `expl_exact + μ̂_B · |R| · |B|`.
 
 Final summary (one line at teardown):
 
@@ -281,6 +300,7 @@ pct_of_truth_output
 `ratio = est_join / truth` and `rel_error = (est_join − truth)/truth` are the
 accuracy columns; `pct_of_truth_output` (fraction of the true join output
 sampled so far) is the natural x-axis for accuracy-vs-progress charts.
+`mean_per_pair` is `μ̂_B` (body mean); `est_join` is the two-region total.
 
 ---
 
