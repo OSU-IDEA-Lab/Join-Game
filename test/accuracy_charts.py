@@ -135,9 +135,15 @@ def main():
             x = s_df['x_pct'].to_numpy()
             err = s_df['err_pct'].to_numpy()
 
+            # Final (most-converged) error: the error at the largest x, i.e. the
+            # estimate after the most output has been sampled.  Shown in the
+            # legend so each line's endpoint is readable despite log-log jitter.
+            final_err = err[-1] if len(err) else float('nan')
+
             c = colors[i % len(colors)]
             plt.plot(x, err, f'{c}:', marker='.', markersize=5,
-                     label=f'Shuffle {shuff}', alpha=0.5, zorder=2)
+                     label=f'Shuffle {shuff} (final error of {final_err:.3g}%)',
+                     alpha=0.5, zorder=2)
 
             # Interpolate onto the shared grid for averaging across shuffles.
             xu, idx = np.unique(x, return_index=True)
@@ -158,7 +164,8 @@ def main():
                     y_avg[col_has_data] = np.nanmean(stack[:, col_has_data], axis=0)
             valid = ~np.isnan(y_avg)
             if np.any(valid):
-                lbl = f'Average ({len(shuffles)} Shuffles)'
+                final_avg = y_avg[valid][-1]   # average error at the largest shared x
+                lbl = f'Average ({len(shuffles)} Shuffles, final {final_avg:.3g}%)'
                 plt.plot(interp_x[valid], y_avg[valid], 'k-',
                          linewidth=2.5, label=lbl, zorder=3)
 
