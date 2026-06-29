@@ -10,7 +10,7 @@ import os
 # Database connection details
 USER = 'jinjo'
 HOST = '/tmp/'
-PORT = '1531'
+PORT = '1532'
 
 # Parameters setting for the join algorithm
 SIGMA = 0.99

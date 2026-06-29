@@ -10,7 +10,7 @@ def get_queries(q_name, val, shuff, limit):
     schema = f"z{val}_shuff{shuff}"
     sql = ""
     num_relations = 0
-    
+
     # Determine the number of relations upfront
     if q_name in ['Q9', 'Q10', 'Q11', 'Q12', 'Q15']:
         num_relations = 2
@@ -22,25 +22,33 @@ def get_queries(q_name, val, shuff, limit):
     if limit:
         target_pct = 100.00
 
-        # 2R with output limits per paper as of 5/27/2026
+        # 2R with output limits per JoinLearning_SIGMOD_25 (same as JoinGame_PVLDB_25; missing from JoinGame-SIGMOD-24-bk)
         if q_name == 'Q9': sql = f"select * from {schema}.partsupp, {schema}.lineitem where ps_partkey = l_partkey LIMIT 221700;"
-        elif q_name == 'Q10': sql = f"select * from {schema}.customer, {schema}.orders where c_custkey = o_custkey LIMIT 13000;"
         elif q_name == 'Q11': sql = f"select * from {schema}.orders, {schema}.lineitem where o_orderdate = l_shipdate LIMIT 327624700;"
+
+        # 2R with output limits per JoinLearning_SIGMOD_25 (same as JoinGame_PVLDB_25; less than JoinGame-SIGMOD-24-bk)
+        elif q_name == 'Q10': sql = f"select * from {schema}.customer, {schema}.orders where c_custkey = o_custkey LIMIT 13000;"
         elif q_name == 'Q15': sql = f"select * from {schema}.supplier, {schema}.lineitem where s_suppkey = l_suppkey LIMIT 43800;"
+
+        # 2R with output limits per JoinGame-SIGMOD-24-bk (missing from JoinLearning_SIGMOD_25 and JoinGame_PVLDB_25)
         elif q_name == 'Q12': sql = f"select * from {schema}.orders, {schema}.lineitem where o_orderkey = l_orderkey LIMIT 1000;"
-        
-        # 3R with output limits per paper as of 6/2/2026
-        elif q_name == 'Q2': sql = f"select * from {schema}.part, {schema}.supplier, {schema}.partsupp where p_partkey = ps_partkey and s_suppkey = ps_suppkey LIMIT 100000;"
-        elif q_name == 'Q3': sql = f"select * from {schema}.customer, {schema}.orders, {schema}.lineitem where c_custkey = o_custkey and o_orderkey = l_orderkey LIMIT 10000;"
+
+        # 3R with output limits per JoinLearning_SIGMOD_25 (same as JoinGame_PVLDB_25; less than JoinGame-SIGMOD-24-bk)
+        elif q_name == 'Q2': sql = f"select * from {schema}.part, {schema}.supplier, {schema}.partsupp where p_partkey = ps_partkey and s_suppkey = ps_suppkey LIMIT 5800;"
+
+        # 3R with output limits per JoinGame-SIGMOD-24-bk (missing from JoinLearning_SIGMOD_25 and JoinGame_PVLDB_25)
+        elif q_name == 'Q3': sql = f"select * from {schema}.customer, {schema}.orders, {schema}.lineitem where c_custkey = o_custkey and o_orderkey = l_orderkey LIMIT 350;"
         elif q_name == 'Q5': sql = f"select * from {schema}.orders, {schema}.supplier, {schema}.lineitem where s_suppkey = l_suppkey and o_orderkey = l_orderkey LIMIT 4000;"
 
-        # 3R without output limits, since querries were missing from SIGMOD paper as of 6/2/2026
-        elif q_name == 'Q8': 
-            sql = f"select * from {schema}.part, {schema}.supplier, {schema}.lineitem where p_partkey = l_partkey and s_suppkey = l_suppkey ;"
-            target_pct = 1.00
+        # 3R with output limits per JoinLearning_SIGMOD_25 (same as JoinGame_PVLDB_25; missing from JoinGame-SIGMOD-24-bk)
+        elif q_name == 'Q8': sql = f"select * from {schema}.part, {schema}.supplier, {schema}.lineitem where p_partkey = l_partkey and s_suppkey = l_suppkey LIMIT 43800;"
 
+        # 3R without output limits (missing from all three folders)
         elif q_name == 'Q9_3R': 
-            sql = f"select * from {schema}.supplier, {schema}.partsupp, {schema}.lineitem where s_suppkey = l_suppkey and ps_suppkey = l_suppkey ;"
+            sql = f"select * from {schema}.supplier, {schema}.partsupp, {schema}.lineitem where s_suppkey = l_suppkey and ps_suppkey = l_suppkey;"
+            target_pct = 1.00
+        elif q_name == 'test': 
+            sql = f"select * from {schema}.part, {schema}.supplier, {schema}.lineitem where l_suppkey = s_suppkey and l_partkey = p_partkey;"
             target_pct = 1.00
 
     else:
@@ -76,10 +84,11 @@ def run_worker(cmd, log_out):
 def manage(base_dir, apply_limits):
     sizes = ['10']
     zvals = ['0', '1']
-    work_mems = ['500MB']
+    work_mems = ['512MB']
     shuffles = ['1', '2', '3']
     
-    queries = ['Q2', 'Q3', 'Q5', 'Q8', 'Q9', 'Q9_3R', 'Q10', 'Q11', 'Q12', 'Q15']
+    queries = ['Q9', 'Q10', 'Q11', 'Q12', 'Q15']
+    # queries = ['Q2', 'Q3', 'Q5', 'Q8', 'Q9', 'Q9_3R', 'Q10', 'Q11', 'Q12', 'Q15']
 
     time_limit = "3600"
 
@@ -88,7 +97,7 @@ def manage(base_dir, apply_limits):
     
     base_name = base_dir if base_dir else "results"
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    with ThreadPoolExecutor(max_workers=10) as executor:
         for size, z, mem, q, shuff in itertools.product(sizes, zvals, work_mems, queries, shuffles):
             
             variations = get_queries(q, z, shuff, apply_limits)        
