@@ -22,8 +22,9 @@
  * on only for the experimental join queries you want
  * estimated:  SET enable_rosl = on;
  *
- * The ROSL path is two-phase (Deterministic Exploration with Fixed Probes,
- * global without-replacement, two-region estimate).
+ * VARIANT IMPLEMENTED HERE: Deterministic Exploration with Fixed Probes,
+ * global without-replacement, TWO-REGION estimate (progress doc section 5).
+ * This is the corrected Fixed-Probe baseline (see CORRECTIONS below).
  *
  *   SHARED PREFIX.  Before any M-block, all of S is materialised once and its
  *   first ROSL_N_PROBES tuples are designated the exploration prefix P.  Since
@@ -58,11 +59,50 @@
  *   Pairing a body-only denominator (est_den sums |M|*|K| over body blocks)
  *   with a body-only multiplier (|B|) keeps the estimate unbiased; removing
  *   R x P from the estimated population also lowers variance, since those
- *   n_probes*|R| pairs contribute exact outcomes and no estimator noise.
+ *   n_probes*|R| pairs contribute exact outcomes and no estimator noise.  Both
+ *   est_num and est_den are fixed by the block schedule (est_den deterministic),
+ *   so mu_hat_B is exactly mean-unbiased -- no ratio bias from early stopping.
  *
  * Matching pairs from both phases are emitted immediately (one per call via
  * resume cursors).  Only sampled rows are emitted; this is an approximate join
  * intended for cardinality estimation workloads.
+ *
+ * ============================ CORRECTIONS ============================
+ * This file fixes three weaknesses of the original Fixed-Probe draft:
+ *
+ *  (1) RNG.  Uses a per-state xorshift64* PRNG seeded from a mix of high-
+ *      resolution time, the backend PID, and the state pointer -- NOT process-
+ *      global rand()/srand(time()).  The old 1-second srand() seed handed
+ *      same-second workers (the concurrent harness launches many) IDENTICAL
+ *      "random" caches, correlating runs meant to be independent replicates and
+ *      biasing exactly the cross-run variance the experiment measures.
+ *
+ *  (2) PLAN-SHAPE GUARD.  ExecNestLoop falls back to the exact stock path
+ *      unless the join is a plain INNER join with a non-parameterised inner
+ *      (nestParams == NIL).  The ROSL path materialises S once and reuses it
+ *      (valid only for a fixed inner) and emits inner-join matches only, so
+ *      without the guard a parameterised nestloop or outer join chosen by the
+ *      planner would silently produce wrong results while the GUC is on.
+ *
+ *  (3) ACTUAL-COUNT POPULATIONS.  The extrapolation uses the ACTUAL table sizes
+ *      -- |S| = s_count (the relation is fully materialised, so this is exact)
+ *      and, for the final estimate, |R| = act_outer (every outer tuple is
+ *      consumed in M-blocks, so the running sum is exact) -- instead of the
+ *      planner's plan_rows.  The sampler only estimates a per-PAIR rate; the
+ *      population sizes are known exactly and need not be guessed.  This:
+ *        - removes the negative-body cliff: |B| = s_count - pfx >= 0 by
+ *          construction (the old plan|S| - n_probes could go negative and was
+ *          clamped to 0, silently dropping the whole body term);
+ *        - removes inner-relation stats staleness (lineitem is the big inner
+ *          here, and its plan_rows is the most error-prone);
+ *        - makes the FINAL estimate exactly unbiased given the true sizes:
+ *          E[J_hat] = |R join P| + mu_B * act|R| * act|B| = |R join S|.
+ *      The running TRAJECTORY still uses plan|R| as a proxy for total outer
+ *      cardinality (which is not known until the scan finishes) but actual |S|;
+ *      the ROSL_SUMM line reports the authoritative actual-count final estimate.
+ *      (Note: CREATE TABLE AS sets reltuples, so plan|R| is usually accurate
+ *      anyway; this change makes the final independent of that.)
+ * ====================================================================
  *
  * INTEGRATION (unchanged):
  * - execnodes.h: add `void *rosl;` to struct NestLoopState.
@@ -77,23 +117,13 @@
  * s_slots[n_probes .. s_count) in contiguous K-blocks.  Cache fill is one
  * cumulative-probability pass plus a binary search per draw; deduplication is a
  * sort of the drawn indices and a single linear pass.  Resume cursors let each
- * phase yield one row per call.  Assumes a non-parameterised inner
- * (nestParams == NIL) and targets INNER-join cardinality.
+ * phase yield one row per call.  Targets INNER-join cardinality with a
+ * non-parameterised inner (enforced by the dispatch guard).
  *
  * ASSUMPTION: the inner relation is shuffled at rest, so the first n_probes
  * tuples of the scan are a uniform random sample.  If an order-imposing node
  * (Sort, index scan) sits between the base table and this one, that prefix is
  * not random and q(t) -- and thus the exploit selection -- silently skews.
- *
- * RELATION TO THE EARLIER "Saketh" BANDIT PROTOTYPE (buggy prior):
- *  - That prototype explored by walking S in sequential PAGES by page index
- *    (LoadNextPage / page-stack).  Here exploration uses a fixed random prefix.
- *  - It used an N-failure stopping rule (a page stops once lastReward hits 0),
- *    so a(t) varied per tuple and was unknown until exploration ended.
- *    Fixed-Probe probes an unconditional, constant n_probes per tuple.
- *  - It assigned econtext->ecxt_outertuple = innerTupleSlot and
- *    ecxt_innertuple = outerTupleSlot (swapped).  This path keeps the outer
- *    tuple in ecxt_outertuple, as the planner's qual expects.
  *-------------------------------------------------------------------------
  */
 
@@ -190,8 +220,9 @@ typedef struct RoslJoinState
 	double		est_num;			/* sum over body rounds of Y_hat_round    */
 	double		est_den;			/* sum over body rounds of Mn*Kn (body)   */
 	double		expl_exact;			/* EXACT matches in R x P (certainty units)*/
-	double		num_outer;			/* |R| (planner row estimate)             */
-	double		num_inner;			/* |S| (planner row estimate)             */
+	double		num_outer;			/* |R| planner estimate (trajectory proxy) */
+	double		num_inner;			/* |S| planner estimate (reported only)    */
+	double		act_outer;			/* |R| ACTUAL: running sum of m_count      */
 
 	/* PH_EXPLORE resume cursors (persist across calls within exploration) */
 	int			expl_mi;			/* M-index currently being explored          */
@@ -226,6 +257,9 @@ typedef struct RoslJoinState
 	/* timing anchors (in-C, source-measured -- not libpq flush time) */
 	TimestampTz	t_start;			/* set when the first M-block is loaded   */
 	bool		t_started;			/* whether t_start has been set yet       */
+
+	/* per-state PRNG (xorshift64*) -- independent stream per backend/node    */
+	uint64		rng_state;			/* never 0; seeded in rosl_state_init      */
 } RoslJoinState;
 
 
@@ -242,6 +276,28 @@ cmp_int(const void *a, const void *b)
 	int			y = *(const int *) b;
 
 	return (x > y) - (x < y);
+}
+
+/*
+ * Per-state PRNG: xorshift64* -> uniform double in [0,1).  Replaces process-
+ * global rand()/srand(), which is low quality and shares one seed across the
+ * whole process -- so concurrently launched workers seeded from a 1-second
+ * clock drew identical caches, correlating runs meant to be independent.
+ * Seeded once per state in rosl_state_init from time x PID x pointer; the state
+ * is kept non-zero there (xorshift cannot recover from an all-zero state).
+ */
+static inline double
+rosl_rand_double(RoslJoinState *st)
+{
+	uint64		x = st->rng_state;
+
+	x ^= x >> 12;
+	x ^= x << 25;
+	x ^= x >> 27;
+	st->rng_state = x;
+	/* xorshift64* scramble, then take the top 53 bits -> [0,1) */
+	return (double) ((x * UINT64CONST(0x2545F4914F6CDD1D)) >> 11)
+		* (1.0 / 9007199254740992.0);
 }
 
 /*
@@ -437,7 +493,7 @@ draw_and_dedup_cache(RoslJoinState *st)
 	/* with-replacement draws, each an O(log M) binary search */
 	for (s = 0; s < L; s++)
 	{
-		double		r = (double) rand() / ((double) RAND_MAX + 1.0);	/* [0,1) */
+		double		r = rosl_rand_double(st);		/* uniform [0,1) */
 
 		st->interim[s] = lower_bound_cum(st->cum, n, r);
 	}
@@ -462,12 +518,22 @@ draw_and_dedup_cache(RoslJoinState *st)
  * pi(t)       = 1 - (1 - p(t))^L
  * est_den    += Mn * Kn                     (BODY pairs only)
  * mu_hat_B    = est_num / est_den           (mean successes per BODY pair)
- * J_hat       = expl_exact + mu_hat_B * |R| * (|S| - n_probes)
+ * J_hat       = expl_exact + mu_hat_B * |R| * |B|     (|B| = s_count - pfx)
+ *
+ * CORRECTION (3): the body extrapolation uses the ACTUAL inner size s_count
+ * (the relation is fully materialised) rather than the planner's num_inner, so
+ * |B| = s_count - pfx is non-negative by construction -- the old plan|S| -
+ * n_probes could go negative and was clamped to 0, silently dropping the whole
+ * body term.  pfx = min(n_probes, s_count) is the true prefix width.
+ *
+ * For |R| the running trajectory uses num_outer (the planner estimate), since
+ * the TOTAL outer cardinality is not known until the scan finishes; the final
+ * ROSL_SUMM line re-states the estimate with the exact count act_outer.
  *
  * expl_exact is the EXACT match count from region R x P (the shared prefix),
  * accumulated during exploration; it is added in directly (probability-1
  * observations, never IPW-weighted).  The HT mean is extrapolated only over the
- * body |B| = |S| - n_probes, never over the full |S|.
+ * body |B|, never over the full |S|.
  */
 static void
 finalize_round(RoslJoinState *st)
@@ -491,14 +557,16 @@ finalize_round(RoslJoinState *st)
 
 	if (st->est_den > 0.0)
 	{
+		int			pfx = (st->n_probes < st->s_count)
+							? st->n_probes : st->s_count;
 		double		mu_B = st->est_num / st->est_den;
-		double		body_inner = st->num_inner - (double) st->n_probes;
+		double		body_inner = (double) st->s_count - (double) pfx;	/* >= 0 */
 		double		Jhat;
 
-		/* guard the (pathological) case |S| <= n_probes: no body to estimate */
-		if (body_inner < 0.0)
-			body_inner = 0.0;
-
+		/*
+		 * Trajectory |R| proxy = planner num_outer (total outer unknown until
+		 * the scan ends).  |B| = s_count - pfx uses the exact inner size.
+		 */
 		Jhat = st->expl_exact + mu_B * st->num_outer * body_inner;
 
 		/*
@@ -510,9 +578,7 @@ finalize_round(RoslJoinState *st)
 		 * so a server-side cursor can never deadlock on notice flushing.
 		 *
 		 * Timing is taken here, at the source, via GetCurrentTimestamp()
-		 * relative to t_start (set when the first M-block loaded).  This is
-		 * strictly better than the old client-side _TimestampedNotices hack,
-		 * which could only observe when libpq happened to flush the NOTICE.
+		 * relative to t_start (set when the first M-block loaded).
 		 */
 		if (st->traj_count < ROSL_TRAJ_CAP)
 		{
@@ -520,12 +586,7 @@ finalize_round(RoslJoinState *st)
 
 			if (st->t_started)
 			{
-				/*
-				 * TimestampTz is an int64 count of microseconds; subtracting
-				 * two of them directly avoids depending on the platform's
-				 * TimestampDifference() out-param signature (long vs int64),
-				 * which has changed across PG versions.
-				 */
+				/* TimestampTz is int64 microseconds; subtract directly */
 				TimestampTz now = GetCurrentTimestamp();
 
 				elapsed_ms = (double) (now - st->t_start) / 1000.0;
@@ -592,6 +653,7 @@ rosl_state_init(NestLoopState *node)
 	st->cache_midx = (int *) palloc(sizeof(int) * st->exp_cache_lim);
 
 	st->expl_exact = 0.0;			/* exact R x P match count (region 1)     */
+	st->act_outer = 0.0;			/* actual |R|: accumulated per M-block     */
 
 	/* per-round trajectory buffers (dumped once at teardown) */
 	st->traj_round          = (long *)   palloc(sizeof(long) * ROSL_TRAJ_CAP);
@@ -608,7 +670,17 @@ rosl_state_init(NestLoopState *node)
 	st->epsilon = ROSL_EPSILON;			/* fixed hyperparameter; never decayed */
 	st->phase = PH_NEW_MBLOCK;
 
-	srand((unsigned int) time(NULL));	/* seed the probe/cache-draw RNG once */
+	/*
+	 * Seed the per-state PRNG from a mix of high-resolution time, the backend
+	 * PID, and the state pointer, so concurrently launched workers get
+	 * independent streams.  (The old srand(time(NULL)) gave same-second workers
+	 * identical caches.)  Force non-zero: xorshift64* cannot leave state 0.
+	 */
+	st->rng_state = (uint64) GetCurrentTimestamp()
+		^ ((uint64) MyProcPid << 32)
+		^ (uint64) (uintptr_t) st;
+	if (st->rng_state == 0)
+		st->rng_state = UINT64CONST(0x9E3779B97F4A7C15);
 
 	node->rosl = (void *) st;
 }
@@ -727,19 +799,26 @@ ExecStockNestLoop(NestLoopState *node)
  *		ExecRoslNestLoop  --  streaming two-phase ROSL sampling join
  *
  *		Consumes R in M-blocks.  For each M-block:
- *		  PH_NEW_MBLOCK  loads the outer block and materialises all of S.
- *		  PH_EXPLORE     probes every M-tuple against exactly n_probes random
- *		                 inner tuples, counting r(t) and emitting matches.
- *		  PH_NEW_SBLOCK  takes the next K-block of S and draws an exploit cache
- *		                 from the epsilon-greedy-on-q(t) distribution.
- *		  PH_PROBE       probes the cache against the K-block, emits matches,
- *		                 and (at round end) folds the Horvitz-Thompson estimate.
+ *		  PH_NEW_MBLOCK   loads the outer block, materialises all of S (once),
+ *		                  zeroes r(t), and accumulates the exact outer count.
+ *		  PH_EXPLORE      probes every M-tuple against the shared prefix P,
+ *		                  counting r(t), tallying matches EXACTLY into expl_exact
+ *		                  and emitting them.  q(t) = r(t)/n_probes is frozen at
+ *		                  the end of this phase.
+ *		  PH_NEW_SBLOCK   takes the next BODY K-block and draws an exploit cache
+ *		                  from the epsilon-greedy-on-joinability distribution
+ *		                  (built from the frozen q(t) and fixed epsilon).
+ *		  PH_PROBE        probes the cache against the K-block, emits matches,
+ *		                  and (at round end) folds the body HT estimate.
  *		Resume cursors let every phase yield one row per call.  node->rosl is
  *		guaranteed non-NULL by the dispatcher.
  *
- *		q(t) and epsilon are FIXED for the whole M-block: q(t) is frozen when
- *		exploration ends and epsilon never decays (it is a hyperparameter).  So
- *		every exploitation round in one M-block draws from the same distribution.
+ *		Fixed-Probe semantics: the exploitation distribution is FROZEN for the
+ *		whole M-block (q(t) comes only from exploration, which probes every tuple
+ *		n_probes times; exploitation never updates r(t)).  epsilon is fixed (a
+ *		hyperparameter; never decayed).  Region R x P is counted exactly and the
+ *		body HT mean is extrapolated only over |B| = |S| - n_probes, so the
+ *		two-region estimate is unbiased with lower variance than pooling.
  * ----------------------------------------------------------------
  */
 static TupleTableSlot *
@@ -776,6 +855,9 @@ ExecRoslNestLoop(NestLoopState *node)
 						st->phase = PH_DONE;
 						break;
 					}
+
+					/* CORRECTION (3): accumulate EXACT outer cardinality |R| */
+					st->act_outer += (double) st->m_count;
 
 					/*
 					 * Anchor timing at the first non-empty M-block, i.e. the
@@ -1008,10 +1090,22 @@ static TupleTableSlot *
 ExecNestLoop(PlanState *pstate)
 {
 	NestLoopState *node = castNode(NestLoopState, pstate);
+	NestLoop   *nl = (NestLoop *) node->js.ps.plan;
 
 	CHECK_FOR_INTERRUPTS();
 
-	if (!enable_rosl)
+	/*
+	 * Plan-shape guard.  The ROSL path materialises the inner ONCE and reuses
+	 * it for every M-block, and emits inner-join matches only.  That is correct
+	 * only for a plain INNER join with a NON-parameterised inner.  If the
+	 * planner picked a parameterised nestloop (nestParams != NIL) or a non-inner
+	 * join, running ROSL would silently produce wrong results, so fall back to
+	 * the exact stock nested loop even when the GUC is on.  (The experimental
+	 * 2-table inner-join queries this estimator targets always satisfy this.)
+	 */
+	if (!enable_rosl ||
+		nl->nestParams != NIL ||
+		node->js.jointype != JOIN_INNER)
 		return ExecStockNestLoop(node);
 
 	if (node->rosl == NULL)
@@ -1143,31 +1237,42 @@ PrintRoslCounters(RoslJoinState *st)
 			 "(use a smaller scale factor)", ROSL_TRAJ_CAP);
 
 	/*
-	 * Final two-region estimate: exact R x P matches plus the HT-estimated
-	 * body R x B (extrapolated over |B| = |S| - n_probes, not |S|).  expl_exact
-	 * is reported even when no body round completed, because region R x P is
-	 * measured exactly during exploration regardless of exploitation.
+	 * Final two-region estimate, computed with ACTUAL table sizes (correction
+	 * 3).  Region R x P is known exactly (expl_exact); only the body R x B is
+	 * estimated, by the HT body mean mu_B = est_num / est_den extrapolated over
+	 * |R| * |B|.  Here |R| = act_outer (the exact outer count summed over every
+	 * M-block) and |B| = s_count - pfx (the exact materialised inner minus the
+	 * exact prefix width), so this final number is exactly unbiased given the
+	 * true sizes -- it does NOT depend on the planner's plan_rows.
+	 *
+	 *   J_hat = expl_exact + mu_B * act_outer * (s_count - pfx)
+	 *
+	 * The planner estimates num_outer / num_inner are reported alongside for
+	 * comparison (and are what the running trajectory used for |R|).  The
+	 * `final_est_join=` token is kept verbatim so the existing worker log parser
+	 * still finds it.
 	 */
 	{
-		double		body_inner = st->num_inner - (double) st->n_probes;
-		double		mu_B = 0.0;
+		int			pfx = (st->n_probes < st->s_count)
+							? st->n_probes : st->s_count;
+		double		body_inner = (double) st->s_count - (double) pfx;	/* >= 0 */
+		double		mu_body = 0.0;
 		double		est_join;
 
-		if (body_inner < 0.0)
-			body_inner = 0.0;
-
 		if (st->est_den > 0.0)
-			mu_B = st->est_num / st->est_den;
+			mu_body = st->est_num / st->est_den;
 
-		est_join = st->expl_exact + mu_B * st->num_outer * body_inner;
+		est_join = st->expl_exact + mu_body * st->act_outer * body_inner;
 
 		elog(INFO,
 			 "ROSL_SUMM final_est_join=%.2f expl_exact=%.0f mu_body=%.10f "
 			 "rounds=%ld sample_matches=%ld body_pairs_seen=%.0f t_steps=%ld "
-			 "num_outer=%.0f num_inner=%.0f n_probes=%d",
-			 est_join, st->expl_exact, mu_B, st->rounds, st->sample_matches,
-			 st->est_den, st->t_steps, st->num_outer, st->num_inner,
-			 st->n_probes);
+			 "act_outer=%.0f s_count=%d num_outer=%.0f num_inner=%.0f "
+			 "n_probes=%d exp_cache_lim=%d epsilon=%.4f",
+			 est_join, st->expl_exact, mu_body, st->rounds, st->sample_matches,
+			 st->est_den, st->t_steps, st->act_outer, st->s_count,
+			 st->num_outer, st->num_inner,
+			 st->n_probes, st->exp_cache_lim, st->epsilon);
 	}
 }
 
@@ -1273,10 +1378,22 @@ ExecReScanNestLoop(NestLoopState *node)
 		st->epsilon = ROSL_EPSILON;		/* fixed hyperparameter */
 		st->est_num = 0.0;
 		st->est_den = 0.0;
-		st->expl_exact = 0.0;			/* restart exact R x P tally */
+		st->expl_exact = 0.0;			/* exact R x P tally restarts          */
+		st->act_outer = 0.0;			/* exact |R| accumulator restarts      */
 		st->rounds = 0;
 		st->t_steps = 0;
 		st->sample_matches = 0;
+		/* r(t) is zeroed per M-block in PH_NEW_MBLOCK; nothing to do here */
+
+		/*
+		 * Advance the PRNG to a fresh stream for the re-scan, so a node executed
+		 * multiple times (e.g. under a rescanning parent) does not replay the
+		 * identical sequence of caches each pass.
+		 */
+		st->rng_state ^= (uint64) GetCurrentTimestamp()
+			^ ((uint64) MyProcPid << 17);
+		if (st->rng_state == 0)
+			st->rng_state = UINT64CONST(0x9E3779B97F4A7C15);
 
 		/* fresh run: discard prior trajectory and re-anchor timing */
 		st->traj_count = 0;
