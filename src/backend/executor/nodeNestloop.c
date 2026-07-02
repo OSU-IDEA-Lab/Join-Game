@@ -22,87 +22,71 @@
  * on only for the experimental join queries you want
  * estimated:  SET enable_rosl = on;
  *
- * VARIANT IMPLEMENTED HERE: Deterministic Exploration with Fixed Probes,
- * global without-replacement, TWO-REGION estimate (progress doc section 5).
- * This is the corrected Fixed-Probe baseline (see CORRECTIONS below).
+ * This is the ADAPTIVELY-WEIGHTED, TWO-PHASE ("probabilistic N-failure")
+ * version (Section 7 of the ROSL alternatives note; estimator after Hadad,
+ * Hirshberg, Zhan, Wager & Athey, "Confidence Intervals for Policy Evaluation
+ * in Adaptive Experiments").  It supersedes the single-phase, uniform-pooled
+ * raw-HT version.  Two things changed relative to that predecessor:
  *
- *   SHARED PREFIX.  Before any M-block, all of S is materialised once and its
- *   first ROSL_N_PROBES tuples are designated the exploration prefix P.  Since
- *   the relation is shuffled at rest, P is a uniform random sample of S.  P is
- *   reused by every M-block and is GLOBALLY excluded from exploitation: it
- *   never appears in any K-block, so no (outer,inner) pair is ever probed in
- *   both phases.  This partitions R x S into two disjoint regions: the
- *   exploration region R x P and the exploitation body R x B, where B = S \ P
- *   and |B| = |S| - n_probes.
+ *   (A) SAMPLING is now two-phase per M-block.  The first n_probes tuples of
+ *       the (randomly ordered) inner relation form a shared EXPLORATION PREFIX
+ *       P.  Each M-block first runs one probabilistic exploration round: a
+ *       UNIFORM cache over M is probed against all of P (region R x P).  The
+ *       remaining inner tuples form the BODY B = S \ P, scanned in K-blocks
+ *       exactly as before but with a FIXED epsilon (no decay: a dedicated
+ *       exploration phase already supplies the initial joinability signal).
  *
- *   1. EXPLORATION (deterministic; region R x P).  Every tuple t in the
- *      M-block is probed against all ROSL_N_PROBES prefix tuples.  r(t) counts
- *      how many joined; a(t) is the design constant n_probes for every tuple,
- *      so q(t) = r(t)/n_probes is uncensored with no a(t)=0 edge case.  These
- *      pairs are observed with probability 1 (certainty units): every match is
- *      counted EXACTLY into expl_exact and emitted as join output; it is never
- *      inverse-probability weighted.  Because M-blocks tile R and each t is
- *      probed against all of P, the region R x P is observed in full.
+ *   (B) The ESTIMATOR is now the adaptively-weighted AIPW estimator:
+ *         - Per exploitation round the raw HT score is replaced by an AIPW
+ *           score that uses the frozen average joinability q(t) as a control
+ *           variate; under sparse joins this absorbs almost all the variance.
+ *         - Per-round scores are pooled with variance-stabilizing evaluation
+ *           weights h_r (stick-breaking recursion, two-point allocation rate)
+ *           instead of uniform summation, restoring asymptotic normality.
+ *         - A self-normalized variance is maintained in O(1) per round via
+ *           three moment accumulators (Konig-Huygens form), so every round
+ *           emits an approximate 95% confidence interval on J_hat.
  *
- *   2. EXPLOITATION (running estimate; region R x B).  The body B is scanned in
- *      K-blocks of ROSL_K_LIM tuples (the prefix is skipped).  Each (M-block,
- *      K-block) round draws an exploit cache of unique outer tuples from a
- *      distribution that is epsilon-greedy on the FROZEN joinability q(t),
- *      probes it against the body K-block, emits matches, and folds a
- *      Horvitz-Thompson success estimate into the running body estimate.  q(t)
- *      and epsilon are fixed for the whole M-block, so the per-round inclusion
- *      probabilities depend only on the exploration probes against P.
- *
- *   TWO-REGION ESTIMATE.  R x P is known exactly; only R x B is estimated:
- *      mu_hat_B = est_num / est_den            (HT mean successes per BODY pair)
- *      J_hat    = expl_exact + mu_hat_B * |R| * |B|        (|B| = |S| - n_probes)
- *   Pairing a body-only denominator (est_den sums |M|*|K| over body blocks)
- *   with a body-only multiplier (|B|) keeps the estimate unbiased; removing
- *   R x P from the estimated population also lowers variance, since those
- *   n_probes*|R| pairs contribute exact outcomes and no estimator noise.  Both
- *   est_num and est_den are fixed by the block schedule (est_den deterministic),
- *   so mu_hat_B is exactly mean-unbiased -- no ratio bias from early stopping.
- *
- * Matching pairs from both phases are emitted immediately (one per call via
- * resume cursors).  Only sampled rows are emitted; this is an approximate join
- * intended for cardinality estimation workloads.
+ * The epsilon-FLOOR is retained: it guarantees the propensity-decay lower
+ * bound the CLT requires, so it is now a precondition for valid inference
+ * rather than only a spike-damping heuristic.
  *
  * ============================ CORRECTIONS ============================
- * This file fixes three weaknesses of the original Fixed-Probe draft:
+ * Three fixes ported from the corrected Fixed-Probe baseline; all apply here.
  *
  *  (1) RNG.  Uses a per-state xorshift64* PRNG seeded from a mix of high-
  *      resolution time, the backend PID, and the state pointer -- NOT process-
  *      global rand()/srand(time()).  The old 1-second srand() seed handed
  *      same-second workers (the concurrent harness launches many) IDENTICAL
- *      "random" caches, correlating runs meant to be independent replicates and
- *      biasing exactly the cross-run variance the experiment measures.
+ *      "random" caches, correlating runs meant to be independent replicates.
+ *      That matters even more here than for Fixed-Probe: correlated replicates
+ *      would invalidate the confidence-interval coverage this version reports.
  *
  *  (2) PLAN-SHAPE GUARD.  ExecNestLoop falls back to the exact stock path
  *      unless the join is a plain INNER join with a non-parameterised inner
- *      (nestParams == NIL).  The ROSL path materialises S once and reuses it
- *      (valid only for a fixed inner) and emits inner-join matches only, so
- *      without the guard a parameterised nestloop or outer join chosen by the
- *      planner would silently produce wrong results while the GUC is on.
+ *      (nestParams == NIL).  The ROSL path rescans the inner per M-block and
+ *      emits inner-join matches only, so without the guard a parameterised
+ *      nestloop or outer join chosen by the planner would silently produce
+ *      wrong results while the GUC is on.
  *
- *  (3) ACTUAL-COUNT POPULATIONS.  The extrapolation uses the ACTUAL table sizes
- *      -- |S| = s_count (the relation is fully materialised, so this is exact)
- *      and, for the final estimate, |R| = act_outer (every outer tuple is
- *      consumed in M-blocks, so the running sum is exact) -- instead of the
- *      planner's plan_rows.  The sampler only estimates a per-PAIR rate; the
- *      population sizes are known exactly and need not be guessed.  This:
- *        - removes the negative-body cliff: |B| = s_count - pfx >= 0 by
- *          construction (the old plan|S| - n_probes could go negative and was
- *          clamped to 0, silently dropping the whole body term);
- *        - removes inner-relation stats staleness (lineitem is the big inner
- *          here, and its plan_rows is the most error-prone);
- *        - makes the FINAL estimate exactly unbiased given the true sizes:
- *          E[J_hat] = |R join P| + mu_B * act|R| * act|B| = |R join S|.
- *      The running TRAJECTORY still uses plan|R| as a proxy for total outer
- *      cardinality (which is not known until the scan finishes) but actual |S|;
- *      the ROSL_SUMM line reports the authoritative actual-count final estimate.
- *      (Note: CREATE TABLE AS sets reltuples, so plan|R| is usually accurate
- *      anyway; this change makes the final independent of that.)
+ *  (3) EXACT OUTER POPULATION.  The final extrapolation uses the ACTUAL outer
+ *      size |R| = act_outer (summed over every M-block, hence exact once the
+ *      scan finishes) instead of the planner's plan_rows.  The sampler only
+ *      estimates a per-PAIR rate; the outer size is known exactly by teardown.
+ *      NOTE ON |S|: unlike Fixed-Probe, this version does NOT materialise S --
+ *      it rescans S and re-draws a fresh exploration prefix per M-block (the
+ *      prefix is probabilistic and reweighted under ISPW, by design), so it
+ *      never counts |S| exactly and still uses the planner's num_inner for the
+ *      inner multiplier.  Correspondingly, the Fixed-Probe "negative-|B| cliff"
+ *      and body-only multiplier do NOT arise here: both regions are HT-
+ *      estimated and the multiplier is the full inner size, per the two-region
+ *      probabilistic estimate (progress doc section 6.c).
  * ====================================================================
+ *
+ * Matching pairs are emitted immediately (one per call via resume cursors
+ * probe_ci / probe_kj, and the exploration-phase analogues explore_ci /
+ * explore_pj).  Only sampled rows are emitted; this is an approximate join
+ * intended for cardinality estimation workloads.
  *
  * INTEGRATION (unchanged):
  * - execnodes.h: add `void *rosl;` to struct NestLoopState.
@@ -110,20 +94,19 @@
  * - nodeNestloop.h: unchanged.
  *
  * ROSL ALGORITHM NOTES:
- * R (outer) is consumed in M-blocks of ROSL_M_LIM tuples.  All of S (inner) is
- * materialised ONCE (on the first M-block) into an in-memory buffer; the same
- * buffer -- and the same prefix P -- serves every M-block.  Exploration probes
- * the fixed prefix s_slots[0 .. n_probes); exploitation walks the body
- * s_slots[n_probes .. s_count) in contiguous K-blocks.  Cache fill is one
- * cumulative-probability pass plus a binary search per draw; deduplication is a
- * sort of the drawn indices and a single linear pass.  Resume cursors let each
- * phase yield one row per call.  Targets INNER-join cardinality with a
- * non-parameterised inner (enforced by the dispatch guard).
- *
- * ASSUMPTION: the inner relation is shuffled at rest, so the first n_probes
- * tuples of the scan are a uniform random sample.  If an order-imposing node
- * (Sort, index scan) sits between the base table and this one, that prefix is
- * not random and q(t) -- and thus the exploit selection -- silently skews.
+ * R (outer) is consumed in M-blocks of ROSL_M_LIM tuples.  For each M-block:
+ *   1. EXPLORATION: load the first n_probes inner tuples as prefix P; draw a
+ *      uniform exploit cache over M and probe it against all of P.  This
+ *      round's inclusion probability is pi_exp = 1 - (1 - 1/Mn)^L, identical
+ *      for every tuple, and its raw-HT score covers region R x P.
+ *   2. EXPLOITATION: scan the body B = S \ P in K-blocks.  Each (M-block,
+ *      K-block) round draws a joinability-weighted, epsilon-smoothed exploit
+ *      cache and probes it against the K-block, emitting matching rows
+ *      directly, and folds an AIPW score covering its slice of R x B.
+ * Cache fill is one cumulative-probability pass plus a binary search per draw;
+ * deduplication is a sort of the drawn indices and a single linear pass.
+ * Assumes a non-parameterised inner (nestParams == NIL) and targets
+ * INNER-join cardinality.
  *-------------------------------------------------------------------------
  */
 
@@ -147,12 +130,32 @@
  */
 bool		enable_rosl = false;
 
-/* ---- ROSL tunables (block sizes, exploration budget, cache budget) ---- */
+/* ---- ROSL tunables (block sizes and cache budget) ---- */
 #define ROSL_M_LIM			1588	/* outer (R) tuples per M-block          */
 #define ROSL_K_LIM			1588	/* inner (S) tuples per K-block          */
 #define ROSL_EXP_CACHE_LIM	529		/* with-replacement draws per round (L)  */
-#define ROSL_N_PROBES		100		/* shared exploration prefix size (a(t))  */
-#define ROSL_EPSILON		0.2		/* fixed exploration mass (epsilon)      */
+#define ROSL_EPSILON_FLOOR  0.2		/* Minimum exploration threshold         */
+
+/*
+ * Two-phase / adaptively-weighted tunables.
+ *
+ * ROSL_N_PROBES: size of the shared exploration prefix P = S[0 : n_probes].
+ * These inner tuples are consumed once per M-block for the probabilistic
+ * exploration round and are EXCLUDED from every exploitation K-block (global
+ * without-replacement), so no (t,s) pair is probed in both phases.
+ *
+ * ROSL_EPSILON: fixed exploration mass for the exploitation phase.  Unlike the
+ * single-phase predecessor there is no decay: the exploration prefix already
+ * supplies the initial joinability signal, so epsilon is held constant (and
+ * must stay >= the implied floor for the CLT's propensity-decay bound).
+ *
+ * ROSL_ALPHA: propensity-decay exponent used by the two-point allocation rate
+ * (paper Eq. 18 / Theorem 3).  Must lie in [0, 1); smaller values downweight
+ * late rounds less aggressively.
+ */
+#define ROSL_N_PROBES		1588	/* inner tuples in exploration prefix P  */
+#define ROSL_EPSILON		0.2		/* fixed exploitation exploration mass   */
+#define ROSL_ALPHA			0.7		/* two-point allocation decay exponent   */
 
 /*
  * Per-round trajectory is buffered in C and dumped once at executor teardown
@@ -167,9 +170,9 @@ bool		enable_rosl = false;
 /* State-machine phases for the streaming ROSL driver. */
 typedef enum RoslPhase
 {
-	PH_NEW_MBLOCK,					/* load next outer block, materialise S      */
-	PH_EXPLORE,						/* fixed random probes per M-tuple           */
-	PH_NEW_SBLOCK,					/* take next K-block, draw exploit cache     */
+	PH_NEW_MBLOCK,					/* load next outer block, restart S          */
+	PH_EXPLORE,						/* load prefix P, draw uniform cache, probe  */
+	PH_NEW_SBLOCK,					/* load next inner (body) block, draw cache  */
 	PH_PROBE,						/* probe cache x K-block, emit matches       */
 	PH_DONE							/* outer exhausted: sampling join complete   */
 } RoslPhase;
@@ -184,53 +187,64 @@ typedef struct RoslJoinState
 	int			m_lim;
 	int			k_lim;
 	int			exp_cache_lim;
-	int			n_probes;			/* shared exploration prefix size (a(t)) */
+	int			n_probes;			/* size of exploration prefix P           */
+	double		epsilon_fixed;		/* fixed exploitation epsilon (no decay)  */
+	double		alpha;				/* two-point allocation decay exponent    */
 
 	/* outer (R) block buffer */
 	TupleTableSlot **m_slots;		/* [m_lim] copies of current M-block      */
 	int			m_count;			/* tuples in current M-block (Mn)         */
-	int		   *reward;				/* [m_lim] exploration successes r(t)     */
+	int		   *reward;				/* [m_lim] successful joins r(t) in block */
+	int		   *attempts;			/* [m_lim] join attempts a(t) in block    */
 
-	/*
-	 * inner (S) materialised in full ONCE for the whole run.  The first
-	 * n_probes tuples are the shared exploration prefix P (s_slots[0..n_probes));
-	 * the body B = s_slots[n_probes..s_count) is what exploitation scans in
-	 * contiguous K-blocks [k_start .. k_start+k_count).  s_cap is the allocated
-	 * capacity; the buffer grows geometrically as S is read.  s_built records
-	 * that materialisation has happened, so it is not repeated per M-block.
-	 */
-	TupleTableSlot **s_slots;		/* [s_cap] all inner tuples (shared)       */
-	int			s_count;			/* number of inner tuples materialised     */
-	int			s_cap;				/* allocated capacity of s_slots           */
-	bool		s_built;			/* whether S has been materialised yet     */
-	int			k_start;			/* offset of current body K-block within S */
-	int			k_count;			/* tuples in current K-block (Kn)          */
+	/* inner (S) body block buffer */
+	TupleTableSlot **k_slots;		/* [k_lim] copies of current K-block      */
+	int			k_count;			/* tuples in current K-block (Kn)         */
+
+	/* shared exploration prefix P = S[0 : n_probes] (reloaded per M-block) */
+	TupleTableSlot **p_slots;		/* [n_probes] copies of prefix tuples     */
+	int			p_count;			/* tuples actually loaded into P          */
 
 	/* per-round selection distribution and exploit cache */
 	double	   *p;					/* [m_lim] single-draw prob (normalised)  */
+	double	   *q;					/* [m_lim] frozen OPTIMISTIC joinability   */
+	double	   *qhat;				/* [m_lim] frozen AIPW predictor (0 if new)*/
 	double	   *cum;				/* [m_lim] cumulative of p                */
 	int		   *interim;			/* [exp_cache_lim] drawn M-indices (dups) */
 	int		   *cache_midx;			/* [exp_cache_lim] unique M-indices       */
 	int			cache_count;		/* number of unique cached tuples         */
+	bool	   *in_cache;			/* [m_lim] membership flag for the cache  */
 	int		   *round_match;		/* [m_lim] matches this round, by M-index */
 
-	double		epsilon;			/* fixed exploration mass (hyperparameter)*/
+	/*
+	 * epsilon is FIXED in this version (epsilon_fixed).  The old decaying
+	 * epsilon field is gone; a dedicated exploration phase supplies the
+	 * initial signal, and a constant epsilon keeps the propensity-decay bound
+	 * that the adaptively-weighted CLT requires.
+	 */
 
-	/* estimator accumulators (persist across all blocks) */
-	double		est_num;			/* sum over body rounds of Y_hat_round    */
-	double		est_den;			/* sum over body rounds of Mn*Kn (body)   */
-	double		expl_exact;			/* EXACT matches in R x P (certainty units)*/
-	double		num_outer;			/* |R| planner estimate (trajectory proxy) */
-	double		num_inner;			/* |S| planner estimate (reported only)    */
+	/* ---- adaptively-weighted (AW) estimator accumulators ---- */
+	double		est_num;			/* sum_r h_r * Y_hat_round (weighted)     */
+	double		weight_sum;			/* sum_r h_r * (Mn*Kn) (weighted pairs)   */
+	double		est_den;			/* sum_r (Mn*Kn): UNWEIGHTED pairs seen   */
+	double		mom_yy;				/* M1 = sum_r h_r^2 * Yhat^2              */
+	double		mom_yp;				/* M2 = sum_r h_r^2 * Yhat * pairs        */
+	double		mom_pp;				/* M3 = sum_r h_r^2 * pairs^2             */
+	double		stick;				/* stick-breaking residual 1 - sum h^2 V  */
+	long		round_idx;			/* flat round index r across all blocks   */
+	double		t_est;				/* estimated total number of rounds       */
+	double		num_outer;			/* |R| (planner row estimate)             */
+	double		num_inner;			/* |S| (planner row estimate)             */
 	double		act_outer;			/* |R| ACTUAL: running sum of m_count      */
-
-	/* PH_EXPLORE resume cursors (persist across calls within exploration) */
-	int			expl_mi;			/* M-index currently being explored          */
-	int			expl_pi;			/* probe number within that M-tuple          */
 
 	/* PH_PROBE resume cursors (persist across calls within one round) */
 	int			probe_ci;			/* cache index to resume from                */
-	int			probe_kj;			/* K-block index to resume from              */
+	int			probe_kj;			/* K-block (body) index to resume from       */
+
+	/* PH_EXPLORE resume cursors (persist across calls within one round) */
+	int			explore_ci;			/* exploration cache index to resume from    */
+	int			explore_pj;			/* prefix index to resume from               */
+	bool		explore_built;		/* whether this M-block's explore round is set*/
 
 	/* state machine + diagnostics */
 	RoslPhase	phase;
@@ -248,6 +262,7 @@ typedef struct RoslJoinState
 	long	   *traj_round;			/* round number (1-based)                 */
 	double	   *traj_mean_per_pair;	/* mu_hat at this round                   */
 	double	   *traj_est_join;		/* J_hat at this round                    */
+	double	   *traj_ci_halfwidth;	/* 95% CI half-width on J_hat             */
 	double	   *traj_pairs_seen;	/* est_den (cumulative Mn*Kn)             */
 	long	   *traj_sample_matches;/* cumulative sample_matches at this round */
 	double	   *traj_elapsed_ms;	/* ms from first-row start to this round  */
@@ -282,9 +297,11 @@ cmp_int(const void *a, const void *b)
  * Per-state PRNG: xorshift64* -> uniform double in [0,1).  Replaces process-
  * global rand()/srand(), which is low quality and shares one seed across the
  * whole process -- so concurrently launched workers seeded from a 1-second
- * clock drew identical caches, correlating runs meant to be independent.
- * Seeded once per state in rosl_state_init from time x PID x pointer; the state
- * is kept non-zero there (xorshift cannot recover from an all-zero state).
+ * clock drew identical caches, correlating runs meant to be independent
+ * replicates and biasing exactly the cross-run variance the experiment (and,
+ * here, the confidence-interval coverage) is meant to measure.  Seeded once
+ * per state in rosl_state_init from time x PID x pointer; the state is kept
+ * non-zero there (xorshift cannot recover from an all-zero state).
  */
 static inline double
 rosl_rand_double(RoslJoinState *st)
@@ -345,105 +362,128 @@ load_outer_block(RoslJoinState *st, PlanState *outerPlan)
 	return n;
 }
 
-/*
- * Materialise ALL of S into st->s_slots for the current M-block.  The buffer
- * grows geometrically; each tuple is deep-copied into its own slot so it
- * survives across the many ExecProcNode calls of later phases.  Returns the
- * total inner tuple count.
- *
- * Slots are created once and reused across M-blocks (s_cap only ever grows),
- * so re-materialising S for the next M-block overwrites existing slots rather
- * than leaking them.  innerDesc is the inner plan's result tuple descriptor.
- *
- * Allocation happens in whatever context is current when ExecRoslNestLoop runs
- * -- the executor's per-query context, not the per-tuple expression context
- * (that one is only entered transiently inside ExecQual/ExecProject and is what
- * ResetExprContext clears).  So s_slots persists across calls, exactly as the
- * m_slots array allocated in rosl_state_init does.
- */
+/* Pull up to k_lim inner tuples into the K-block buffer; return the count. */
 static int
-materialise_inner(RoslJoinState *st, PlanState *innerPlan, TupleDesc innerDesc)
+load_inner_block(RoslJoinState *st, PlanState *innerPlan)
 {
 	int			n = 0;
 
-	for (;;)
+	while (n < st->k_lim)
 	{
 		TupleTableSlot *slot = ExecProcNode(innerPlan);
 
 		if (TupIsNull(slot))
 			break;
-
-		/* grow the slot array geometrically when we run out of capacity */
-		if (n == st->s_cap)
-		{
-			int			new_cap = (st->s_cap == 0) ? 1024 : st->s_cap * 2;
-			int			i;
-
-			/* repalloc() rejects a NULL pointer, so palloc the first block */
-			if (st->s_slots == NULL)
-				st->s_slots = (TupleTableSlot **)
-					palloc(sizeof(TupleTableSlot *) * new_cap);
-			else
-				st->s_slots = (TupleTableSlot **)
-					repalloc(st->s_slots, sizeof(TupleTableSlot *) * new_cap);
-
-			for (i = st->s_cap; i < new_cap; i++)
-				st->s_slots[i] = MakeSingleTupleTableSlot(innerDesc);
-			st->s_cap = new_cap;
-		}
-
-		ExecCopySlot(st->s_slots[n], slot);
+		ExecCopySlot(st->k_slots[n], slot);
 		n++;
 	}
 	return n;
 }
 
 /*
- * Epsilon-greedy smoothing over the current M-block, using the FROZEN average
- * joinability from the exploration phase and the fixed epsilon hyperparameter.
+ * Pull up to n_probes inner tuples into the exploration prefix buffer P.
+ * Called once per M-block, immediately after ExecReScan(innerPlan), so P is
+ * always the first n_probes tuples of the (randomly ordered) inner relation.
+ * The subsequent body scan (load_inner_block) resumes from tuple n_probes+1,
+ * so P and the body are disjoint (global without-replacement).
+ */
+static int
+load_prefix_block(RoslJoinState *st, PlanState *innerPlan)
+{
+	int			n = 0;
+
+	while (n < st->n_probes)
+	{
+		TupleTableSlot *slot = ExecProcNode(innerPlan);
+
+		if (TupIsNull(slot))
+			break;
+		ExecCopySlot(st->p_slots[n], slot);
+		n++;
+	}
+	return n;
+}
+
+/*
+ * Custom epsilon-greedy smoothing over the current M-block, using the average
+ * joinability accumulated so far in this M-block and the current epsilon.
  *
- * Because exploration probes every tuple exactly n_probes times, a(t) = n_probes
- * is a known positive constant for all t, so
+ * For each tuple t, the average joinability is
  *
- *   q(t) = r(t) / n_probes        (always defined; no a(t)=0 fallback branch)
+ *   q(t) = r(t) / a(t)   if a(t) > 0   (successes over attempts so far)
+ *        = 1            if a(t) = 0   (untried tuples treated as fully joinable)
  *
  * Let Qtotal = sum over t in A of q(t).  The single-draw distribution is
  *
  *   p(t) = (1-eps) * q(t)/Qtotal + eps/|A|   if Qtotal > 0
  *        = 1/|A|                             if Qtotal = 0
  *
- * The Qtotal = 0 case (no tuple joined during exploration) falls back to a
- * uniform draw, since there is no joinability signal to weight by.  The result
- * is normalised to a proper distribution.  q(t) and epsilon do not change
- * between K-blocks, so this distribution is identical for every exploitation
- * round within one M-block.
+ * The Qtotal = 0 case (every tuple has been tried and none has joined yet)
+ * falls back to a uniform draw, since there is no joinability signal left to
+ * weight by.  The result is normalised to a proper distribution.
  */
 static void
-build_distribution(RoslJoinState *st)
+build_distribution(RoslJoinState *st, bool uniform)
 {
 	int			n = st->m_count;
 	int			t;
-	double		eps = st->epsilon;
+	double		eps = st->epsilon_fixed;
 	double		Mn = (double) n;
-	double		np = (double) st->n_probes;
 	double		Qtot = 0.0;
 	double		sum = 0.0;
 
-	/* per-tuple average joinability q(t) = r(t)/n_probes */
+	/*
+	 * Always (re)compute and FREEZE q(t) into st->q[] first.  This is the
+	 * average joinability used both to weight the exploitation draw and as the
+	 * AIPW control variate m_hat(t) in finalize_round().  Freezing it here,
+	 * before the round is probed, keeps it H_{t-1}-measurable (it depends only
+	 * on attempts/successes from prior rounds), which is what the AIPW
+	 * unbiasedness argument requires.
+	 *
+	 *   q(t) = r(t) / a(t)   if a(t) > 0
+	 *        = 1            if a(t) = 0   (optimistic: untried => fully joinable)
+	 */
 	for (t = 0; t < n; t++)
 	{
-		double		q = (double) st->reward[t] / np;
+		double		qt;
 
-		st->p[t] = q;				/* stash q(t) here; rescaled below */
-		Qtot += q;
+		if (st->attempts[t] == 0)
+		{
+			qt = 1.0;				/* optimistic value used for SELECTION    */
+			st->qhat[t] = 0.0;		/* but predict ZERO matches for AIPW      */
+		}
+		else
+		{
+			qt = (double) st->reward[t] / (double) st->attempts[t];
+			st->qhat[t] = qt;		/* frozen match-rate predictor            */
+		}
+
+		st->q[t] = qt;
+		Qtot += qt;
 	}
 
+	/*
+	 * Exploration round: draw UNIFORMLY over M (every tuple gets the same
+	 * inclusion probability pi_exp).  No joinability weighting, no epsilon.
+	 */
+	if (uniform)
+	{
+		for (t = 0; t < n; t++)
+			st->p[t] = 1.0 / Mn;
+		return;
+	}
+
+	/*
+	 * Exploitation round: epsilon-greedy on joinability with FIXED epsilon.
+	 *   p(t) = (1-eps) * q(t)/Qtot + eps/|A|   if Qtot > 0
+	 *        = 1/|A|                            if Qtot = 0
+	 */
 	for (t = 0; t < n; t++)
 	{
 		double		pt;
 
 		if (Qtot > 0.0)
-			pt = (1.0 - eps) * (st->p[t] / Qtot) + eps / Mn;
+			pt = (1.0 - eps) * (st->q[t] / Qtot) + eps / Mn;
 		else
 			pt = 1.0 / Mn;
 		st->p[t] = pt;
@@ -493,7 +533,7 @@ draw_and_dedup_cache(RoslJoinState *st)
 	/* with-replacement draws, each an O(log M) binary search */
 	for (s = 0; s < L; s++)
 	{
-		double		r = rosl_rand_double(st);		/* uniform [0,1) */
+		double		r = rosl_rand_double(st);	/* [0,1), per-state stream */
 
 		st->interim[s] = lower_bound_cum(st->cum, n, r);
 	}
@@ -501,108 +541,309 @@ draw_and_dedup_cache(RoslJoinState *st)
 	/* sort by M-index, then dedup in a single linear pass */
 	qsort(st->interim, L, sizeof(int), cmp_int);
 
+	/*
+	 * Clear membership flags for the whole M-block, then set them for the
+	 * unique cached indices.  in_cache[] lets finalize_round() add the AIPW
+	 * baseline term q(t)*|K| for tuples NOT in the cache without a second sort
+	 * or search (one linear pass over M instead).
+	 */
+	memset(st->in_cache, 0, sizeof(bool) * n);
+
 	st->cache_count = 0;
 	for (s = 0; s < L; s++)
 	{
 		if (s == 0 || st->interim[s] != st->interim[s - 1])
-			st->cache_midx[st->cache_count++] = st->interim[s];
+		{
+			int			idx = st->interim[s];
+
+			st->cache_midx[st->cache_count++] = idx;
+			st->in_cache[idx] = true;
+		}
 	}
 }
 
 /*
- * Finalise a completed exploitation round (one M-block x one BODY K-block):
- * add this round's Horvitz-Thompson success estimate to the running BODY totals
- * and record the current two-region estimate.
+ * Two-point allocation rate for round r (paper Eq. 18 / Theorem 3), computed
+ * in closed form (no scan over future rounds).  pi_repr in [0,1] mixes the
+ * "stays high" case (lambda_const) and the "decays" case (lambda_decay); the
+ * result is clamped into the Theorem-3 bounds and pinned to 1 on the last
+ * round so the stick-breaking residual is fully consumed.
+ */
+static double
+two_point_lambda(RoslJoinState *st, long r, double pi_repr)
+{
+	double		T = st->t_est;
+	double		a = st->alpha;
+	double		rr = (double) r;
+	double		lambda_const;
+	double		lambda_decay;
+	double		lambda;
+	double		lo,
+				hi;
+	double		denom_decay;
+
+	if (T < rr)
+		T = rr;						/* guard: never let T fall below r        */
+
+	/* "stays high" branch: 1 / (T - r + 1) */
+	lambda_const = 1.0 / (T - rr + 1.0);
+
+	/* "decays" branch: r^-a / (r^-a + (T^{1-a} - r^{1-a})/(1-a)) */
+	denom_decay = pow(rr, -a)
+		+ (pow(T, 1.0 - a) - pow(rr, 1.0 - a)) / (1.0 - a);
+	if (denom_decay > 0.0)
+		lambda_decay = pow(rr, -a) / denom_decay;
+	else
+		lambda_decay = lambda_const;
+
+	lambda = pi_repr * lambda_const + (1.0 - pi_repr) * lambda_decay;
+
+	/* Theorem-3 bounds: lower = 1/(T-r+1); upper = C * lambda_decay-ish term. */
+	lo = 1.0 / (T - rr + 1.0);
+	hi = (denom_decay > 0.0) ? (pow(rr, -a) / denom_decay) : 1.0;
+	if (hi < lo)
+		hi = lo;
+	if (lambda < lo)
+		lambda = lo;
+	if (lambda > hi)
+		lambda = hi;
+
+	/* last round: consume the whole remaining stick */
+	if (rr >= T)
+		lambda = 1.0;
+
+	return lambda;
+}
+
+/*
+ * ACCUMULATE (paper subroutine): fold one round's HT/AIPW score into the
+ * adaptively-weighted running estimate in O(1).
  *
- * Y_hat_round = sum over cached t of  round_match(t) / pi(t)
- * pi(t)       = 1 - (1 - p(t))^L
- * est_den    += Mn * Kn                     (BODY pairs only)
- * mu_hat_B    = est_num / est_den           (mean successes per BODY pair)
- * J_hat       = expl_exact + mu_hat_B * |R| * |B|     (|B| = s_count - pfx)
+ *   V_r          = round_pairs / pi_repr        (conditional-variance proxy)
+ *   h_r^2        = (stick * lambda_r) / V_r     (stick-breaking, Eq. 12)
+ *   stick       -= h_r^2 * V_r                  (= stick * (1 - lambda_r))
+ *   est_num     += h_r * Yhat
+ *   weight_sum  += h_r * round_pairs
+ *   mom_yy/yp/pp updated for the Konig-Huygens variance (Eq. 11), all O(1).
  *
- * CORRECTION (3): the body extrapolation uses the ACTUAL inner size s_count
- * (the relation is fully materialised) rather than the planner's num_inner, so
- * |B| = s_count - pfx is non-negative by construction -- the old plan|S| -
- * n_probes could go negative and was clamped to 0, silently dropping the whole
- * body term.  pfx = min(n_probes, s_count) is the true prefix width.
+ * est_den accumulates the UNWEIGHTED pair count so the summary/denominator
+ * bookkeeping still reports pairs seen; the point estimate uses weight_sum.
+ */
+static void
+accumulate_round(RoslJoinState *st, double round_pairs, double Yhat,
+				 double pi_repr)
+{
+	double		V_r;
+	double		lambda;
+	double		h2;
+	double		h;
+
+	st->round_idx++;
+
+	if (pi_repr <= 0.0)
+		pi_repr = 1e-12;			/* numerical guard; epsilon-floor bounds it */
+
+	V_r = round_pairs / pi_repr;
+	if (V_r <= 0.0)
+		V_r = 1e-12;
+
+	lambda = two_point_lambda(st, st->round_idx, pi_repr);
+
+	h2 = (st->stick * lambda) / V_r;
+	if (h2 < 0.0)
+		h2 = 0.0;					/* stick underflow guard                   */
+	h = sqrt(h2);
+
+	st->stick -= h2 * V_r;
+	if (st->stick < 0.0)
+		st->stick = 0.0;
+
+	st->est_num += h * Yhat;
+	st->weight_sum += h * round_pairs;
+	st->est_den += round_pairs;
+
+	/* moment accumulators for the recentered variance (all O(1)) */
+	st->mom_yy += h2 * Yhat * Yhat;
+	st->mom_yp += h2 * Yhat * round_pairs;
+	st->mom_pp += h2 * round_pairs * round_pairs;
+}
+
+/*
+ * Record the current running estimate (and its confidence interval) into the
+ * in-C trajectory buffer.  Called after each accumulate_round().  Nothing
+ * crosses the wire here; the whole trajectory is dumped once at teardown by
+ * PrintRoslCounters() (Saketh communication model).
  *
- * For |R| the running trajectory uses num_outer (the planner estimate), since
- * the TOTAL outer cardinality is not known until the scan finishes; the final
- * ROSL_SUMM line re-states the estimate with the exact count act_outer.
+ * mu_hat  = est_num / weight_sum                    (weighted mean per pair)
+ * J_hat   = mu_hat * |R| * |S|
+ * SS      = M1 - 2 mu_hat M2 + mu_hat^2 M3          (Konig-Huygens, O(1))
+ * V_hat   = SS / weight_sum^2                        (self-normalized, Eq. 11)
+ * CI      = J_hat +/- 1.96 * |R| * |S| * sqrt(V_hat)
+ */
+static void
+record_trajectory(RoslJoinState *st)
+{
+	double		mu;
+	double		Jhat;
+	double		ss;
+	double		Vhat;
+	double		ci_half;
+
+	st->rounds++;
+
+	if (st->weight_sum <= 0.0)
+		return;
+
+	mu = st->est_num / st->weight_sum;
+	Jhat = mu * st->num_outer * st->num_inner;
+
+	/* recentered weighted sum of squares; clamp tiny negatives from FP noise */
+	ss = st->mom_yy - 2.0 * mu * st->mom_yp + mu * mu * st->mom_pp;
+	if (ss < 0.0)
+		ss = 0.0;
+	Vhat = ss / (st->weight_sum * st->weight_sum);
+	ci_half = 1.96 * st->num_outer * st->num_inner * sqrt(Vhat);
+
+	if (st->traj_count < ROSL_TRAJ_CAP)
+	{
+		double		elapsed_ms = 0.0;
+
+		if (st->t_started)
+		{
+			/*
+			 * TimestampTz is an int64 count of microseconds; subtracting two
+			 * of them directly avoids depending on the platform's
+			 * TimestampDifference() out-param signature (long vs int64), which
+			 * has changed across PG versions.
+			 */
+			TimestampTz now = GetCurrentTimestamp();
+
+			elapsed_ms = (double) (now - st->t_start) / 1000.0;
+		}
+
+		st->traj_round[st->traj_count]          = st->rounds;
+		st->traj_mean_per_pair[st->traj_count]  = mu;
+		st->traj_est_join[st->traj_count]       = Jhat;
+		st->traj_ci_halfwidth[st->traj_count]   = ci_half;
+		st->traj_pairs_seen[st->traj_count]     = st->est_den;
+		st->traj_sample_matches[st->traj_count] = st->sample_matches;
+		st->traj_elapsed_ms[st->traj_count]     = elapsed_ms;
+		st->traj_count++;
+	}
+	else
+		st->traj_truncated = true;
+}
+
+/*
+ * Finalise a completed EXPLOITATION round (one M-block x one body K-block).
  *
- * expl_exact is the EXACT match count from region R x P (the shared prefix),
- * accumulated during exploration; it is added in directly (probability-1
- * observations, never IPW-weighted).  The HT mean is extrapolated only over the
- * body |B|, never over the full |S|.
+ * The per-round score is the AIPW estimator for the total match count in the
+ * M x K slice:
+ *
+ *   Y_hat = sum_{t in M} mhat(t)                         (baseline, all of M)
+ *         + sum_{t in cache} (round_match(t) - mhat(t)) / pi(t)   (correction)
+ *
+ * with pi(t) = 1 - (1 - p(t))^L the exact inclusion probability.  The control
+ * variate mhat(t) must be a genuine PREDICTOR of this round's match count, so
+ * it is the empirical joinability RATE times the block size:
+ *
+ *   mhat(t) = qhat(t) * Kn
+ *
+ * where qhat(t) is FROZEN in build_distribution() before the round is probed
+ * (so it is H_{t-1}-measurable, as AIPW unbiasedness requires): it is the
+ * empirical match rate reward(t)/attempts(t), or 0 for a tuple with no prior
+ * attempts.  This is deliberately NOT the selection value q(t): selection uses
+ * the OPTIMISTIC q(t)=1 for untried tuples (to keep exploring them), but as a
+ * regression predictor an untried tuple must predict ZERO matches -- using q=1
+ * here would make the baseline claim every untried tuple joins all of K, which
+ * the correction term would then subtract back with a huge inverse-pi factor,
+ * injecting exactly the variance the control variate is meant to remove.  When
+ * most pairs do not join, qhat(t) ~ 0, the baseline ~ 0, and the inverse-pi
+ * correction fires only on the rare actual matches.
+ *
+ * The round is then pooled with a variance-stabilizing weight via
+ * accumulate_round(); pi_repr = min over cached tuples of pi(t) treats the
+ * round as being as fragile as its rarest included tuple.
  */
 static void
 finalize_round(RoslJoinState *st)
 {
 	double		Yhat = 0.0;
+	double		Kn = (double) st->k_count;
+	double		pi_repr = 1.0;
+	double		round_pairs;
 	int			c;
+	int			t;
+	int			n = st->m_count;
 
+	/* AIPW correction term over the cached (probed) tuples */
 	for (c = 0; c < st->cache_count; c++)
 	{
 		int			m = st->cache_midx[c];
 		double		pm = st->p[m];
 		double		pi = 1.0 - pow(1.0 - pm, (double) st->exp_cache_lim);
+		double		mhat = st->qhat[m] * Kn;	/* frozen match-count predictor */
 
 		if (pi > 0.0)
-			Yhat += (double) st->round_match[m] / pi;
-	}
-
-	st->est_num += Yhat;
-	st->est_den += (double) st->m_count * (double) st->k_count;
-	st->rounds++;
-
-	if (st->est_den > 0.0)
-	{
-		int			pfx = (st->n_probes < st->s_count)
-							? st->n_probes : st->s_count;
-		double		mu_B = st->est_num / st->est_den;
-		double		body_inner = (double) st->s_count - (double) pfx;	/* >= 0 */
-		double		Jhat;
-
-		/*
-		 * Trajectory |R| proxy = planner num_outer (total outer unknown until
-		 * the scan ends).  |B| = s_count - pfx uses the exact inner size.
-		 */
-		Jhat = st->expl_exact + mu_B * st->num_outer * body_inner;
-
-		/*
-		 * Record this round into the in-C trajectory buffer instead of
-		 * emitting a mid-stream NOTICE.  Nothing crosses the wire here: the
-		 * client drains rows only, and the whole trajectory is dumped once at
-		 * teardown by PrintRoslCounters().  This is the Saketh communication
-		 * model -- measurement delivery is fully decoupled from row delivery,
-		 * so a server-side cursor can never deadlock on notice flushing.
-		 *
-		 * Timing is taken here, at the source, via GetCurrentTimestamp()
-		 * relative to t_start (set when the first M-block loaded).
-		 */
-		if (st->traj_count < ROSL_TRAJ_CAP)
 		{
-			double		elapsed_ms = 0.0;
-
-			if (st->t_started)
-			{
-				/* TimestampTz is int64 microseconds; subtract directly */
-				TimestampTz now = GetCurrentTimestamp();
-
-				elapsed_ms = (double) (now - st->t_start) / 1000.0;
-			}
-
-			st->traj_round[st->traj_count]          = st->rounds;
-			st->traj_mean_per_pair[st->traj_count]  = mu_B;
-			st->traj_est_join[st->traj_count]       = Jhat;
-			st->traj_pairs_seen[st->traj_count]     = st->est_den;
-			st->traj_sample_matches[st->traj_count] = st->sample_matches;
-			st->traj_elapsed_ms[st->traj_count]     = elapsed_ms;
-			st->traj_count++;
+			Yhat += mhat + ((double) st->round_match[m] - mhat) / pi;
+			if (pi < pi_repr)
+				pi_repr = pi;		/* track rarest included tuple           */
 		}
 		else
-			st->traj_truncated = true;
+			Yhat += mhat;			/* degenerate pi: baseline only          */
 	}
+
+	/* AIPW baseline term over the tuples NOT in the cache */
+	for (t = 0; t < n; t++)
+	{
+		if (!st->in_cache[t])
+			Yhat += st->qhat[t] * Kn;
+	}
+
+	round_pairs = (double) st->m_count * Kn;
+	accumulate_round(st, round_pairs, Yhat, pi_repr);
+	record_trajectory(st);
+}
+
+/*
+ * Finalise a completed EXPLORATION round (one M-block x prefix P).
+ *
+ * Exploration draws a UNIFORM cache over M, so every selected tuple shares the
+ * inclusion probability pi_exp = 1 - (1 - 1/Mn)^L.  Untried tuples have no
+ * joinability signal yet, so the exploration round uses the raw HT score (no
+ * control variate):
+ *
+ *   Y_hat_exp = sum over cached t of round_match(t) / pi_exp
+ *
+ * over region R x P (round_pairs = Mn * p_count).  It is pooled by the same
+ * adaptively-weighted accumulate_round(), with pi_repr = pi_exp.
+ */
+static void
+finalize_explore_round(RoslJoinState *st)
+{
+	double		Mn = (double) st->m_count;
+	double		pi_exp;
+	double		Yhat = 0.0;
+	double		round_pairs;
+	int			c;
+
+	if (Mn <= 0.0 || st->p_count <= 0)
+		return;
+
+	pi_exp = 1.0 - pow(1.0 - 1.0 / Mn, (double) st->exp_cache_lim);
+
+	for (c = 0; c < st->cache_count; c++)
+	{
+		int			m = st->cache_midx[c];
+
+		if (pi_exp > 0.0)
+			Yhat += (double) st->round_match[m] / pi_exp;
+	}
+
+	round_pairs = Mn * (double) st->p_count;
+	accumulate_round(st, round_pairs, Yhat, pi_exp);
+	record_trajectory(st);
 }
 
 /*
@@ -616,6 +857,7 @@ rosl_state_init(NestLoopState *node)
 	NestLoop   *nl = (NestLoop *) node->js.ps.plan;
 	RoslJoinState *st;
 	TupleDesc	outerDesc;
+	TupleDesc	innerDesc;
 	int			i;
 
 	st = (RoslJoinState *) palloc0(sizeof(RoslJoinState));
@@ -624,41 +866,65 @@ rosl_state_init(NestLoopState *node)
 	st->k_lim = ROSL_K_LIM;
 	st->exp_cache_lim = ROSL_EXP_CACHE_LIM;
 	st->n_probes = ROSL_N_PROBES;
+	st->epsilon_fixed = ROSL_EPSILON;
+	st->alpha = ROSL_ALPHA;
 
 	/* known pair count for the extrapolation (planner row estimates) */
 	st->num_outer = outerPlan(nl)->plan_rows;
 	st->num_inner = innerPlan(nl)->plan_rows;
 
+	/*
+	 * Estimate the total number of rounds up front for the two-point
+	 * allocation rate.  Each M-block contributes 1 exploration round plus one
+	 * exploitation round per body K-block (body = |S| - n_probes).  This need
+	 * only be approximate for valid inference (paper: any allocation rate
+	 * inside the Theorem-3 bounds is fine); accuracy affects efficiency only.
+	 */
+	{
+		double		n_mblocks = ceil(st->num_outer / (double) st->m_lim);
+		double		body = st->num_inner - (double) st->n_probes;
+		double		n_kblocks;
+
+		if (body < 0.0)
+			body = 0.0;
+		n_kblocks = ceil(body / (double) st->k_lim);
+		st->t_est = n_mblocks * (1.0 + n_kblocks);
+		if (st->t_est < 1.0)
+			st->t_est = 1.0;
+	}
+
 	outerDesc = ExecGetResultType(outerPlanState(node));
+	innerDesc = ExecGetResultType(innerPlanState(node));
 
 	st->m_slots = (TupleTableSlot **) palloc(sizeof(TupleTableSlot *) * st->m_lim);
 	for (i = 0; i < st->m_lim; i++)
 		st->m_slots[i] = MakeSingleTupleTableSlot(outerDesc);
+	st->k_slots = (TupleTableSlot **) palloc(sizeof(TupleTableSlot *) * st->k_lim);
+	for (i = 0; i < st->k_lim; i++)
+		st->k_slots[i] = MakeSingleTupleTableSlot(innerDesc);
 
-	/*
-	 * S is materialised in full ONCE (lazily, on the first M-block) and grown
-	 * on demand by materialise_inner(); start empty so a tiny inner relation
-	 * costs almost nothing.  s_built guards against re-materialising per block.
-	 */
-	st->s_slots = NULL;
-	st->s_count = 0;
-	st->s_cap = 0;
-	st->s_built = false;
+	/* exploration prefix buffer P = S[0 : n_probes] */
+	st->p_slots = (TupleTableSlot **) palloc(sizeof(TupleTableSlot *) * st->n_probes);
+	for (i = 0; i < st->n_probes; i++)
+		st->p_slots[i] = MakeSingleTupleTableSlot(innerDesc);
+	st->p_count = 0;
 
 	st->reward = (int *) palloc(sizeof(int) * st->m_lim);
+	st->attempts = (int *) palloc(sizeof(int) * st->m_lim);
 	st->round_match = (int *) palloc(sizeof(int) * st->m_lim);
 	st->p = (double *) palloc(sizeof(double) * st->m_lim);
+	st->q = (double *) palloc(sizeof(double) * st->m_lim);
+	st->qhat = (double *) palloc(sizeof(double) * st->m_lim);
 	st->cum = (double *) palloc(sizeof(double) * st->m_lim);
+	st->in_cache = (bool *) palloc(sizeof(bool) * st->m_lim);
 	st->interim = (int *) palloc(sizeof(int) * st->exp_cache_lim);
 	st->cache_midx = (int *) palloc(sizeof(int) * st->exp_cache_lim);
-
-	st->expl_exact = 0.0;			/* exact R x P match count (region 1)     */
-	st->act_outer = 0.0;			/* actual |R|: accumulated per M-block     */
 
 	/* per-round trajectory buffers (dumped once at teardown) */
 	st->traj_round          = (long *)   palloc(sizeof(long) * ROSL_TRAJ_CAP);
 	st->traj_mean_per_pair  = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
 	st->traj_est_join       = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
+	st->traj_ci_halfwidth   = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
 	st->traj_pairs_seen     = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
 	st->traj_sample_matches = (long *)   palloc(sizeof(long) * ROSL_TRAJ_CAP);
 	st->traj_elapsed_ms     = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
@@ -667,14 +933,25 @@ rosl_state_init(NestLoopState *node)
 
 	st->t_started = false;
 
-	st->epsilon = ROSL_EPSILON;			/* fixed hyperparameter; never decayed */
+	/* adaptively-weighted estimator accumulators start empty */
+	st->est_num = 0.0;
+	st->weight_sum = 0.0;
+	st->est_den = 0.0;
+	st->mom_yy = 0.0;
+	st->mom_yp = 0.0;
+	st->mom_pp = 0.0;
+	st->stick = 1.0;
+	st->round_idx = 0;
+	st->act_outer = 0.0;			/* exact |R|: accumulated per M-block      */
+
 	st->phase = PH_NEW_MBLOCK;
 
 	/*
 	 * Seed the per-state PRNG from a mix of high-resolution time, the backend
 	 * PID, and the state pointer, so concurrently launched workers get
 	 * independent streams.  (The old srand(time(NULL)) gave same-second workers
-	 * identical caches.)  Force non-zero: xorshift64* cannot leave state 0.
+	 * identical caches, correlating replicates.)  Force non-zero: xorshift64*
+	 * cannot leave state 0.
 	 */
 	st->rng_state = (uint64) GetCurrentTimestamp()
 		^ ((uint64) MyProcPid << 32)
@@ -796,29 +1073,15 @@ ExecStockNestLoop(NestLoopState *node)
 
 
 /* ----------------------------------------------------------------
- *		ExecRoslNestLoop  --  streaming two-phase ROSL sampling join
+ *		ExecRoslNestLoop  --  streaming ROSL sampling join with HT estimator
  *
- *		Consumes R in M-blocks.  For each M-block:
- *		  PH_NEW_MBLOCK   loads the outer block, materialises all of S (once),
- *		                  zeroes r(t), and accumulates the exact outer count.
- *		  PH_EXPLORE      probes every M-tuple against the shared prefix P,
- *		                  counting r(t), tallying matches EXACTLY into expl_exact
- *		                  and emitting them.  q(t) = r(t)/n_probes is frozen at
- *		                  the end of this phase.
- *		  PH_NEW_SBLOCK   takes the next BODY K-block and draws an exploit cache
- *		                  from the epsilon-greedy-on-joinability distribution
- *		                  (built from the frozen q(t) and fixed epsilon).
- *		  PH_PROBE        probes the cache against the K-block, emits matches,
- *		                  and (at round end) folds the body HT estimate.
- *		Resume cursors let every phase yield one row per call.  node->rosl is
+ *		Single-phase driver.  Consumes R in M-blocks; for each M-block scans
+ *		all of S in K-blocks.  Each round draws a joinability-weighted exploit cache
+ *		and probes it against the current K-block, emitting matching rows one
+ *		per call.  Resume cursors (probe_ci, probe_kj) track position within a
+ *		round across calls.  At round end, finalize_round() folds the
+ *		Horvitz-Thompson estimate and epsilon is halved.  node->rosl is
  *		guaranteed non-NULL by the dispatcher.
- *
- *		Fixed-Probe semantics: the exploitation distribution is FROZEN for the
- *		whole M-block (q(t) comes only from exploration, which probes every tuple
- *		n_probes times; exploitation never updates r(t)).  epsilon is fixed (a
- *		hyperparameter; never decayed).  Region R x P is counted exactly and the
- *		body HT mean is extrapolated only over |B| = |S| - n_probes, so the
- *		two-region estimate is unbiased with lower variance than pooling.
  * ----------------------------------------------------------------
  */
 static TupleTableSlot *
@@ -827,7 +1090,6 @@ ExecRoslNestLoop(NestLoopState *node)
 	RoslJoinState *st = (RoslJoinState *) node->rosl;
 	PlanState  *outerPlan = outerPlanState(node);
 	PlanState  *innerPlan = innerPlanState(node);
-	TupleDesc	innerDesc = ExecGetResultType(innerPlan);
 	ExprState  *joinqual = node->js.joinqual;
 	ExprState  *otherqual = node->js.ps.qual;
 	ExprContext *econtext = node->js.ps.ps_ExprContext;
@@ -846,22 +1108,25 @@ ExecRoslNestLoop(NestLoopState *node)
 					if (st->m_count == 0)
 					{
 						/*
-						 * Outer exhausted: no further M-blocks.  Nothing is
-						 * emitted here; matching the Saketh communication model,
-						 * the only mid-stream signal the client gets is the
-						 * cursor returning NULL.  The full estimate + trajectory
-						 * is dumped once at teardown (PrintRoslCounters).
+						 * Outer exhausted: no further M-blocks, so no further
+						 * rounds will ever run.  We do NOT emit anything here:
+						 * matching Saketh's model, the only mid-stream signal
+						 * the client gets is the cursor returning NULL.  The
+						 * full estimate + trajectory is dumped once at teardown
+						 * (PrintRoslCounters in ExecEndNestLoop).  Completion is
+						 * therefore detected client-side purely by fetchone()
+						 * returning None -- no NOTICE parsing, no deadlock.
 						 */
 						st->phase = PH_DONE;
 						break;
 					}
 
-					/* CORRECTION (3): accumulate EXACT outer cardinality |R| */
+					/* Exact outer cardinality |R|: sum m_count over M-blocks */
 					st->act_outer += (double) st->m_count;
 
 					/*
-					 * Anchor timing at the first non-empty M-block, i.e. the
-					 * moment real work begins.  Measured in C so it is
+					 * Anchor per-round timing at the first non-empty M-block,
+					 * i.e. the moment real work begins.  Measured in C so it is
 					 * independent of when the client fetches or libpq flushes.
 					 */
 					if (!st->t_started)
@@ -870,77 +1135,83 @@ ExecRoslNestLoop(NestLoopState *node)
 						st->t_started = true;
 					}
 
-					/* fresh M-block: zero exploration rewards r(t) */
-					memset(st->reward, 0, sizeof(int) * st->m_count);
-
 					/*
-					 * Materialise ALL of S ONCE, on the first M-block, and reuse
-					 * it for every subsequent M-block.  The relation is shuffled
-					 * at rest, so s_slots[0 .. n_probes) is a fixed uniform random
-					 * exploration prefix P shared across all M-blocks; the body
-					 * s_slots[n_probes .. s_count) is what exploitation scans.
-					 * Materialising once (rather than per M-block) is correct
-					 * precisely because the prefix and body must be the SAME tuples
-					 * for every M-block under global without-replacement.
+					 * Fresh M-block: zero rewards & attempts (r(t), a(t) are
+					 * per-M-block).  Rewind S and load the exploration prefix P
+					 * = S[0 : n_probes] first; the body scan later resumes from
+					 * tuple n_probes+1, so P and the body are disjoint.
+					 * Epsilon is FIXED (epsilon_fixed) in this version, so there
+					 * is nothing to reset per M-block.
 					 */
-					if (!st->s_built)
-					{
-						ExecReScan(innerPlan);
-						st->s_count = materialise_inner(st, innerPlan, innerDesc);
-						st->s_built = true;
-					}
+					memset(st->reward, 0, sizeof(int) * st->m_count);
+					memset(st->attempts, 0, sizeof(int) * st->m_count);
+					ExecReScan(innerPlan);
+					st->p_count = load_prefix_block(st, innerPlan);
 
-					if (st->s_count == 0)
-					{
-						/* empty inner: no joins possible for any M-block */
-						st->phase = PH_DONE;
-						break;
-					}
-
-					/* begin deterministic exploration at (M-tuple 0, probe 0) */
-					st->expl_mi = 0;
-					st->expl_pi = 0;
 					st->phase = PH_EXPLORE;
 					break;
 				}
 
 			case PH_EXPLORE:
 				{
+					int			ci;
+					int			pj;
+
 					/*
-					 * Deterministic exploration over region R x P: probe every
-					 * M-tuple against the SAME shared prefix P = s_slots[0..pfx).
-					 * r(t) counts the joins; a(t) is the design constant n_probes
-					 * for every tuple, so q(t) = r(t)/n_probes is uncensored.
-					 *
-					 * These pairs are observed with probability 1, so each match
-					 * is (a) emitted as join output and (b) added EXACTLY to
-					 * expl_exact -- never inverse-probability weighted.  The
-					 * prefix is the same fixed tuples for every M-block, and is
-					 * excluded from exploitation, so no pair is probed twice.
-					 *
-					 * pfx = min(n_probes, s_count): if S is smaller than n_probes
-					 * the whole relation is the prefix and there is no body (the
-					 * exploitation loop will then find nothing to scan).  Resume
-					 * cursors (expl_mi, expl_pi) pick up after each returned row.
+					 * Probabilistic exploration round for this M-block: draw a
+					 * UNIFORM cache over M (once) and probe it against the whole
+					 * prefix P (region R x P).  If P is empty (n_probes larger
+					 * than |S|, or an empty inner), skip straight to the body.
 					 */
-					int			pfx = (st->n_probes < st->s_count)
-										? st->n_probes : st->s_count;
-					int			mi = st->expl_mi;
-					int			pi = st->expl_pi;
-
-					while (mi < st->m_count)
+					if (st->p_count == 0)
 					{
-						TupleTableSlot *outerSlot = st->m_slots[mi];
+						st->phase = PH_NEW_SBLOCK;
+						break;
+					}
 
-						while (pi < pfx)
+					if (!st->explore_built)
+					{
+						/* first entry for this M-block: build the round once */
+						build_distribution(st, true /* uniform */);
+						build_cumulative(st);
+						draw_and_dedup_cache(st);
+						memset(st->round_match, 0, sizeof(int) * st->m_count);
+
+						/*
+						 * a(t) += n_probes for every uniquely cached tuple:
+						 * each is tested against all of P.  Done up front so
+						 * a(t) is correct regardless of how the resume cursors
+						 * slice the probing.
+						 */
 						{
-							TupleTableSlot *innerSlot = st->s_slots[pi];
+							int			c;
+
+							for (c = 0; c < st->cache_count; c++)
+								st->attempts[st->cache_midx[c]] += st->p_count;
+						}
+
+						st->explore_built = true;
+						st->explore_ci = 0;
+						st->explore_pj = 0;
+					}
+
+					ci = st->explore_ci;
+					pj = st->explore_pj;
+
+					while (ci < st->cache_count)
+					{
+						int			m = st->cache_midx[ci];
+						TupleTableSlot *outerSlot = st->m_slots[m];
+
+						while (pj < st->p_count)
+						{
+							TupleTableSlot *innerSlot = st->p_slots[pj];
 
 							CHECK_FOR_INTERRUPTS();
 
 							econtext->ecxt_outertuple = outerSlot;
 							econtext->ecxt_innertuple = innerSlot;
-							pi++;			/* advance now; resume picks up here */
+							pj++;
 							st->t_steps++;
 
 							if (ExecQual(joinqual, econtext))
@@ -948,11 +1219,11 @@ ExecRoslNestLoop(NestLoopState *node)
 								if (otherqual == NULL ||
 									ExecQual(otherqual, econtext))
 								{
-									st->reward[mi]++;		/* r(t)               */
-									st->expl_exact += 1.0;	/* exact R x P tally   */
-									st->sample_matches++;	/* diagnostics         */
-									st->expl_mi = mi;		/* save resume pos     */
-									st->expl_pi = pi;
+									st->reward[m]++;
+									st->round_match[m]++;
+									st->sample_matches++;
+									st->explore_ci = ci;
+									st->explore_pj = pj;
 									return ExecProject(node->js.ps.ps_ProjInfo);
 								}
 								else
@@ -963,47 +1234,50 @@ ExecRoslNestLoop(NestLoopState *node)
 
 							ResetExprContext(econtext);
 						}
-						pi = 0;
-						mi++;
+						pj = 0;
+						ci++;
 					}
 
-					/*
-					 * Exploration complete: q(t) is now frozen.  Begin the
-					 * exploitation scan at the first BODY K-block, i.e. just
-					 * past the shared prefix (k_start = n_probes).  The prefix is
-					 * thus excluded from every K-block (global WOR).
-					 */
-					st->k_start = st->n_probes;
+					/* Exploration round complete: fold its HT score (R x P) */
+					finalize_explore_round(st);
+
+					st->explore_ci = 0;
+					st->explore_pj = 0;
+					st->explore_built = false;
 					st->phase = PH_NEW_SBLOCK;
 					break;
 				}
 
 			case PH_NEW_SBLOCK:
 				{
-					/* body tuples remaining (k_start began at n_probes) */
-					int			remaining = st->s_count - st->k_start;
-
-					if (remaining <= 0)
+					st->k_count = load_inner_block(st, innerPlan);
+					if (st->k_count == 0)
 					{
-						/* whole BODY exploited for this M-block: advance outer */
+						/* S exhausted for this M-block: advance outer */
 						st->phase = PH_NEW_MBLOCK;
 						break;
 					}
 
-					st->k_count = (remaining < st->k_lim) ? remaining : st->k_lim;
+					build_distribution(st, false /* eps-greedy on joinability */);
+					build_cumulative(st);		/* cum[]                   */
+					draw_and_dedup_cache(st);	/* -> cache_midx[]         */
+					memset(st->round_match, 0, sizeof(int) * st->m_count);
 
 					/*
-					 * Build the epsilon-greedy-on-joinability distribution from
-					 * the frozen q(t) and the fixed epsilon.  q(t) and epsilon
-					 * are unchanged across K-blocks, so this reproduces the same
-					 * distribution each round (matching the pseudocode, which
-					 * recomputes it inside the K loop); the cost is O(Mn), small
-					 * next to probing.
+					 * Account join attempts for this round up front: every
+					 * unique cached tuple is probed against all k_count tuples
+					 * in the current K-block, so a(t) += |K| for each.  Doing
+					 * this here (rather than inside the resumable probe loop)
+					 * keeps a(t) correct regardless of how the per-call resume
+					 * cursors slice the probing, and matches the pseudocode's
+					 * "a(texp M) += |K|" before the inner K scan.
 					 */
-					build_distribution(st);		/* p[] from frozen q(t), eps */
-					build_cumulative(st);		/* cum[]                     */
-					draw_and_dedup_cache(st);	/* -> cache_midx[]           */
-					memset(st->round_match, 0, sizeof(int) * st->m_count);
+					{
+						int		c;
+
+						for (c = 0; c < st->cache_count; c++)
+							st->attempts[st->cache_midx[c]] += st->k_count;
+					}
 
 					st->probe_ci = 0;			/* start cache scan from beginning */
 					st->probe_kj = 0;			/* start K-block scan from beginning */
@@ -1017,12 +1291,13 @@ ExecRoslNestLoop(NestLoopState *node)
 					int			kj = st->probe_kj;
 
 					/*
-					 * Exploitation round: probe the exploit cache against the
-					 * current K-block, emitting each matching row immediately.
-					 * Per-round match counts feed the Horvitz-Thompson estimator
-					 * at round end.  q(t) is FROZEN here -- exploitation does NOT
-					 * update r(t) -- so the inclusion probabilities depend only
-					 * on the exploration probes, never on what exploitation sees.
+					 * Probabilistic round: probe the exploit cache against the
+					 * K-block, emitting each matching row immediately.  Resume
+					 * cursors (probe_ci, probe_kj) let the state machine pick up
+					 * exactly where it left off after each returned row.  Rewards
+					 * and per-round match counts are accumulated here so that
+					 * finalize_round() has everything it needs when the last pair
+					 * in the round has been probed.
 					 */
 					while (ci < st->cache_count)
 					{
@@ -1031,8 +1306,7 @@ ExecRoslNestLoop(NestLoopState *node)
 
 						while (kj < st->k_count)
 						{
-							TupleTableSlot *innerSlot =
-								st->s_slots[st->k_start + kj];
+							TupleTableSlot *innerSlot = st->k_slots[kj];
 
 							CHECK_FOR_INTERRUPTS();
 
@@ -1046,6 +1320,7 @@ ExecRoslNestLoop(NestLoopState *node)
 								if (otherqual == NULL ||
 									ExecQual(otherqual, econtext))
 								{
+									st->reward[m]++;		/* selection feedback  */
 									st->round_match[m]++;	/* estimator numerator */
 									st->sample_matches++;	/* diagnostics only    */
 									st->probe_ci = ci;		/* save resume position */
@@ -1064,13 +1339,16 @@ ExecRoslNestLoop(NestLoopState *node)
 						ci++;
 					}
 
-					/* Round complete: fold HT estimate, advance to next K-block */
+					/*
+					 * Round complete: fold the AIPW score into the
+					 * adaptively-weighted estimate and emit the trajectory row
+					 * (with CI).  Epsilon is FIXED in this version -- no decay.
+					 */
 					finalize_round(st);
 
-					st->k_start += st->k_count;	/* next contiguous K-block      */
 					st->probe_ci = 0;
 					st->probe_kj = 0;
-					st->phase = PH_NEW_SBLOCK;	/* epsilon is fixed; no decay   */
+					st->phase = PH_NEW_SBLOCK;
 					break;
 				}
 
@@ -1095,13 +1373,14 @@ ExecNestLoop(PlanState *pstate)
 	CHECK_FOR_INTERRUPTS();
 
 	/*
-	 * Plan-shape guard.  The ROSL path materialises the inner ONCE and reuses
-	 * it for every M-block, and emits inner-join matches only.  That is correct
-	 * only for a plain INNER join with a NON-parameterised inner.  If the
-	 * planner picked a parameterised nestloop (nestParams != NIL) or a non-inner
-	 * join, running ROSL would silently produce wrong results, so fall back to
-	 * the exact stock nested loop even when the GUC is on.  (The experimental
-	 * 2-table inner-join queries this estimator targets always satisfy this.)
+	 * Plan-shape guard.  The ROSL path assumes a plain INNER join with a
+	 * NON-parameterised inner: it rescans the whole inner per M-block (valid
+	 * only for a fixed, non-parameterised inner) and emits inner-join matches
+	 * only.  If the planner picked a parameterised nestloop (nestParams != NIL)
+	 * or a non-inner join, running ROSL would silently produce wrong results,
+	 * so fall back to the exact stock nested loop even when the GUC is on.
+	 * (The experimental 2-table inner-join queries this estimator targets
+	 * always satisfy this.)
 	 */
 	if (!enable_rosl ||
 		nl->nestParams != NIL ||
@@ -1222,10 +1501,12 @@ PrintRoslCounters(RoslJoinState *st)
 	{
 		elog(INFO,
 			 "ROSL_TRAJ round=%ld mean_per_pair=%.10f est_join=%.2f "
-			 "pairs_seen=%.0f sample_matches=%ld elapsed_ms=%.3f",
+			 "ci_halfwidth=%.2f pairs_seen=%.0f sample_matches=%ld "
+			 "elapsed_ms=%.3f",
 			 st->traj_round[i],
 			 st->traj_mean_per_pair[i],
 			 st->traj_est_join[i],
+			 st->traj_ci_halfwidth[i],
 			 st->traj_pairs_seen[i],
 			 st->traj_sample_matches[i],
 			 st->traj_elapsed_ms[i]);
@@ -1237,43 +1518,45 @@ PrintRoslCounters(RoslJoinState *st)
 			 "(use a smaller scale factor)", ROSL_TRAJ_CAP);
 
 	/*
-	 * Final two-region estimate, computed with ACTUAL table sizes (correction
-	 * 3).  Region R x P is known exactly (expl_exact); only the body R x B is
-	 * estimated, by the HT body mean mu_B = est_num / est_den extrapolated over
-	 * |R| * |B|.  Here |R| = act_outer (the exact outer count summed over every
-	 * M-block) and |B| = s_count - pfx (the exact materialised inner minus the
-	 * exact prefix width), so this final number is exactly unbiased given the
-	 * true sizes -- it does NOT depend on the planner's plan_rows.
-	 *
-	 *   J_hat = expl_exact + mu_B * act_outer * (s_count - pfx)
-	 *
-	 * The planner estimates num_outer / num_inner are reported alongside for
-	 * comparison (and are what the running trajectory used for |R|).  The
-	 * `final_est_join=` token is kept verbatim so the existing worker log parser
-	 * still finds it.
+	 * Final summary.  The point estimate uses the WEIGHTED denominator
+	 * weight_sum (adaptively-weighted mean), not the raw pair count est_den.
+	 * The extrapolation now uses the EXACT outer count act_outer (summed over
+	 * every M-block, so it is exact once the scan has finished) instead of the
+	 * planner's plan_rows -- the sampler only estimates a per-pair rate, and the
+	 * outer population size is known exactly by the time we get here.  The inner
+	 * size is still the planner estimate num_inner (this version rescans S per
+	 * M-block rather than materialising it, so it never counts |S| exactly; see
+	 * note in the header).  A final self-normalized CI half-width is recomputed
+	 * here from the moment accumulators (Konig-Huygens), matching the per-round
+	 * trajectory.  The `final_est_join=` token is kept verbatim for the parser.
 	 */
+	if (st->weight_sum > 0.0)
 	{
-		int			pfx = (st->n_probes < st->s_count)
-							? st->n_probes : st->s_count;
-		double		body_inner = (double) st->s_count - (double) pfx;	/* >= 0 */
-		double		mu_body = 0.0;
-		double		est_join;
+		double		mu = st->est_num / st->weight_sum;
+		double		pop = st->act_outer * st->num_inner;
+		double		est_join = mu * pop;
+		double		ss = st->mom_yy - 2.0 * mu * st->mom_yp
+			+ mu * mu * st->mom_pp;
+		double		Vhat;
+		double		ci_half;
 
-		if (st->est_den > 0.0)
-			mu_body = st->est_num / st->est_den;
-
-		est_join = st->expl_exact + mu_body * st->act_outer * body_inner;
+		if (ss < 0.0)
+			ss = 0.0;
+		Vhat = ss / (st->weight_sum * st->weight_sum);
+		ci_half = 1.96 * pop * sqrt(Vhat);
 
 		elog(INFO,
-			 "ROSL_SUMM final_est_join=%.2f expl_exact=%.0f mu_body=%.10f "
-			 "rounds=%ld sample_matches=%ld body_pairs_seen=%.0f t_steps=%ld "
-			 "act_outer=%.0f s_count=%d num_outer=%.0f num_inner=%.0f "
-			 "n_probes=%d exp_cache_lim=%d epsilon=%.4f",
-			 est_join, st->expl_exact, mu_body, st->rounds, st->sample_matches,
-			 st->est_den, st->t_steps, st->act_outer, st->s_count,
-			 st->num_outer, st->num_inner,
-			 st->n_probes, st->exp_cache_lim, st->epsilon);
+			 "ROSL_SUMM final_est_join=%.2f ci_halfwidth=%.2f rounds=%ld "
+			 "sample_matches=%ld pairs_seen=%.0f t_steps=%ld "
+			 "act_outer=%.0f num_outer=%.0f num_inner=%.0f",
+			 est_join, ci_half, st->rounds, st->sample_matches, st->est_den,
+			 st->t_steps, st->act_outer, st->num_outer, st->num_inner);
 	}
+	else
+		elog(INFO,
+			 "ROSL_SUMM final_est_join=0.00 rounds=0 sample_matches=%ld "
+			 "(no completed rounds: outer empty or join produced no pairs)",
+			 st->sample_matches);
 }
 
 
@@ -1309,22 +1592,30 @@ ExecEndNestLoop(NestLoopState *node)
 		for (i = 0; i < st->m_lim; i++)
 			if (!TupIsNull(st->m_slots[i]))
 				ExecDropSingleTupleTableSlot(st->m_slots[i]);
-		for (i = 0; i < st->s_cap; i++)
-			if (!TupIsNull(st->s_slots[i]))
-				ExecDropSingleTupleTableSlot(st->s_slots[i]);
+		for (i = 0; i < st->k_lim; i++)
+			if (!TupIsNull(st->k_slots[i]))
+				ExecDropSingleTupleTableSlot(st->k_slots[i]);
+		for (i = 0; i < st->n_probes; i++)
+			if (!TupIsNull(st->p_slots[i]))
+				ExecDropSingleTupleTableSlot(st->p_slots[i]);
 
 		pfree(st->m_slots);
-		if (st->s_slots != NULL)
-			pfree(st->s_slots);
+		pfree(st->k_slots);
+		pfree(st->p_slots);
 		pfree(st->reward);
+		pfree(st->attempts);
 		pfree(st->round_match);
 		pfree(st->p);
+		pfree(st->q);
+		pfree(st->qhat);
 		pfree(st->cum);
+		pfree(st->in_cache);
 		pfree(st->interim);
 		pfree(st->cache_midx);
 		pfree(st->traj_round);
 		pfree(st->traj_mean_per_pair);
 		pfree(st->traj_est_join);
+		pfree(st->traj_ci_halfwidth);
 		pfree(st->traj_pairs_seen);
 		pfree(st->traj_sample_matches);
 		pfree(st->traj_elapsed_ms);
@@ -1366,24 +1657,29 @@ ExecReScanNestLoop(NestLoopState *node)
 	{
 		st->phase = PH_NEW_MBLOCK;
 		st->m_count = 0;
-		st->s_count = 0;
-		st->s_built = false;			/* re-materialise S (and prefix) fresh */
-		st->k_start = 0;
 		st->k_count = 0;
+		st->p_count = 0;
 		st->cache_count = 0;
-		st->expl_mi = 0;
-		st->expl_pi = 0;
 		st->probe_ci = 0;
 		st->probe_kj = 0;
-		st->epsilon = ROSL_EPSILON;		/* fixed hyperparameter */
+		st->explore_ci = 0;
+		st->explore_pj = 0;
+		st->explore_built = false;
+
+		/* adaptively-weighted estimator: clear all accumulators */
 		st->est_num = 0.0;
+		st->weight_sum = 0.0;
 		st->est_den = 0.0;
-		st->expl_exact = 0.0;			/* exact R x P tally restarts          */
-		st->act_outer = 0.0;			/* exact |R| accumulator restarts      */
+		st->mom_yy = 0.0;
+		st->mom_yp = 0.0;
+		st->mom_pp = 0.0;
+		st->stick = 1.0;
+		st->round_idx = 0;
+		st->act_outer = 0.0;			/* exact |R| accumulator restarts       */
+
 		st->rounds = 0;
 		st->t_steps = 0;
 		st->sample_matches = 0;
-		/* r(t) is zeroed per M-block in PH_NEW_MBLOCK; nothing to do here */
 
 		/*
 		 * Advance the PRNG to a fresh stream for the re-scan, so a node executed
