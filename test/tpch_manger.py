@@ -85,20 +85,72 @@ _QUERY_DEFS = {
     "Q15": ("supplier", "lineitem", "s_suppkey = l_suppkey"),
 }
 
-def get_queries(q_name, z_val, shuffle, apply_limit):
-    """Return the SQL string for one (query, schema, limit) combination.
-    Mirrors tpch_manager.py's get_queries() so output limits are easy to
-    find and adjust in one place.  Edit QUERY_LIMITS above to change caps."""
-    if q_name not in _QUERY_DEFS:
-        return None
-    tA, tB, pred = _QUERY_DEFS[q_name]
-    schema = f"z{z_val}_shuff{shuffle}"
-    base   = f"SELECT * FROM {schema}.{tA}, {schema}.{tB} WHERE {pred}"
-    if apply_limit and q_name in QUERY_LIMITS:
-        return f"{base} LIMIT {QUERY_LIMITS[q_name]};"
-    return f"{base};"
+def get_queries(q_name, val, shuff, limit):
+    """Returns a list of tuples: (SQL query, num_relations, target_pct) using the z{val}_shuff{shuff} schema format."""
+    schema = f"z{val}_shuff{shuff}"
+    sql = ""
+    num_relations = 0
 
+    # Determine the number of relations upfront
+    if q_name in ['Q9', 'Q10', 'Q11', 'Q12', 'Q15']:
+        num_relations = 2
+    elif q_name in ['Q2', 'Q3', 'Q5', 'Q8', 'Q9_3R', 'test']:
+        num_relations = 3
+    else:
+        target_pct = 1.00
 
+    if limit:
+        target_pct = 100.00
+
+        # 2R with output limits per JoinLearning_SIGMOD_25 (same as JoinGame_PVLDB_25; missing from JoinGame-SIGMOD-24-bk)
+        if q_name == 'Q9': sql = f"select * from {schema}.partsupp, {schema}.lineitem where ps_partkey = l_partkey LIMIT 221700;"
+        elif q_name == 'Q11': sql = f"select * from {schema}.orders, {schema}.lineitem where o_orderdate = l_shipdate LIMIT 327624700;"
+
+        # 2R with output limits per JoinLearning_SIGMOD_25 (same as JoinGame_PVLDB_25; less than JoinGame-SIGMOD-24-bk)
+        elif q_name == 'Q10': sql = f"select * from {schema}.customer, {schema}.orders where c_custkey = o_custkey LIMIT 13000;"
+        elif q_name == 'Q15': sql = f"select * from {schema}.supplier, {schema}.lineitem where s_suppkey = l_suppkey LIMIT 43800;"
+
+        # 2R with output limits per JoinGame-SIGMOD-24-bk (missing from JoinLearning_SIGMOD_25 and JoinGame_PVLDB_25)
+        elif q_name == 'Q12': sql = f"select * from {schema}.orders, {schema}.lineitem where o_orderkey = l_orderkey LIMIT 1000;"
+
+        # 3R with output limits per JoinLearning_SIGMOD_25 (same as JoinGame_PVLDB_25; less than JoinGame-SIGMOD-24-bk)
+        elif q_name == 'Q2': sql = f"select * from {schema}.part, {schema}.supplier, {schema}.partsupp where p_partkey = ps_partkey and s_suppkey = ps_suppkey LIMIT 5800;"
+
+        # 3R with output limits per JoinGame-SIGMOD-24-bk (missing from JoinLearning_SIGMOD_25 and JoinGame_PVLDB_25)
+        elif q_name == 'Q3': sql = f"select * from {schema}.customer, {schema}.orders, {schema}.lineitem where c_custkey = o_custkey and o_orderkey = l_orderkey LIMIT 350;"
+        elif q_name == 'Q5': sql = f"select * from {schema}.orders, {schema}.supplier, {schema}.lineitem where s_suppkey = l_suppkey and o_orderkey = l_orderkey LIMIT 4000;"
+
+        # 3R with output limits per JoinLearning_SIGMOD_25 (same as JoinGame_PVLDB_25; missing from JoinGame-SIGMOD-24-bk)
+        elif q_name == 'Q8': sql = f"select * from {schema}.part, {schema}.supplier, {schema}.lineitem where p_partkey = l_partkey and s_suppkey = l_suppkey LIMIT 43800;"
+
+        # 3R without output limits (missing from all three folders)
+        elif q_name == 'Q9_3R': 
+            sql = f"select * from {schema}.supplier, {schema}.partsupp, {schema}.lineitem where s_suppkey = l_suppkey and ps_suppkey = l_suppkey;"
+            target_pct = 1.00
+        elif q_name == 'test': 
+            sql = f"select * from {schema}.part, {schema}.supplier, {schema}.lineitem where l_suppkey = s_suppkey and l_partkey = p_partkey;"
+            target_pct = 1.00
+
+    else:
+        target_pct = 1.00
+
+        # 2R without limits
+        if q_name == 'Q9': sql = f"select * from {schema}.partsupp, {schema}.lineitem where ps_partkey = l_partkey;"
+        elif q_name == 'Q10': sql = f"select * from {schema}.customer, {schema}.orders where c_custkey = o_custkey;"
+        elif q_name == 'Q11': sql = f"select * from {schema}.orders, {schema}.lineitem where o_orderdate = l_shipdate;"
+        elif q_name == 'Q12': sql = f"select * from {schema}.orders, {schema}.lineitem where o_orderkey = l_orderkey;"
+        elif q_name == 'Q15': sql = f"select * from {schema}.supplier, {schema}.lineitem where s_suppkey = l_suppkey;"
+
+        # 3R without limits
+        elif q_name == 'Q2': sql = f"select * from {schema}.part, {schema}.supplier, {schema}.partsupp where p_partkey = ps_partkey and s_suppkey = ps_suppkey;"
+        elif q_name == 'Q3': sql = f"select * from {schema}.customer, {schema}.orders, {schema}.lineitem where c_custkey = o_custkey and o_orderkey = l_orderkey;"
+        elif q_name == 'Q5': sql = f"select * from {schema}.orders, {schema}.supplier, {schema}.lineitem where s_suppkey = l_suppkey and o_orderkey = l_orderkey;"
+        elif q_name == 'Q8': sql = f"select * from {schema}.part, {schema}.supplier, {schema}.lineitem where p_partkey = l_partkey and s_suppkey = l_suppkey;"
+        elif q_name == 'Q9_3R': sql = f"select * from {schema}.supplier, {schema}.partsupp, {schema}.lineitem where s_suppkey = l_suppkey and ps_suppkey = l_suppkey;"
+        elif q_name == 'test': sql = f"select * from {schema}.part, {schema}.supplier, {schema}.lineitem where l_suppkey = s_suppkey and l_partkey = p_partkey;"
+
+    return [(sql, num_relations, target_pct)] if sql else []
+    
 WORKER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               "worker.py")
 
