@@ -6,11 +6,12 @@ import csv
 import re
 from time import time
 import os
+import ground_truth  # shared JSON cache in project root
 
 # Database connection details
 USER = 'jinjo'
 HOST = '/tmp/'
-PORT = '1532'
+PORT = '1531'
 
 # Parameters setting for the join algorithm
 SIGMA = 0.99
@@ -21,7 +22,18 @@ ITER_SIZE = 100
 data_points = [int(ITER_SIZE * (STEP_SIZE ** i)) for i in range(100)]
 
 # Fixed: Now accepts mem and time_limit dynamically
-def get_mj_total(db_name, mem, time_limit, sql):
+def get_mj_total(db_name, mem, time_limit, sql, z_val=None, dataset_size=None):
+    # A SQL with LIMIT does not produce a valid ground-truth total, so the
+    # cache is only used for uncapped queries. This matches the intent:
+    # "record each run with no limit".
+    cacheable = "limit" not in sql.lower() and z_val is not None and dataset_size is not None
+
+    if cacheable:
+        cached = ground_truth.lookup(sql, z_val, dataset_size)
+        if cached is not None:
+            print(f"CACHE HIT: total_tuples={cached} (skipped full count)", flush=True)
+            return cached
+
     try:
         conn = psycopg2.connect(dbname=db_name, user=USER, host=HOST, port=PORT)
         conn.autocommit = False 
@@ -35,6 +47,10 @@ def get_mj_total(db_name, mem, time_limit, sql):
             mj_cur.execute(sql)
             total = sum(1 for _ in mj_cur)
         conn.close()
+
+        if cacheable:
+            ground_truth.store(sql, z_val, dataset_size, total)
+            print(f"CACHE STORE: total_tuples={total}", flush=True)
         return total
     except Exception as e:
         # Fixed: Prints the error directly to the nohup.log file instead of swallowing it
@@ -131,7 +147,8 @@ def run_worker(dataset, dataset_size, q_name, z_val, mem, time_limit, sch_val, r
     db_name = f"{dataset}{dataset_size}"
     
     # Fixed: Passes mem and time_limit to the total check
-    total_tuples = get_mj_total(db_name, mem, time_limit, sql)
+    # z_val + dataset_size enable the shared ground-truth cache (uncapped SQL only)
+    total_tuples = get_mj_total(db_name, mem, time_limit, sql, z_val, dataset_size)
     if total_tuples < 0: return
 
     file_prefix = os.path.join(results_dir, f"{q_name}_{dataset_size}_z{z_val}_{mem.lower()}_sch{sch_val}")

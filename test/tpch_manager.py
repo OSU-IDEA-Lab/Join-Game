@@ -87,8 +87,8 @@ def manage(base_dir, apply_limits):
     work_mems = ['512MB']
     shuffles = ['1', '2', '3']
     
-    queries = ['Q9', 'Q10', 'Q11', 'Q12', 'Q15']
-    # queries = ['Q2', 'Q3', 'Q5', 'Q8', 'Q9', 'Q9_3R', 'Q10', 'Q11', 'Q12', 'Q15']
+    # queries = ['Q9', 'Q10', 'Q11', 'Q12', 'Q15']
+    queries = ['Q2', 'Q3', 'Q5', 'Q8', 'Q9', 'Q9_3R', 'Q10', 'Q11', 'Q12', 'Q15']
 
     time_limit = "3600"
 
@@ -97,7 +97,7 @@ def manage(base_dir, apply_limits):
     
     base_name = base_dir if base_dir else "results"
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=6) as executor:
         for size, z, mem, q, shuff in itertools.product(sizes, zvals, work_mems, queries, shuffles):
             
             variations = get_queries(q, z, shuff, apply_limits)        
