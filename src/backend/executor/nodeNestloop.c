@@ -38,14 +38,31 @@
  *
  *   (B) The ESTIMATOR is now the adaptively-weighted AIPW estimator:
  *         - Per exploitation round the raw HT score is replaced by an AIPW
- *           score that uses the frozen average joinability q(t) as a control
+ *           score using the frozen average joinability q(t) as a control
  *           variate; under sparse joins this absorbs almost all the variance.
- *         - Per-round scores are pooled with variance-stabilizing evaluation
- *           weights h_r (stick-breaking recursion, two-point allocation rate)
- *           instead of uniform summation, restoring asymptotic normality.
- *         - A self-normalized variance is maintained in O(1) per round via
- *           three moment accumulators (Konig-Huygens form), so every round
- *           emits an approximate 95% confidence interval on J_hat.
+ *         - Per-round scores are POOLED WITH FLAT WEIGHTS BY DEFAULT
+ *           (h_r = 1/round_pairs: the plain per-pair average of round
+ *           scores).  The paper's variance-stabilizing weights (stick-
+ *           breaking, two-point allocation) remain available under
+ *           ROSL_FLAT_WEIGHTS=0 for A/B reproduction only: they target a
+ *           precision-weighted mean, which equals the population mean only
+ *           under a common-mean regime, whereas ROSL's M-blocks have
+ *           genuinely different per-block truths, so variance-tracking
+ *           weights bias the estimand toward low-variance (cold) slices.
+ *           Flat weights measured equal-or-better on every tested cell and
+ *           are the shipped default -- variance information belongs in
+ *           intervals, never in weights.
+ *         - A self-normalized variance (three O(1) moment accumulators,
+ *           Konig-Huygens form) gives every round an approximate 95% CI on
+ *           J_hat (ci_half), independent of the flat-vs-legacy weight choice.
+ *         - The node also emits: a split-cache noise-only interval and its
+ *           per-round variance track v_r (telemetry only, never a weight);
+ *           M-block-clustered and split-half interval brackets (the block,
+ *           not the round, as the independence unit); the het_ratio
+ *           diagnostic (~1: the clustered CI is honest; >>1: it is over-wide
+ *           from cross-block heterogeneity); and an empirical-Bernstein
+ *           anytime-valid guard band (Section 8) for mid-run looks or a run
+ *           about to be cut off by an output LIMIT.
  *
  * The epsilon-FLOOR is retained: it guarantees the propensity-decay lower
  * bound the CLT requires, so it is now a precondition for valid inference
@@ -720,18 +737,30 @@ two_point_lambda(RoslJoinState *st, long r, double pi_repr)
 #endif							/* !ROSL_FLAT_WEIGHTS */
 
 /*
- * ACCUMULATE (paper subroutine): fold one round's HT/AIPW score into the
- * adaptively-weighted running estimate in O(1).
+ * ACCUMULATE: fold one round's HT/AIPW score into the running estimate, O(1).
+ *
+ * DEFAULT path (ROSL_FLAT_WEIGHTS=1): h_r = 1/round_pairs, so
+ *
+ *   mu = est_num / weight_sum = (1/R) * sum_r X_r,   X_r = Yhat_r / pairs_r
+ *
+ * i.e. the EQUAL-ROUND-WEIGHT mean of per-round per-pair rates (weight_sum
+ * simply counts rounds).  Precisely stated, this is NOT the pooled ratio
+ * sum(Yhat)/sum(pairs): the two differ when rounds are unequal (the short
+ * final K-block; exploration rounds with pairs = Mn * p_count), by at most
+ * one round's share.  Weights carry no variance information by design;
+ * rationale lives at the ROSL_FLAT_WEIGHTS definition.
+ *
+ * LEGACY path (ROSL_FLAT_WEIGHTS=0, A/B reproduction only):
  *
  *   V_r          = round_pairs / pi_repr        (conditional-variance proxy)
  *   h_r^2        = (stick * lambda_r) / V_r     (stick-breaking, Eq. 12)
  *   stick       -= h_r^2 * V_r                  (= stick * (1 - lambda_r))
- *   est_num     += h_r * Yhat
- *   weight_sum  += h_r * round_pairs
- *   mom_yy/yp/pp updated for the Konig-Huygens variance (Eq. 11), all O(1).
  *
- * est_den accumulates the UNWEIGHTED pair count so the summary/denominator
- * bookkeeping still reports pairs seen; the point estimate uses weight_sum.
+ * with two known defects documented at two_point_lambda().
+ *
+ * Both paths: est_num += h*Yhat, weight_sum += h*pairs, and mom_yy/yp/pp
+ * feed the Konig-Huygens variance (Eq. 11); est_den accumulates the
+ * UNWEIGHTED pair count for bookkeeping only.
  */
 /*
  * Two-sided t critical value at level 0.05 for df degrees of freedom.  Sparse
@@ -828,12 +857,10 @@ accumulate_round(RoslJoinState *st, double round_pairs, double Yhat,
 
 #if ROSL_FLAT_WEIGHTS
 	/*
-	 * Flat weights: h = 1/round_pairs, so the pooled mu is the plain
-	 * per-pair average of round scores.  Weights carry NO variance
-	 * information by design -- see the ROSL_FLAT_WEIGHTS comment at the
-	 * definition site for the mechanism (inverse-variance weighting under
-	 * block heterogeneity biases the estimand toward low-variance slices).
-	 * pi_repr is retained in the signature for the legacy path only.
+	 * Flat weights: h = 1/round_pairs -- the equal-round-weight mean of
+	 * per-pair rates (see the function comment).  Rationale at the
+	 * ROSL_FLAT_WEIGHTS definition.  pi_repr is retained in the signature
+	 * for the legacy path only.
 	 */
 	(void) pi_repr;
 	if (round_pairs <= 0.0)
@@ -889,15 +916,14 @@ accumulate_round(RoslJoinState *st, double round_pairs, double Yhat,
 	}
 
 	/*
-	 * Empirical-Bernstein moments on the bounded per-round rate X = Yhat/pairs
-	 * (Section 8 guard band).  Both call sites guarantee round_pairs > 0
-	 * (finalize_explore_round returns early on an empty prefix; PH_NEW_SBLOCK
-	 * skips finalize_round when k_count == 0), but guard anyway so a future
-	 * call site cannot divide by zero.  Note the EB estimand is the UNWEIGHTED
-	 * mean of per-round rates: with unequal round sizes (the last K-block is
-	 * short) this weights small slices slightly more than total/total-pairs
-	 * does; the discrepancy is bounded by one round's share and vanishes as
-	 * rounds accumulate.
+	 * Empirical-Bernstein moments on the per-round rate X = Yhat/pairs
+	 * (Section 8 guard band; validity caveats at the eb_* struct comment).
+	 * Both call sites guarantee round_pairs > 0 (finalize_explore_round
+	 * returns early on an empty prefix; PH_NEW_SBLOCK skips finalize_round
+	 * when k_count == 0), but guard anyway so a future call site cannot
+	 * divide by zero.  The EB estimand is the unweighted mean of per-round
+	 * rates -- IDENTICAL to the pooled mu under the default flat weights;
+	 * the distinction matters only on the legacy weighted path.
 	 */
 	if (round_pairs > 0.0)
 	{
@@ -1461,14 +1487,9 @@ ExecRoslNestLoop(NestLoopState *node)
 					if (st->m_count == 0)
 					{
 						/*
-						 * Outer exhausted: no further M-blocks, so no further
-						 * rounds will ever run.  We do NOT emit anything here:
-						 * matching Saketh's model, the only mid-stream signal
-						 * the client gets is the cursor returning NULL.  The
-						 * full estimate + trajectory is dumped once at teardown
-						 * (PrintRoslCounters in ExecEndNestLoop).  Completion is
-						 * therefore detected client-side purely by fetchone()
-						 * returning None -- no NOTICE parsing, no deadlock.
+						 * Outer exhausted: no further rounds will run.  Emit
+						 * nothing here -- log-only communication model, whose
+						 * canonical description is at PrintRoslCounters.
 						 */
 						st->phase = PH_DONE;
 						break;
@@ -1827,10 +1848,11 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 /* ----------------------------------------------------------------
  *		PrintRoslCounters  --  dump the full ROSL trajectory + summary
  *
- *		The single point of measurement communication, called once from
- *		ExecEndNestLoop at executor teardown.  Mirrors Saketh's
- *		PrintNodeCounters: everything goes to the server log via elog(INFO),
- *		nothing to the client mid-stream.  A test harness recovers accuracy
+ *		CANONICAL description of the log-only communication model (other
+ *		comments point here).  The single point of measurement communication,
+ *		called once from ExecEndNestLoop at executor teardown.  Mirrors
+ *		Saketh's PrintNodeCounters: everything goes to the server log via
+ *		elog(INFO), nothing to the client mid-stream.  A test harness recovers accuracy
  *		and timing by parsing the *server log* after the cursor has drained,
  *		never from the row/notice stream during the join.
  *
@@ -1873,16 +1895,23 @@ PrintRoslCounters(RoslJoinState *st)
 
 	/*
 	 * Final summary.  The point estimate uses the WEIGHTED denominator
-	 * weight_sum (adaptively-weighted mean), not the raw pair count est_den.
-	 * The extrapolation now uses the EXACT outer count act_outer (summed over
-	 * every M-block, so it is exact once the scan has finished) instead of the
-	 * planner's plan_rows -- the sampler only estimates a per-pair rate, and the
-	 * outer population size is known exactly by the time we get here.  The inner
-	 * size is still the planner estimate num_inner (this version rescans S per
-	 * M-block rather than materialising it, so it never counts |S| exactly; see
-	 * note in the header).  A final self-normalized CI half-width is recomputed
-	 * here from the moment accumulators (Konig-Huygens), matching the per-round
-	 * trajectory.  The `final_est_join=` token is kept verbatim for the parser.
+	 * weight_sum (equal to the round count under the default flat weights),
+	 * not the raw pair count est_den.  The extrapolation uses act_outer
+	 * instead of the planner's plan_rows, and the planner num_inner for the
+	 * inner (S is rescanned per M-block, never counted; header note (3)).
+	 *
+	 * act_outer CAVEAT: act_outer is the SCANNED outer -- exact for |R| only
+	 * if the outer scan completed (phase reached PH_DONE).  At a data-
+	 * dependent stop (output LIMIT, client cut) this line rescales the
+	 * estimate to the scanned-R x S sub-join, biased low for J by roughly
+	 * act_outer/|R|, while trajectory rows keep the planner num_outer
+	 * scaling.  A consumer that prefers SUMM values over the last trajectory
+	 * row (the current harness does) inherits that bias on early-stopped
+	 * runs; compare act_outer against num_outer before trusting SUMM there.
+	 *
+	 * A final self-normalized CI half-width is recomputed here from the
+	 * moment accumulators (Konig-Huygens), matching the per-round trajectory.
+	 * The `final_est_join=` token is kept verbatim for the parser.
 	 */
 	/*
 	 * Fold the final (still-open) M-block into the block-level SS before the
@@ -1939,13 +1968,16 @@ PrintRoslCounters(RoslJoinState *st)
 			ci_split = ci_half;
 
 		/*
-		 * Empirical-Bernstein confidence sequence (Section 8 guard band) on
-		 * the bounded per-round rate X = Yhat/pairs.  Maurer-Pontil form:
+		 * Empirical-Bernstein guard band (Section 8), Maurer-Pontil FIXED-n
+		 * form with the range B taken as the plug-in eb_max:
 		 *   |Xbar - mu| <= sqrt(2 Vx ln(2/alpha) / N) + (7/3) B ln(2/alpha)/N.
-		 * est_eb centres on Xbar (the unweighted per-round mean), which the
-		 * bound is stated for; the weighted mu above remains the primary point
-		 * estimate.  This interval needs no variance convergence and is the
-		 * only one here valid at a data-dependent stop (output LIMIT).
+		 * est_eb centres on Xbar, the unweighted per-round mean -- identical
+		 * to the pooled mu under the default flat weights (they differ only
+		 * on the legacy weighted path).  Needing no variance convergence,
+		 * this is the most defensible interval at a data-dependent stop
+		 * (output LIMIT); with a plug-in range it is a robustness heuristic
+		 * there rather than a proven confidence sequence -- validity notes
+		 * at the eb_* struct comment.
 		 */
 		if (st->eb_n > 1)
 		{
@@ -1972,9 +2004,10 @@ PrintRoslCounters(RoslJoinState *st)
 		 * plus the decomposition diagnostic the clustered CI needs:
 		 *   het_ratio = clustered SS / var_noise  --  ~1 means the clustered
 		 * residuals are mostly estimator noise (clustered CI trustworthy);
-		 * >>1 means cross-block truth heterogeneity dominates (clustered CI
-		 * over-wide by roughly that factor).  lindeberg_max certifies no
-		 * single round dominates the noise (Fix-3 telemetry).
+		 * >>1 means cross-block truth heterogeneity dominates, inflating the
+		 * clustered CI's WIDTH by roughly sqrt(het_ratio) (het_ratio is a
+		 * variance ratio).  lindeberg_max certifies no single round dominates
+		 * the noise (Fix-3 telemetry).
 		 */
 		{
 			double		ci_noise = 1.96 * pop
