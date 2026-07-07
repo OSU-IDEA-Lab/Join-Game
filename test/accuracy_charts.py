@@ -28,9 +28,9 @@ The worker's trajectory schema is:
     mean_per_pair, est_join, ci_halfwidth, truth, ratio, rel_error,
     elapsed_sec, delta_sec, pct_of_truth_output
 
-Usage:
+Usage Examples:
     python3 test/accuracy_charts.py --results_dir 6_18_floor_50 --epsilon_floor 0.5 --limit ON
-    python3 test/accuracy_charts.py --results_dir results_ProbNFailure_FlatAW_7_5 --epsilon_floor 0.2 --limit ON
+    python3 test/accuracy_charts.py --results_dir 7_7_ProbNFailure_FlatAW_NewTestScript_ --epsilon_floor 0.2 --limit ON
 """
 
 import argparse

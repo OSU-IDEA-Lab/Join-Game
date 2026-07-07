@@ -59,9 +59,9 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 
 # ── sweep parameters (must match worker.py) ───────────────────
-SIZES    = ["01"]            
-# SIZES    = ["01", "1"]              # tpch{size}g databases; add "10" if available
-# SIZES    = ["01", "1", "10"]              # tpch{size}g databases; add "10" if available
+# SIZES    = ["1"]            
+SIZES    = ["01", "1"]              
+# SIZES    = ["01", "1", "10"]              # tpch{size}g databases
 ZVALS    = ["0", "1"]       # uniform -> increasingly skewed
 # ZVALS    = ["0", "1", "1_5"]       # uniform -> increasingly skewed
 SHUFFLES = ["1","2", "3"]         # repeated data layouts (variance)
