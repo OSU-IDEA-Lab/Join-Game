@@ -3,7 +3,7 @@
 ROSL estimator accuracy + efficiency worker (one job).
 
 Handles one (size, q_name, z_val, shuffle) combination for all REPEATS.
-Stdout/stderr are captured by rosl_estimator_manager.py into a .nohup.log file.
+Stdout/stderr are captured by tpch_manager.py into a .nohup.log file.
 
 Tracks two things per round, not just one:
   * accuracy   -- est_join vs the cached truth, as ratio / rel_error (unchanged).
@@ -15,9 +15,9 @@ The ROSL C node no longer emits per-round NOTICEs mid-stream.  Instead it
 accumulates the whole per-round trajectory inside its executor state and dumps
 it ONCE, at executor teardown, as elog(INFO, ...) lines to the server log:
 
-    ROSL_TRAJ round=.. mean_per_pair=.. est_join=.. pairs_seen=.. \
-              sample_matches=.. elapsed_ms=..
-    ROSL_SUMM final_est_join=.. rounds=.. sample_matches=.. pairs_seen=.. ...
+    ROSL_TRAJ round=.. mean_per_pair=.. est_join=.. ci_halfwidth=.. \
+              pairs_seen=.. sample_matches=.. elapsed_ms=..
+    ROSL_SUMM final_est_join=.. ci_halfwidth=.. rounds=.. sample_matches=.. ...
 
 This worker therefore does NOT read conn.notices at all.  Its only job during
 the join is to drain rows (so the executor actually runs to teardown) and then,
@@ -56,7 +56,7 @@ expensive part); only the cache read and write are locked.
   millions -- infeasible to emit or capture.  Use 01 or 1 scale only.
 
 Usage (direct):
-    python3 rosl_estimator_worker.py <size> <q_name> <z_val> <shuffle> <results_dir> <limit>
+    python3 worker.py <size> <q_name> <z_val> <shuffle> <results_dir> <limit>
 
     <limit>  pass "1" to apply LIMIT constraints, "0" for full output.
              The manager passes this automatically via --limit.
@@ -87,30 +87,41 @@ LOG_READ_WAIT_S = 10.0        # grace period for the teardown dump to flush to t
 LOG_READ_EXTRA_S = 20.0       # extra wait once we've seen the open sentinel but not the close
 LOG_POLL_S      = 0.2         # poll interval while waiting for the closing sentinel
 
-# 2R inner-equijoins only -- the fixed-inner shape the estimator assumes.
-# (q_name: (tableA, tableB, join_predicate))
-QUERIES = {
-    "Q9":  ("partsupp", "lineitem", "ps_partkey = l_partkey"),
-    "Q10": ("customer", "orders",   "c_custkey = o_custkey"),
-    "Q11": ("orders",   "lineitem", "o_orderdate = l_shipdate"),
-    "Q12": ("orders",   "lineitem", "o_orderkey = l_orderkey"),
-    "Q15": ("supplier", "lineitem", "s_suppkey = l_suppkey"),
-}
+# ── query shapes and output caps: imported from tpch_manager ─────────────────
+# tpch_manager.py is the single source of truth for QUERY_DEFS / QUERY_LIMITS;
+# the previous hand-synced mirror here is how caps drift between manager and
+# worker.  A frozen fallback keeps the worker runnable standalone, but drift is
+# then possible again -- hence the loud warning.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from tpch_manager import QUERY_DEFS, QUERY_LIMITS
+except ImportError:
+    print("WARNING: could not import tpch_manager.py -- using frozen fallback "
+          "query definitions (caps may drift from the manager's).", flush=True)
+    QUERY_DEFS = {
+        "Q9":  (("partsupp", "lineitem"), "ps_partkey = l_partkey"),
+        "Q10": (("customer", "orders"),   "c_custkey = o_custkey"),
+        "Q11": (("orders",   "lineitem"), "o_orderdate = l_shipdate"),
+        "Q12": (("orders",   "lineitem"), "o_orderkey = l_orderkey"),
+        "Q15": (("supplier", "lineitem"), "s_suppkey = l_suppkey"),
+    }
+    QUERY_LIMITS = {
+        "Q9":  221700,
+        "Q10": 13000,
+        "Q11": 327624700,
+        "Q12": 1000,
+        "Q15": 43800,
+    }
 
-# ── per-query output limits (edit here to adjust; must stay in sync with manager) ──
-# Limits from tpch_manager.py as of 5/27/2026.
-QUERY_LIMITS = {
-    "Q9":  221700,
-    "Q10": 13000,
-    "Q11": 327624700,
-    "Q12": 1000,
-    "Q15": 43800,
-}
+# 2R inner-equijoins only -- the fixed-inner shape the estimator assumes.
+# (q_name: (tableA, tableB, join_predicate)); 3R entries in QUERY_DEFS are
+# filtered out here, and main() rejects them with a clear message.
+QUERIES = {q: (tabs[0], tabs[1], pred)
+           for q, (tabs, pred) in QUERY_DEFS.items() if len(tabs) == 2}
 
 def get_queries(q_name, schema, apply_limit):
-    """Return join_sql for one (query, schema, limit) combination.
-    Mirrors tpch_manager.py's get_queries() so output limits are easy to
-    find and adjust in one place.  Edit QUERY_LIMITS above to change caps."""
+    """Return join_sql for one (query, schema, limit) combination.  Caps come
+    from tpch_manager.QUERY_LIMITS -- edit them there, nowhere else."""
     if q_name not in QUERIES:
         return None
     tA, tB, pred = QUERIES[q_name]
@@ -123,13 +134,22 @@ def get_queries(q_name, schema, apply_limit):
 # ── server-log line parsers (the new measurement channel) ────────────────────
 # These match the elog(INFO, ...) lines PrintRoslCounters() writes at teardown.
 # A log line looks like:  2026-06-23 00:35:13.123 PDT [12345] INFO:  ROSL_TRAJ ...
+#
+# The trailing ci_eb group is optional so logs from an older engine build
+# (before the per-round EB interval was added) still parse.
 RE_TRAJ = re.compile(
     r"ROSL_TRAJ round=(\d+) mean_per_pair=([\d.eE+-]+) est_join=([\d.eE+-]+) "
-    r"pairs_seen=([\d.eE+-]+) sample_matches=(\d+) elapsed_ms=([\d.eE+-]+)"
+    r"ci_halfwidth=([\d.eE+-]+) pairs_seen=([\d.eE+-]+) sample_matches=(\d+) "
+    r"elapsed_ms=([\d.eE+-]+)(?: ci_eb=([\d.eE+-]+))?"
 )
-RE_SUMM = re.compile(
-    r"ROSL_SUMM final_est_join=([\d.eE+-]+) rounds=(\d+) sample_matches=(\d+)"
-)
+# ROSL_SUMM is parsed as key=value tokens, NOT positionally.  The old
+# positional regex required "rounds=" to follow "ci_halfwidth=" immediately,
+# but the engine emits ci_clust/ci_split/ci_eb/est_eb/ci_noise/het_ratio/
+# lindeberg_max/n_blocks in between -- so it NEVER matched, and every run
+# silently fell back to the last trajectory round's est/CI instead of the
+# teardown values recomputed against the exact act_outer.
+RE_SUMM_LINE = re.compile(r"ROSL_SUMM\s+(.*)")
+RE_KV = re.compile(r"(\w+)=([\d.eE+-]+|nan|inf|-inf)")
 RE_TRAJ_TRUNC = re.compile(r"ROSL_TRAJ truncated")
 # Per-line backend-PID prefix, from log_line_prefix = '%m [%p] '.
 RE_PID = re.compile(r"\[(\d+)\]")
@@ -278,21 +298,30 @@ def _parse_rosl_log(text, pid, open_mark, close_mark):
                 "round":          int(mt.group(1)),
                 "mean_per_pair":  float(mt.group(2)),
                 "est_join":       float(mt.group(3)),
-                "pairs_seen":     float(mt.group(4)),
-                "sample_matches": int(mt.group(5)),
-                "elapsed_sec":    float(mt.group(6)) / 1000.0,  # ms -> sec
+                "ci_halfwidth":   float(mt.group(4)),
+                "pairs_seen":     float(mt.group(5)),
+                "sample_matches": int(mt.group(6)),
+                "elapsed_sec":    float(mt.group(7)) / 1000.0,  # ms -> sec
+                # Per-round anytime-valid EB interval; nan on older engine
+                # builds whose ROSL_TRAJ lines lack the field.
+                "ci_eb":          (float(mt.group(8))
+                                   if mt.group(8) is not None else float("nan")),
             })
             continue
         if RE_TRAJ_TRUNC.search(line):
             truncated = True
             continue
-        ms = RE_SUMM.search(line)
+        ms = RE_SUMM_LINE.search(line)
         if ms:
-            final = {
-                "final_est_join": float(ms.group(1)),
-                "rounds":         int(ms.group(2)),
-                "sample_matches": int(ms.group(3)),
-            }
+            # Tokenize every key=value pair on the line so new engine fields
+            # (ci_clust, ci_split, ci_eb, est_eb, n_blocks, act_outer, ...)
+            # are captured without a regex change.
+            final = {}
+            for k, v in RE_KV.findall(ms.group(1)):
+                try:
+                    final[k] = float(v)
+                except ValueError:
+                    pass
 
     # delta_sec is derived from the C-measured cumulative elapsed_sec column.
     rounds.sort(key=lambda r: r["round"])
@@ -415,7 +444,7 @@ def configure_rosl(conn):
 def run_estimate(conn, join_sql, backend_pid):
     """Run the join under ROSL, drain its rows, then read this run's per-round
     trajectory + summary from the SERVER LOG.  Returns
-    (rounds, call_wall_sec, n_rows, final).
+    (rounds, call_wall_sec, n_rows, final, drain_cut).
 
     The client never reads conn.notices.  The C node dumps everything at
     executor teardown via elog(INFO, ...) to the log; we isolate our own lines
@@ -473,7 +502,7 @@ def run_estimate(conn, join_sql, backend_pid):
     if log_path is None:
         print("  WARNING: pg_current_logfile() returned empty -- logging "
               "collector off? Cannot read trajectory from server log.", flush=True)
-        return rounds, call_wall_sec, n_rows, final
+        return rounds, call_wall_sec, n_rows, final, drain_cut
 
     # Wait briefly for the closing sentinel to appear, then parse the tail.
     # Read across a possible rotation: a long drain can roll the logfile over,
@@ -516,13 +545,13 @@ def run_estimate(conn, join_sql, backend_pid):
             print("  WARNING: sentinels present but no ROSL_TRAJ lines for our "
                   "PID -- check that enable_rosl produced a plain nested loop "
                   "and that the node actually ran.", flush=True)
-    return rounds, call_wall_sec, n_rows, final
+    return rounds, call_wall_sec, n_rows, final, drain_cut
 
 # ── entry point ───────────────────────────────────────────────────────────────
 
 def main():
     if len(sys.argv) != 7:
-        print("Usage: python3 rosl_estimator_worker.py "
+        print("Usage: python3 worker.py "
               "<size> <q_name> <z_val> <shuffle> <results_dir> <limit>")
         sys.exit(1)
 
@@ -571,25 +600,70 @@ def main():
 
     with open(traj_path, "w") as traj_f, open(summ_path, "w") as summ_f:
         traj_f.write("size,query,zval,shuffle,repeat,round,pairs_seen,sample_matches,"
-                     "mean_per_pair,est_join,truth,ratio,rel_error,"
+                     "mean_per_pair,est_join,ci_halfwidth,ci_eb,truth,ratio,rel_error,"
                      "elapsed_sec,delta_sec,pct_of_truth_output\n")
-        # n_rows column added: actual sample-match rows pulled through the
-        # cursor (contents ignored; count is a sanity-check on streaming output).
-        summ_f.write("size,query,zval,shuffle,repeat,truth,final_est,final_ratio,n_rounds,"
-                     "n_rows,repeat_wall_sec,truth_compute_sec\n")
+        # n_rows column: actual sample-match rows pulled through the cursor
+        # (contents ignored; count is a sanity-check on streaming output).
+        #
+        # CI columns and their coverage flags:
+        #   final_ci_halfwidth / ci_covers_truth
+        #       the engine's self-normalized 95% CI.  FIXED-HORIZON-ONLY:
+        #       coverage aggregated over repeats/shuffles is meaningful on
+        #       runs that drain to completion, NOT on LIMIT/drain-cut stops
+        #       (a data-dependent time outside the fixed-horizon guarantee).
+        #   final_ci_eb / ci_eb_covers_truth
+        #       empirical-Bernstein confidence sequence, centred on est_eb.
+        #       Anytime-valid: the ONLY interval whose coverage is meaningful
+        #       at a data-dependent stop -- filter on stop_reason accordingly.
+        #   final_ci_clust / ci_clust_covers_truth, final_ci_split / ...
+        #       block-clustered and split-half variants (M-block is the honest
+        #       independence unit), centred on final_est.
+        # All three extras are blank when an older engine build omits them.
+        #
+        # stop_reason: why the drain loop ended --
+        #   limit          hit the query's output LIMIT cap
+        #   drain_timeout  client-side DRAIN_TIMEOUT_S guard fired (partial run)
+        #   exhausted      join output fully drained before any cap
+        summ_f.write("size,query,zval,shuffle,repeat,truth,final_est,final_ratio,"
+                     "final_ci_halfwidth,ci_covers_truth,"
+                     "est_eb,final_ci_eb,ci_eb_covers_truth,"
+                     "final_ci_clust,ci_clust_covers_truth,"
+                     "final_ci_split,ci_split_covers_truth,"
+                     "n_rounds,n_rows,stop_reason,"
+                     "repeat_wall_sec,truth_compute_sec\n")
 
         configure_rosl(conn)
+
+        cap = QUERY_LIMITS.get(q_name) if apply_limit else None
+        n_ok = 0
 
         for rep in range(1, REPEATS + 1):
             ts = datetime.datetime.now().strftime("%H:%M:%S")
             print(f"  [{ts}] estimate {key} repeat {rep}/{REPEATS}", flush=True)
             try:
-                rounds, call_wall_sec, n_rows, final = run_estimate(
+                rounds, call_wall_sec, n_rows, final, drain_cut = run_estimate(
                     conn, join_sql, backend_pid)
+            except psycopg2.errors.QueryCanceled as e:
+                # Server-side statement_timeout (ROSL_TIMEOUT_S) fired.  The
+                # statement was aborted rather than torn down normally, so no
+                # summary row can be written; the manager's audit will flag
+                # this job as missing.
+                print(f"  [estimate] FAILED rep {rep}: server statement_timeout "
+                      f"(ROSL_TIMEOUT_S={ROSL_TIMEOUT_S}s) cancelled the "
+                      f"statement: {e}", flush=True)
+                conn.rollback()
+                continue
             except Exception as e:
                 print(f"  [estimate] FAILED rep {rep}: {e}", flush=True)
                 conn.rollback()
                 continue
+
+            if drain_cut:
+                stop_reason = "drain_timeout"
+            elif cap is not None and n_rows >= cap:
+                stop_reason = "limit"
+            else:
+                stop_reason = "exhausted"
 
             for r in rounds:
                 ratio = (r["est_join"] / truth) if truth else float("nan")
@@ -602,34 +676,69 @@ def main():
                 # the real output have we seen?) rather than pairs_seen/truth,
                 # which mixed two unrelated quantities (pair coverage vs. output
                 # cardinality), or pairs_seen/final_pairs, which was only
-                # self-comparable within a single repeat.
+                # self-comparable within a single repeat.  With-replacement
+                # sampling on high-multiplicity joins (e.g. Q11) can push this
+                # past 100%.
                 pct   = (r["sample_matches"] / truth * 100.0) if truth else float("nan")
-                traj_f.write("%s,%s,%s,%s,%d,%d,%.0f,%d,%.10f,%.2f,%d,%.6f,%.6f,%.4f,%.4f,%.4f\n" % (
+                traj_f.write("%s,%s,%s,%s,%d,%d,%.0f,%d,%.10f,%.2f,%.2f,%.2f,%d,%.6f,%.6f,%.4f,%.4f,%.4f\n" % (
                     size, q_name, z_val, shuffle, rep, r["round"], r["pairs_seen"],
                     r["sample_matches"], r["mean_per_pair"], r["est_join"],
-                    truth, ratio, rerr, r["elapsed_sec"], r["delta_sec"], pct))
+                    r["ci_halfwidth"], r["ci_eb"], truth, ratio, rerr,
+                    r["elapsed_sec"], r["delta_sec"], pct))
 
             if rounds:
-                # Prefer the engine's own ROSL_SUMM final est if we captured it;
-                # otherwise fall back to the last trajectory round's est_join.
-                fe = final["final_est_join"] if final else rounds[-1]["est_join"]
-                fr = (fe / truth) if truth else float("nan")
-                summ_f.write("%s,%s,%s,%s,%d,%d,%.2f,%.6f,%d,%d,%.3f,%.3f\n" % (
-                    size, q_name, z_val, shuffle, rep, truth, fe, fr, len(rounds),
-                    n_rows, call_wall_sec, truth_compute_sec))
-                print(f"      final est={fe:,.0f}  truth={truth:,}  ratio={fr:.4f}  "
-                      f"rounds={len(rounds)}  n_rows={n_rows}  wall={call_wall_sec:.1f}s",
+                # Prefer the engine's own ROSL_SUMM values (recomputed at
+                # teardown against the exact act_outer) if captured; fall back
+                # to the last trajectory round's.
+                fe  = final.get("final_est_join", rounds[-1]["est_join"]) if final else rounds[-1]["est_join"]
+                fci = final.get("ci_halfwidth",   rounds[-1]["ci_halfwidth"]) if final else rounds[-1]["ci_halfwidth"]
+                fr  = (fe / truth) if truth else float("nan")
+                covers = int(abs(fe - truth) <= fci) if truth else ""
+
+                def _ci_cell(half, center):
+                    """Return ('%.2f' % half, covers_flag) or ('', '') when the
+                    engine did not emit this interval."""
+                    if half is None or center is None or not truth:
+                        return "", ""
+                    return "%.2f" % half, int(abs(center - truth) <= half)
+
+                # est_eb centres the EB confidence sequence (per the engine's
+                # comments); the clustered/split intervals centre on fe.
+                eeb = final.get("est_eb") if final else None
+                eb_half, eb_cov       = _ci_cell(final.get("ci_eb") if final else None, eeb)
+                clust_half, clust_cov = _ci_cell(final.get("ci_clust") if final else None, fe)
+                split_half, split_cov = _ci_cell(final.get("ci_split") if final else None, fe)
+                eeb_cell = ("%.2f" % eeb) if eeb is not None else ""
+
+                summ_f.write("%s,%s,%s,%s,%d,%d,%.2f,%.6f,%.2f,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%s,%.3f,%.3f\n" % (
+                    size, q_name, z_val, shuffle, rep, truth, fe, fr, fci, covers,
+                    eeb_cell, eb_half, eb_cov, clust_half, clust_cov,
+                    split_half, split_cov,
+                    len(rounds), n_rows, stop_reason,
+                    call_wall_sec, truth_compute_sec))
+                n_ok += 1
+                eb_note = (f"  eb={eeb_cell}+/-{eb_half} cov={eb_cov}"
+                           if eb_half else "  (no ROSL_SUMM extras captured)")
+                print(f"      final est={fe:,.0f} +/- {fci:,.0f}  truth={truth:,}  "
+                      f"ratio={fr:.4f}  covered={covers}  stop={stop_reason}  "
+                      f"rounds={len(rounds)}  n_rows={n_rows}  wall={call_wall_sec:.1f}s"
+                      f"{eb_note}",
                       flush=True)
             else:
                 print(f"      no ROSL_TRAJ lines parsed from server log "
-                      f"(wall={call_wall_sec:.1f}s) -- is enable_rosl wired, the "
-                      "plan a plain nested loop, and log_min_messages=info?",
+                      f"(wall={call_wall_sec:.1f}s, stop={stop_reason}) -- is "
+                      "enable_rosl wired, the plan a plain nested loop, and "
+                      "log_min_messages=info?",
                       flush=True)
 
             traj_f.flush()
             summ_f.flush()
 
     conn.close()
+    if n_ok < REPEATS:
+        print(f"Done with FAILURES: {n_ok}/{REPEATS} repeats produced a summary "
+              f"row. -> {prefix}.[traj|summ].csv", flush=True)
+        sys.exit(3)   # nonzero so the manager records/retries this job
     print(f"Done. -> {prefix}.[traj|summ].csv", flush=True)
 
 if __name__ == "__main__":

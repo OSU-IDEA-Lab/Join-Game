@@ -12,37 +12,52 @@ Line style encodes the shuffle (no colour differentiation between shuffles):
     '-.'   Shuffle 3  (dash-dot)
     '-'    Average    (solid black, thicker)
 
-Point colour encodes estimation direction:
-    green  overestimate  (rel_error > 0,  est > truth)
-    red    underestimate (rel_error <= 0, est <= truth)
+Marker shape encodes estimation direction (single neutral colour):
+    'v'  downward triangle  overestimate  (rel_error > 0,  est > truth)
+    '^'  upward triangle    underestimate (rel_error <= 0, est <= truth)
+
+If the trajectory carries a ci_halfwidth column (the engine's self-normalized
+95% CI, per round), each shuffle also gets a shaded band from the y-axis floor
+up to ci_halfwidth/truth as a percentage: a point inside the band is a round
+whose reported CI covers the truth; a point above it is a round whose CI
+misses.  Older trajectory.csv files without the column plot without bands.
 
 The worker's trajectory schema is:
 
     size, query, zval, shuffle, repeat, round, pairs_seen, sample_matches,
-    mean_per_pair, est_join, truth, ratio, rel_error, elapsed_sec, delta_sec,
-    pct_of_truth_output
+    mean_per_pair, est_join, ci_halfwidth, truth, ratio, rel_error,
+    elapsed_sec, delta_sec, pct_of_truth_output
 
 Usage:
     python3 test/accuracy_charts.py --results_dir 6_18_floor_50 --epsilon_floor 0.5 --limit ON
+    python3 test/accuracy_charts.py --results_dir results_ProbNFailure_FlatAW_7_5 --epsilon_floor 0.2 --limit ON
 """
 
 import argparse
 import os
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
+import matplotlib.patches as mpatches
 import pandas as pd
 import numpy as np
 
 
-# Per-query output caps -- must stay in sync with tpch_manager.py / worker.py.
+# Per-query output caps: imported from tpch_manager (the single source of
+# truth) when it is importable, with a frozen fallback so the plotter still
+# works when copied around on its own.
 # Used only to LABEL charts (the limit is not stored per row in trajectory.csv).
-QUERY_LIMITS = {
-    "Q9":  221700,
-    "Q10": 13000,
-    "Q11": 327624700,
-    "Q12": 1000,
-    "Q15": 43800,
-}
+try:
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from tpch_manager import QUERY_LIMITS
+except ImportError:
+    QUERY_LIMITS = {
+        "Q9":  221700,
+        "Q10": 13000,
+        "Q11": 327624700,
+        "Q12": 1000,
+        "Q15": 43800,
+    }
 
 # Shuffle index (0-based) → line style.  Cycles if there are more than 3 shuffles.
 _SHUFFLE_STYLES = ['--', ':', '-.']
@@ -50,9 +65,17 @@ _SHUFFLE_STYLES = ['--', ':', '-.']
 # Uniform colour for all per-shuffle lines; the style is the differentiator.
 _LINE_COLOR = '#444444'
 
-# Point colours for over- / under-estimates.
-_OVER_COLOR  = 'green'
-_UNDER_COLOR = 'red'
+# Markers for over- / under-estimates (shape is the differentiator, one colour).
+_OVER_MARKER  = 'v'          # downward triangle: estimate sits above truth
+_UNDER_MARKER = '^'          # upward triangle:   estimate sits below truth
+_MARKER_COLOR = '#333333'
+
+# Shaded confidence-interval band (per shuffle, from y-floor up to ci/truth %).
+_CI_COLOR = '#4C72B0'
+_CI_ALPHA = 0.12
+
+# Log-axis floor shared by error points and CI band.
+_Y_FLOOR = 1e-3
 
 
 def _limit_label(q_name, limit_flag):
@@ -80,6 +103,9 @@ def main():
                         help="Whether the sweep applied output limits: 'ON' (default) uses "
                              "each query's cap from QUERY_LIMITS for the title; 'OFF' labels "
                              "the run as unlimited. The limit is not stored per row.")
+    parser.add_argument('--ci_col', type=str, default=None,
+                        help="Trajectory column to use for the CI band "
+                             "(default: ci_eb if present, else ci_halfwidth)")
     args = parser.parse_args()
     results_dir = args.results_dir
 
@@ -111,10 +137,39 @@ def main():
 
     # Y-axis: absolute relative error as a percentage.  Floor at a tiny positive
     # value so zero-error rows survive a log axis.
-    df['err_pct'] = np.maximum(df['rel_error'].abs() * 100.0, 1e-3)
+    df['err_pct'] = np.maximum(df['rel_error'].abs() * 100.0, _Y_FLOOR)
     # X-axis: percent of true output already computed by the worker.
     df['x_pct'] = np.maximum(df['pct_of_truth_output'], 1e-4)
 
+    # CI band: half-width as a % of truth, if the worker recorded it.  A round
+    # whose err_pct falls inside this band is a round whose reported 95% CI
+    # covers the truth.
+    #
+    # Column choice matters: the engine's self-normalized ci_halfwidth is
+    # FIXED-HORIZON-ONLY -- per the comments in nodeNestloop.c it is not valid
+    # at a data-dependent stop (output LIMIT), which is exactly how the capped
+    # sweeps end.  Prefer the anytime-valid empirical-Bernstein interval
+    # (ci_eb) when the worker recorded it; --ci_col overrides.
+    ci_candidates = ([args.ci_col] if args.ci_col
+                     else ['ci_eb', 'ci_halfwidth'])
+    ci_col = next((c for c in ci_candidates if c in df.columns), None)
+    has_ci = ci_col is not None
+    if has_ci:
+        df['ci_pct'] = np.maximum(
+            df[ci_col] / df['truth'] * 100.0, _Y_FLOOR)
+        if ci_col == 'ci_halfwidth':
+            print("Note: using fixed-horizon ci_halfwidth for the CI band -- "
+                  "this interval is NOT valid at an output-LIMIT stop, so "
+                  "expect under-coverage on capped runs.  Re-run with a worker "
+                  "that records ci_eb for an anytime-valid band.")
+        else:
+            print(f"Using {ci_col} for the CI band.")
+    else:
+        print("Note: no CI column in trajectory.csv -- plotting without "
+              "confidence-interval bands (re-run with the updated worker "
+              "to capture CIs).")
+
+    n_shuffles_expected = df['shuffle'].nunique()
     group_cols = ['query'] + (['size'] if size_present else []) + ['zval']
     grouped = df.groupby(group_cols)
     print(f"Found {len(grouped)} unique configurations to plot.")
@@ -131,16 +186,21 @@ def main():
         ax.grid(True, which="minor", ls="-", color='#F5F5F5', zorder=0)
 
         shuffles = sorted(group['shuffle'].unique())
+        if len(shuffles) < n_shuffles_expected:
+            print(f"  WARNING: {q} z={z} sz={sz} has only {len(shuffles)} "
+                  f"shuffle(s) {shuffles} of {n_shuffles_expected} in the file "
+                  f"-- a job is missing (see missing_jobs.csv from the manager).")
 
         # Shared X grid spanning the observed range, used for the averaged line.
         xmin = max(group['x_pct'].min(), 1e-4)
-        xmax = min(group['x_pct'].max(), 100.0)
+        xmax = group['x_pct'].max()          # may exceed 100% (with-replacement
+                                             # matches can outnumber truth, e.g. Q11)
         if xmax <= xmin:
             xmax = xmin * 10
         interp_x  = np.logspace(np.log10(xmin), np.log10(xmax), 1000)
         interp_ys = []
 
-        # ── per-shuffle lines + coloured scatter points ───────────────────
+        # ── per-shuffle lines, triangle markers, and CI bands ─────────────
         for i, shuff in enumerate(shuffles):
             s_df = group[group['shuffle'] == shuff].copy().sort_values('x_pct')
             x   = s_df['x_pct'].to_numpy()
@@ -150,23 +210,33 @@ def main():
             lstyle    = _SHUFFLE_STYLES[i % len(_SHUFFLE_STYLES)]
             final_err = err[-1] if len(err) else float('nan')
 
-            # Draw line without markers so the scatter colours read cleanly.
+            # Shaded CI region first (lowest zorder): floor -> ci/truth %.
+            # Points inside the band are rounds whose reported CI covers truth.
+            if has_ci:
+                ci = s_df['ci_pct'].to_numpy()
+                xu_ci, idx_ci = np.unique(x, return_index=True)
+                if len(xu_ci) > 1:
+                    ax.fill_between(xu_ci, _Y_FLOOR, ci[idx_ci],
+                                    color=_CI_COLOR, alpha=_CI_ALPHA,
+                                    linewidth=0, zorder=1)
+
+            # Draw line without markers so the triangles read cleanly.
             ax.plot(x, err,
                     color=_LINE_COLOR, linestyle=lstyle, linewidth=1.2,
                     label=f'Shuffle {shuff} (final {final_err:.3g}%)',
                     alpha=0.65, zorder=2)
 
-            # Colour-coded scatter: green = overestimate, red = underestimate.
+            # Direction-coded markers: 'v' = overestimate, '^' = underestimate.
             over  = rel > 0
             under = ~over
             if over.any():
                 ax.scatter(x[over],  err[over],
-                           color=_OVER_COLOR,  s=18, alpha=0.75,
-                           linewidths=0, zorder=3)
+                           marker=_OVER_MARKER, color=_MARKER_COLOR,
+                           s=26, alpha=0.8, linewidths=0, zorder=3)
             if under.any():
                 ax.scatter(x[under], err[under],
-                           color=_UNDER_COLOR, s=18, alpha=0.75,
-                           linewidths=0, zorder=3)
+                           marker=_UNDER_MARKER, color=_MARKER_COLOR,
+                           s=26, alpha=0.8, linewidths=0, zorder=3)
 
             # Interpolate onto shared grid for cross-shuffle averaging.
             xu, idx = np.unique(x, return_index=True)
@@ -200,17 +270,23 @@ def main():
         ax.set_title(f"{q} with limit {lim}{size_part}, z={z} / "
                      f"eps_floor={args.epsilon_floor}", fontsize=18)
 
-        # ── legend: shuffle lines then point-colour key ───────────────────
+        # ── legend: shuffle lines, marker-shape key, CI band ──────────────
         line_handles, _ = ax.get_legend_handles_labels()
 
         over_handle = mlines.Line2D(
-            [], [], color=_OVER_COLOR,  marker='o', linestyle='None',
-            markersize=6, label='Overestimate')
+            [], [], color=_MARKER_COLOR, marker=_OVER_MARKER, linestyle='None',
+            markersize=7, label='Overestimate')
         under_handle = mlines.Line2D(
-            [], [], color=_UNDER_COLOR, marker='o', linestyle='None',
-            markersize=6, label='Underestimate')
+            [], [], color=_MARKER_COLOR, marker=_UNDER_MARKER, linestyle='None',
+            markersize=7, label='Underestimate')
+        extra_handles = [over_handle, under_handle]
 
-        ax.legend(handles=line_handles + [over_handle, under_handle],
+        if has_ci:
+            extra_handles.append(mpatches.Patch(
+                color=_CI_COLOR, alpha=_CI_ALPHA * 2.5,
+                label=f'Reported 95% CI ({ci_col} / truth)'))
+
+        ax.legend(handles=line_handles + extra_handles,
                   loc='lower left', fontsize=12, framealpha=1.0)
 
         plt.tight_layout()

@@ -155,7 +155,23 @@ bool		enable_rosl = false;
  */
 #define ROSL_N_PROBES		1588	/* inner tuples in exploration prefix P  */
 #define ROSL_EPSILON		0.2		/* fixed exploitation exploration mass   */
-#define ROSL_ALPHA			0.7		/* two-point allocation decay exponent   */
+#define ROSL_ALPHA			0.7		/* two-point allocation decay exponent
+									 * (LEGACY: only used when
+									 * ROSL_FLAT_WEIGHTS is 0)               */
+#define ROSL_FLAT_WEIGHTS	1		/* 1: h = 1/round_pairs.  Section-9
+									 * post-mortem result: variance-tracking
+									 * weights bias the pooled mean toward
+									 * low-variance slices under block
+									 * heterogeneity (inverse-variance
+									 * weighting targets a precision-weighted
+									 * mean, which equals the population mean
+									 * only under a common-mean regime).  The
+									 * proxy weights survived that mechanism
+									 * only by being nearly flat; flat weights
+									 * close the exposure and measured equal-
+									 * or-better on every tested cell.
+									 * 0: legacy stick-breaking/two-point
+									 * path, kept for A/B reproduction.      */
 
 /*
  * Per-round trajectory is buffered in C and dumped once at executor teardown
@@ -214,6 +230,26 @@ typedef struct RoslJoinState
 	int		   *cache_midx;			/* [exp_cache_lim] unique M-indices       */
 	int			cache_count;		/* number of unique cached tuples         */
 	bool	   *in_cache;			/* [m_lim] membership flag for the cache  */
+	bool	   *in_half_a;			/* [m_lim] split-cache replicate A (draws
+									 * 0..L/2-1 before dedup)                */
+	bool	   *in_half_b;			/* [m_lim] split-cache replicate B (draws
+									 * L/2..L-1 before dedup)                */
+
+	/*
+	 * ---- within-round variance track (Section-9-inspired, telemetry) ----
+	 * The L with-replacement draws are i.i.d., so their two halves give two
+	 * INDEPENDENT AIPW replicates Y_A, Y_B per round (each with its own
+	 * inclusion probability at exponent L/2).  v = ((Y_A - Y_B)/2)^2 is an
+	 * unbiased estimate of Var((Y_A+Y_B)/2 | H_{r-1}) -- a pure-noise,
+	 * heterogeneity-free variance the full-cache design cannot otherwise
+	 * observe.  The POINT ESTIMATOR is untouched (still the full-cache
+	 * score); v feeds only var_noise (a noise-only variance track that lets
+	 * the clustered SS be decomposed into noise vs cross-block truth
+	 * heterogeneity) and the Lindeberg-style max telemetry.  v is a mild
+	 * upper gauge for the full-cache score's own noise (pi at L/2 < pi at L).
+	 */
+	double		var_noise;			/* sum_r h_r^2 v_r                       */
+	double		max_h2v;			/* max_r h_r^2 v_r (Lindeberg telemetry) */
 	int		   *round_match;		/* [m_lim] matches this round, by M-index */
 
 	/*
@@ -231,6 +267,48 @@ typedef struct RoslJoinState
 	double		mom_yp;				/* M2 = sum_r h_r^2 * Yhat * pairs        */
 	double		mom_pp;				/* M3 = sum_r h_r^2 * pairs^2             */
 	double		stick;				/* stick-breaking residual 1 - sum h^2 V  */
+
+	/*
+	 * ---- Empirical-Bernstein confidence sequence (Section 8 guard band) ----
+	 * Anytime-valid interval on the bounded per-round rate X_r = Yhat/pairs.
+	 * Needs no variance convergence and remains meaningful at a data-dependent
+	 * stop (output LIMIT) -- the one residue the fixed-horizon CI cannot cover.
+	 * Three O(1) accumulators; emitted alongside (never instead of) the
+	 * self-normalized CI.
+	 */
+	double		eb_sx;				/* sum_r X_r                              */
+	double		eb_sxx;				/* sum_r X_r^2                            */
+	double		eb_max;				/* max_r |X_r| (Bernstein range bound B)  */
+	long		eb_n;				/* rounds folded into the EB moments      */
+
+	/*
+	 * ---- M-block-clustered / split-half variance (Section 7.h) ----
+	 * Rounds within one M-block share adaptive feedback through the block's
+	 * accumulated q, so the M-block -- not the round -- is the honest
+	 * independence unit.  We keep two block-level variance estimates and emit
+	 * both as a bracket:
+	 *   clustered  : per-block residual (B_Y - mu B_W); repairs the
+	 *                within-block feedback correlation but conflates
+	 *                cross-block truth heterogeneity with noise (over-wide
+	 *                under skew).
+	 *   split-half : per-block d_b = Y_A - (W_A/W_B) Y_B over odd/even rounds;
+	 *                cancels the block's truth level (heterogeneity-free) but
+	 *                shrinks under between-half feedback (anti-conservative in
+	 *                the clustered CI's target regime).
+	 * Both are O(1) streaming: we hold the CURRENT block's partial sums and
+	 * fold a squared residual into a running SS at each block boundary.
+	 */
+	double		blk_ynum;			/* current block: sum h*Yhat              */
+	double		blk_wpair;			/* current block: sum h*pairs             */
+	double		blk_ya;				/* current block, ODD rounds: sum h*Yhat  */
+	double		blk_wa;				/* current block, ODD rounds: sum h*pairs */
+	double		blk_yb;				/* current block, EVEN rounds: sum h*Yhat */
+	double		blk_wb;				/* current block, EVEN rounds: sum h*pairs*/
+	int			blk_round;			/* round index within the current block   */
+	bool		blk_open;			/* whether a block is currently open      */
+	double		clust_ss;			/* running sum of clustered residual^2    */
+	double		split_ss;			/* running sum of split-half d_b^2        */
+	long		n_blocks;			/* completed M-blocks folded into SS      */
 	long		round_idx;			/* flat round index r across all blocks   */
 	double		t_est;				/* estimated total number of rounds       */
 	double		num_outer;			/* |R| (planner row estimate)             */
@@ -263,6 +341,9 @@ typedef struct RoslJoinState
 	double	   *traj_mean_per_pair;	/* mu_hat at this round                   */
 	double	   *traj_est_join;		/* J_hat at this round                    */
 	double	   *traj_ci_halfwidth;	/* 95% CI half-width on J_hat             */
+	double	   *traj_ci_eb;			/* EB-CS guard-band half-width (Sec. 8);
+									 * the anytime interval a mid-run look or
+									 * LIMIT-stopped run should read           */
 	double	   *traj_pairs_seen;	/* est_den (cumulative Mn*Kn)             */
 	long	   *traj_sample_matches;/* cumulative sample_matches at this round */
 	double	   *traj_elapsed_ms;	/* ms from first-row start to this round  */
@@ -538,6 +619,27 @@ draw_and_dedup_cache(RoslJoinState *st)
 		st->interim[s] = lower_bound_cum(st->cum, n, r);
 	}
 
+	/*
+	 * Split-cache replicates: record which HALF each draw belongs to before
+	 * the sort destroys draw order.  Draws are i.i.d., so halves A and B are
+	 * two independent with-replacement samples of size L/2 and L-L/2; each
+	 * half's dedup has inclusion probability 1-(1-p)^(L/2) etc.  Used only by
+	 * the within-round variance track in finalize_*_round().
+	 */
+	memset(st->in_half_a, 0, sizeof(bool) * n);
+	memset(st->in_half_b, 0, sizeof(bool) * n);
+	{
+		int			La = L / 2;
+
+		for (s = 0; s < L; s++)
+		{
+			if (s < La)
+				st->in_half_a[st->interim[s]] = true;
+			else
+				st->in_half_b[st->interim[s]] = true;
+		}
+	}
+
 	/* sort by M-index, then dedup in a single linear pass */
 	qsort(st->interim, L, sizeof(int), cmp_int);
 
@@ -562,6 +664,7 @@ draw_and_dedup_cache(RoslJoinState *st)
 	}
 }
 
+#if !ROSL_FLAT_WEIGHTS
 /*
  * Two-point allocation rate for round r (paper Eq. 18 / Theorem 3), computed
  * in closed form (no scan over future rounds).  pi_repr in [0,1] mixes the
@@ -614,6 +717,7 @@ two_point_lambda(RoslJoinState *st, long r, double pi_repr)
 
 	return lambda;
 }
+#endif							/* !ROSL_FLAT_WEIGHTS */
 
 /*
  * ACCUMULATE (paper subroutine): fold one round's HT/AIPW score into the
@@ -629,34 +733,137 @@ two_point_lambda(RoslJoinState *st, long r, double pi_repr)
  * est_den accumulates the UNWEIGHTED pair count so the summary/denominator
  * bookkeeping still reports pairs seen; the point estimate uses weight_sum.
  */
+/*
+ * Two-sided t critical value at level 0.05 for df degrees of freedom.  Sparse
+ * lookup table with linear-in-1/df interpolation between anchors and a clamp
+ * to the normal value (1.96) for large df.  Used only by the block-clustered
+ * and split-half CIs, whose df is the (small) number of M-blocks minus one.
+ */
+static double
+t_crit_975(long df)
+{
+	static const long	dfs[]  = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+								  12, 15, 20, 25, 30, 40, 60, 120};
+	static const double	tvs[]  = {12.706, 4.303, 3.182, 2.776, 2.571,
+								  2.447, 2.365, 2.306, 2.262, 2.228,
+								  2.179, 2.131, 2.086, 2.060, 2.042,
+								  2.021, 2.000, 1.980};
+	const int	n = (int) (sizeof(dfs) / sizeof(dfs[0]));
+	int			i;
+
+	if (df <= 1)
+		return tvs[0];
+	if (df >= dfs[n - 1])
+		return 1.96;					/* normal limit for large df */
+	for (i = 1; i < n; i++)
+	{
+		if (df <= dfs[i])
+		{
+			/* interpolate in 1/df, which is where the t curve is ~linear */
+			double		x0 = 1.0 / (double) dfs[i - 1];
+			double		x1 = 1.0 / (double) dfs[i];
+			double		x  = 1.0 / (double) df;
+			double		w  = (x - x0) / (x1 - x0);
+
+			return tvs[i - 1] + w * (tvs[i] - tvs[i - 1]);
+		}
+	}
+	return 1.96;
+}
+
+/*
+ * Close the currently-open M-block: fold its clustered residual and its
+ * split-half difference into the running SS accumulators.  Called at every
+ * M-block boundary (and once at teardown for the final block).  O(1).
+ *
+ *   clustered  : d = blk_ynum - mu * blk_wpair, with mu the CURRENT running
+ *                weighted mean.  Because mu drifts slightly as later blocks
+ *                arrive, this is an approximation to the fixed-mu residual;
+ *                the error is O(1/n_blocks) and vanishes as blocks accumulate.
+ *   split-half : d = blk_ya - (blk_wa / blk_wb) * blk_yb, matching the two
+ *                halves' weighted pair masses so the block's density level
+ *                cancels.  Requires both halves non-empty (>=2 rounds in the
+ *                block); single-round blocks contribute to clustered only.
+ */
+static void
+close_block(RoslJoinState *st)
+{
+	double		mu;
+	double		dc;
+
+	if (!st->blk_open)
+		return;
+
+	if (st->weight_sum > 0.0)
+	{
+		mu = st->est_num / st->weight_sum;
+		dc = st->blk_ynum - mu * st->blk_wpair;
+		st->clust_ss += dc * dc;
+
+		if (st->blk_wa > 0.0 && st->blk_wb > 0.0)
+		{
+			double		ds = st->blk_ya - (st->blk_wa / st->blk_wb) * st->blk_yb;
+
+			st->split_ss += ds * ds;
+		}
+		st->n_blocks++;
+	}
+
+	/* reset per-block partials for the next block */
+	st->blk_ynum = st->blk_wpair = 0.0;
+	st->blk_ya = st->blk_wa = 0.0;
+	st->blk_yb = st->blk_wb = 0.0;
+	st->blk_round = 0;
+	st->blk_open = false;
+}
+
 static void
 accumulate_round(RoslJoinState *st, double round_pairs, double Yhat,
-				 double pi_repr)
+				 double pi_repr, double v_round)
 {
-	double		V_r;
-	double		lambda;
 	double		h2;
 	double		h;
 
 	st->round_idx++;
 
-	if (pi_repr <= 0.0)
-		pi_repr = 1e-12;			/* numerical guard; epsilon-floor bounds it */
+#if ROSL_FLAT_WEIGHTS
+	/*
+	 * Flat weights: h = 1/round_pairs, so the pooled mu is the plain
+	 * per-pair average of round scores.  Weights carry NO variance
+	 * information by design -- see the ROSL_FLAT_WEIGHTS comment at the
+	 * definition site for the mechanism (inverse-variance weighting under
+	 * block heterogeneity biases the estimand toward low-variance slices).
+	 * pi_repr is retained in the signature for the legacy path only.
+	 */
+	(void) pi_repr;
+	if (round_pairs <= 0.0)
+		return;						/* callers guarantee > 0; defensive      */
+	h = 1.0 / round_pairs;
+	h2 = h * h;
+#else
+	{
+		double		V_r;
+		double		lambda;
 
-	V_r = round_pairs / pi_repr;
-	if (V_r <= 0.0)
-		V_r = 1e-12;
+		if (pi_repr <= 0.0)
+			pi_repr = 1e-12;		/* numerical guard; epsilon-floor bounds it */
 
-	lambda = two_point_lambda(st, st->round_idx, pi_repr);
+		V_r = round_pairs / pi_repr;
+		if (V_r <= 0.0)
+			V_r = 1e-12;
 
-	h2 = (st->stick * lambda) / V_r;
-	if (h2 < 0.0)
-		h2 = 0.0;					/* stick underflow guard                   */
-	h = sqrt(h2);
+		lambda = two_point_lambda(st, st->round_idx, pi_repr);
 
-	st->stick -= h2 * V_r;
-	if (st->stick < 0.0)
-		st->stick = 0.0;
+		h2 = (st->stick * lambda) / V_r;
+		if (h2 < 0.0)
+			h2 = 0.0;				/* stick underflow guard                   */
+		h = sqrt(h2);
+
+		st->stick -= h2 * V_r;
+		if (st->stick < 0.0)
+			st->stick = 0.0;
+	}
+#endif
 
 	st->est_num += h * Yhat;
 	st->weight_sum += h * round_pairs;
@@ -666,6 +873,64 @@ accumulate_round(RoslJoinState *st, double round_pairs, double Yhat,
 	st->mom_yy += h2 * Yhat * Yhat;
 	st->mom_yp += h2 * Yhat * round_pairs;
 	st->mom_pp += h2 * round_pairs * round_pairs;
+
+	/*
+	 * Within-round (noise-only) variance track from the split-cache
+	 * replicates, plus the Lindeberg-style max telemetry the design notes
+	 * asked for (Fix 3): a production run can certify that no single round
+	 * dominates the variance by inspecting max_h2v against var_noise.
+	 */
+	{
+		double		hv = h2 * v_round;
+
+		st->var_noise += hv;
+		if (hv > st->max_h2v)
+			st->max_h2v = hv;
+	}
+
+	/*
+	 * Empirical-Bernstein moments on the bounded per-round rate X = Yhat/pairs
+	 * (Section 8 guard band).  Both call sites guarantee round_pairs > 0
+	 * (finalize_explore_round returns early on an empty prefix; PH_NEW_SBLOCK
+	 * skips finalize_round when k_count == 0), but guard anyway so a future
+	 * call site cannot divide by zero.  Note the EB estimand is the UNWEIGHTED
+	 * mean of per-round rates: with unequal round sizes (the last K-block is
+	 * short) this weights small slices slightly more than total/total-pairs
+	 * does; the discrepancy is bounded by one round's share and vanishes as
+	 * rounds accumulate.
+	 */
+	if (round_pairs > 0.0)
+	{
+		double		X = Yhat / round_pairs;
+		double		ax = (X < 0.0) ? -X : X;
+
+		st->eb_sx += X;
+		st->eb_sxx += X * X;
+		if (ax > st->eb_max)
+			st->eb_max = ax;
+		st->eb_n++;
+	}
+
+	/*
+	 * Block-level partials for the clustered / split-half variance.  A block
+	 * is opened lazily on its first round; the M-block driver calls
+	 * close_block() at each boundary.  Odd/even rounds within the block feed
+	 * the two split-half halves.
+	 */
+	st->blk_open = true;
+	st->blk_ynum += h * Yhat;
+	st->blk_wpair += h * round_pairs;
+	if ((st->blk_round & 1) == 0)
+	{
+		st->blk_ya += h * Yhat;
+		st->blk_wa += h * round_pairs;
+	}
+	else
+	{
+		st->blk_yb += h * Yhat;
+		st->blk_wb += h * round_pairs;
+	}
+	st->blk_round++;
 }
 
 /*
@@ -688,6 +953,7 @@ record_trajectory(RoslJoinState *st)
 	double		ss;
 	double		Vhat;
 	double		ci_half;
+	double		ci_eb = 0.0;
 
 	st->rounds++;
 
@@ -703,6 +969,27 @@ record_trajectory(RoslJoinState *st)
 		ss = 0.0;
 	Vhat = ss / (st->weight_sum * st->weight_sum);
 	ci_half = 1.96 * st->num_outer * st->num_inner * sqrt(Vhat);
+
+	/*
+	 * Per-round EB-CS guard band (Section 8), O(1) from the running moments.
+	 * This is the interval a mid-run look -- or a run about to be stopped by
+	 * an output LIMIT -- should read: the self-normalized ci_half above is
+	 * fixed-horizon-only.  Uses |R|*|S| (planner inner) like ci_half; the
+	 * teardown ROSL_SUMM recomputes both against the exact act_outer.
+	 */
+	if (st->eb_n > 1)
+	{
+		double		xb = st->eb_sx / (double) st->eb_n;
+		double		vx = st->eb_sxx / (double) st->eb_n - xb * xb;
+		double		lg = 3.6888794541139363;	/* ln(2/0.05) */
+		double		half_rate;
+
+		if (vx < 0.0)
+			vx = 0.0;
+		half_rate = sqrt(2.0 * vx * lg / (double) st->eb_n)
+			+ (7.0 / 3.0) * st->eb_max * lg / (double) st->eb_n;
+		ci_eb = half_rate * st->num_outer * st->num_inner;
+	}
 
 	if (st->traj_count < ROSL_TRAJ_CAP)
 	{
@@ -725,6 +1012,7 @@ record_trajectory(RoslJoinState *st)
 		st->traj_mean_per_pair[st->traj_count]  = mu;
 		st->traj_est_join[st->traj_count]       = Jhat;
 		st->traj_ci_halfwidth[st->traj_count]   = ci_half;
+		st->traj_ci_eb[st->traj_count]          = ci_eb;
 		st->traj_pairs_seen[st->traj_count]     = st->est_den;
 		st->traj_sample_matches[st->traj_count] = st->sample_matches;
 		st->traj_elapsed_ms[st->traj_count]     = elapsed_ms;
@@ -761,48 +1049,76 @@ record_trajectory(RoslJoinState *st)
  * most pairs do not join, qhat(t) ~ 0, the baseline ~ 0, and the inverse-pi
  * correction fires only on the rare actual matches.
  *
- * The round is then pooled with a variance-stabilizing weight via
- * accumulate_round(); pi_repr = min over cached tuples of pi(t) treats the
- * round as being as fragile as its rarest included tuple.
+ * The round is then pooled by accumulate_round().  Under ROSL_FLAT_WEIGHTS
+ * (the default) the pooling weight is flat (h = 1/round_pairs) and pi_repr is
+ * carried only for the legacy stick-breaking path; the split-cache half
+ * corrections computed alongside feed the within-round noise track (see the
+ * var_noise struct comment).
  */
 static void
 finalize_round(RoslJoinState *st)
 {
-	double		Yhat = 0.0;
+	double		base = 0.0;
+	double		corr = 0.0;
+	double		corrA = 0.0;
+	double		corrB = 0.0;
+	double		Yhat;
+	double		v;
 	double		Kn = (double) st->k_count;
 	double		pi_repr = 1.0;
 	double		round_pairs;
+	int			La = st->exp_cache_lim / 2;
+	int			Lb = st->exp_cache_lim - La;
 	int			c;
 	int			t;
 	int			n = st->m_count;
 
-	/* AIPW correction term over the cached (probed) tuples */
+	/* AIPW baseline term over ALL of M (cached and not) */
+	for (t = 0; t < n; t++)
+		base += st->qhat[t] * Kn;
+
+	/*
+	 * AIPW correction over the cached (probed) tuples: the full-cache
+	 * correction (the score, unchanged) plus the two half-cache corrections
+	 * (telemetry only).  A tuple drawn in both halves contributes to both,
+	 * each with its own half inclusion probability.
+	 */
 	for (c = 0; c < st->cache_count; c++)
 	{
 		int			m = st->cache_midx[c];
 		double		pm = st->p[m];
 		double		pi = 1.0 - pow(1.0 - pm, (double) st->exp_cache_lim);
 		double		mhat = st->qhat[m] * Kn;	/* frozen match-count predictor */
+		double		resid = (double) st->round_match[m] - mhat;
 
 		if (pi > 0.0)
 		{
-			Yhat += mhat + ((double) st->round_match[m] - mhat) / pi;
+			corr += resid / pi;
 			if (pi < pi_repr)
 				pi_repr = pi;		/* track rarest included tuple           */
 		}
-		else
-			Yhat += mhat;			/* degenerate pi: baseline only          */
+		if (st->in_half_a[m])
+		{
+			double		pia = 1.0 - pow(1.0 - pm, (double) La);
+
+			if (pia > 0.0)
+				corrA += resid / pia;
+		}
+		if (st->in_half_b[m])
+		{
+			double		pib = 1.0 - pow(1.0 - pm, (double) Lb);
+
+			if (pib > 0.0)
+				corrB += resid / pib;
+		}
 	}
 
-	/* AIPW baseline term over the tuples NOT in the cache */
-	for (t = 0; t < n; t++)
-	{
-		if (!st->in_cache[t])
-			Yhat += st->qhat[t] * Kn;
-	}
+	Yhat = base + corr;				/* the emitted score: full cache, as before */
+	/* split-half within-round variance: Y_A - Y_B = corrA - corrB (base cancels) */
+	v = 0.25 * (corrA - corrB) * (corrA - corrB);
 
 	round_pairs = (double) st->m_count * Kn;
-	accumulate_round(st, round_pairs, Yhat, pi_repr);
+	accumulate_round(st, round_pairs, Yhat, pi_repr, v);
 	record_trajectory(st);
 }
 
@@ -824,25 +1140,41 @@ finalize_explore_round(RoslJoinState *st)
 {
 	double		Mn = (double) st->m_count;
 	double		pi_exp;
+	double		pia;
+	double		pib;
 	double		Yhat = 0.0;
+	double		YA = 0.0;
+	double		YB = 0.0;
+	double		v;
 	double		round_pairs;
+	int			La = st->exp_cache_lim / 2;
+	int			Lb = st->exp_cache_lim - La;
 	int			c;
 
 	if (Mn <= 0.0 || st->p_count <= 0)
 		return;
 
 	pi_exp = 1.0 - pow(1.0 - 1.0 / Mn, (double) st->exp_cache_lim);
+	pia = 1.0 - pow(1.0 - 1.0 / Mn, (double) La);
+	pib = 1.0 - pow(1.0 - 1.0 / Mn, (double) Lb);
 
 	for (c = 0; c < st->cache_count; c++)
 	{
 		int			m = st->cache_midx[c];
+		double		y = (double) st->round_match[m];
 
 		if (pi_exp > 0.0)
-			Yhat += (double) st->round_match[m] / pi_exp;
+			Yhat += y / pi_exp;
+		if (st->in_half_a[m] && pia > 0.0)
+			YA += y / pia;
+		if (st->in_half_b[m] && pib > 0.0)
+			YB += y / pib;
 	}
+	/* split-half within-round variance (see struct comment) */
+	v = 0.25 * (YA - YB) * (YA - YB);
 
 	round_pairs = Mn * (double) st->p_count;
-	accumulate_round(st, round_pairs, Yhat, pi_exp);
+	accumulate_round(st, round_pairs, Yhat, pi_exp, v);
 	record_trajectory(st);
 }
 
@@ -917,6 +1249,8 @@ rosl_state_init(NestLoopState *node)
 	st->qhat = (double *) palloc(sizeof(double) * st->m_lim);
 	st->cum = (double *) palloc(sizeof(double) * st->m_lim);
 	st->in_cache = (bool *) palloc(sizeof(bool) * st->m_lim);
+	st->in_half_a = (bool *) palloc(sizeof(bool) * st->m_lim);
+	st->in_half_b = (bool *) palloc(sizeof(bool) * st->m_lim);
 	st->interim = (int *) palloc(sizeof(int) * st->exp_cache_lim);
 	st->cache_midx = (int *) palloc(sizeof(int) * st->exp_cache_lim);
 
@@ -925,6 +1259,7 @@ rosl_state_init(NestLoopState *node)
 	st->traj_mean_per_pair  = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
 	st->traj_est_join       = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
 	st->traj_ci_halfwidth   = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
+	st->traj_ci_eb          = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
 	st->traj_pairs_seen     = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
 	st->traj_sample_matches = (long *)   palloc(sizeof(long) * ROSL_TRAJ_CAP);
 	st->traj_elapsed_ms     = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
@@ -942,6 +1277,16 @@ rosl_state_init(NestLoopState *node)
 	st->mom_pp = 0.0;
 	st->stick = 1.0;
 	st->round_idx = 0;
+	st->eb_sx = st->eb_sxx = st->eb_max = 0.0;
+	st->eb_n = 0;
+	st->blk_ynum = st->blk_wpair = 0.0;
+	st->blk_ya = st->blk_wa = st->blk_yb = st->blk_wb = 0.0;
+	st->blk_round = 0;
+	st->blk_open = false;
+	st->clust_ss = st->split_ss = 0.0;
+	st->var_noise = 0.0;
+	st->max_h2v = 0.0;
+	st->n_blocks = 0;
 	st->act_outer = 0.0;			/* exact |R|: accumulated per M-block      */
 
 	st->phase = PH_NEW_MBLOCK;
@@ -1104,6 +1449,14 @@ ExecRoslNestLoop(NestLoopState *node)
 		{
 			case PH_NEW_MBLOCK:
 				{
+					/*
+					 * Close the M-block that just finished (if any): fold its
+					 * clustered + split-half residuals into the running SS.
+					 * Rounds within a block share adaptive feedback, so the
+					 * block is the independence unit for those CIs.
+					 */
+					close_block(st);
+
 					st->m_count = load_outer_block(st, outerPlan);
 					if (st->m_count == 0)
 					{
@@ -1502,14 +1855,15 @@ PrintRoslCounters(RoslJoinState *st)
 		elog(INFO,
 			 "ROSL_TRAJ round=%ld mean_per_pair=%.10f est_join=%.2f "
 			 "ci_halfwidth=%.2f pairs_seen=%.0f sample_matches=%ld "
-			 "elapsed_ms=%.3f",
+			 "elapsed_ms=%.3f ci_eb=%.2f",
 			 st->traj_round[i],
 			 st->traj_mean_per_pair[i],
 			 st->traj_est_join[i],
 			 st->traj_ci_halfwidth[i],
 			 st->traj_pairs_seen[i],
 			 st->traj_sample_matches[i],
-			 st->traj_elapsed_ms[i]);
+			 st->traj_elapsed_ms[i],
+			 st->traj_ci_eb[i]);
 	}
 
 	if (st->traj_truncated)
@@ -1530,6 +1884,12 @@ PrintRoslCounters(RoslJoinState *st)
 	 * here from the moment accumulators (Konig-Huygens), matching the per-round
 	 * trajectory.  The `final_est_join=` token is kept verbatim for the parser.
 	 */
+	/*
+	 * Fold the final (still-open) M-block into the block-level SS before the
+	 * clustered / split-half CIs are read.  Idempotent if already closed.
+	 */
+	close_block(st);
+
 	if (st->weight_sum > 0.0)
 	{
 		double		mu = st->est_num / st->weight_sum;
@@ -1539,18 +1899,108 @@ PrintRoslCounters(RoslJoinState *st)
 			+ mu * mu * st->mom_pp;
 		double		Vhat;
 		double		ci_half;
+		double		ci_clust;
+		double		ci_split;
+		double		ci_eb;
+		double		est_eb;
 
 		if (ss < 0.0)
 			ss = 0.0;
 		Vhat = ss / (st->weight_sum * st->weight_sum);
 		ci_half = 1.96 * pop * sqrt(Vhat);
 
-		elog(INFO,
-			 "ROSL_SUMM final_est_join=%.2f ci_halfwidth=%.2f rounds=%ld "
-			 "sample_matches=%ld pairs_seen=%.0f t_steps=%ld "
-			 "act_outer=%.0f num_outer=%.0f num_inner=%.0f",
-			 est_join, ci_half, st->rounds, st->sample_matches, st->est_den,
-			 st->t_steps, st->act_outer, st->num_outer, st->num_inner);
+		/*
+		 * M-block-clustered CI (Section 7.h).  df = G-1 with a G/(G-1)
+		 * small-sample scale on the between-block SS; falls back to the
+		 * round-level half-width when fewer than two blocks are available
+		 * (a single block's residual is degenerately ~0, mu having been fit
+		 * from that same block).
+		 */
+		if (st->n_blocks >= 2)
+		{
+			double		g = (double) st->n_blocks;
+			double		ss_c = st->clust_ss * g / (g - 1.0);
+
+			ci_clust = t_crit_975(st->n_blocks - 1) * pop
+				* sqrt(ss_c) / st->weight_sum;
+		}
+		else
+			ci_clust = ci_half;
+
+		/*
+		 * Split-half within-block CI (Section 7.h).  Heterogeneity-free floor;
+		 * df = number of blocks that contributed both halves.  Falls back to
+		 * the round-level half-width if none did.
+		 */
+		if (st->n_blocks >= 1 && st->split_ss > 0.0)
+			ci_split = t_crit_975(st->n_blocks) * pop
+				* sqrt(st->split_ss) / st->weight_sum;
+		else
+			ci_split = ci_half;
+
+		/*
+		 * Empirical-Bernstein confidence sequence (Section 8 guard band) on
+		 * the bounded per-round rate X = Yhat/pairs.  Maurer-Pontil form:
+		 *   |Xbar - mu| <= sqrt(2 Vx ln(2/alpha) / N) + (7/3) B ln(2/alpha)/N.
+		 * est_eb centres on Xbar (the unweighted per-round mean), which the
+		 * bound is stated for; the weighted mu above remains the primary point
+		 * estimate.  This interval needs no variance convergence and is the
+		 * only one here valid at a data-dependent stop (output LIMIT).
+		 */
+		if (st->eb_n > 1)
+		{
+			double		xb = st->eb_sx / (double) st->eb_n;
+			double		vx = st->eb_sxx / (double) st->eb_n - xb * xb;
+			double		lg = 3.6888794541139363;	/* ln(2/0.05) */
+			double		half_rate;
+
+			if (vx < 0.0)
+				vx = 0.0;
+			half_rate = sqrt(2.0 * vx * lg / (double) st->eb_n)
+				+ (7.0 / 3.0) * st->eb_max * lg / (double) st->eb_n;
+			ci_eb = half_rate * pop;
+			est_eb = xb * pop;
+		}
+		else
+		{
+			ci_eb = ci_half;
+			est_eb = est_join;
+		}
+
+		/*
+		 * Noise-only interval from the split-cache within-round variance,
+		 * plus the decomposition diagnostic the clustered CI needs:
+		 *   het_ratio = clustered SS / var_noise  --  ~1 means the clustered
+		 * residuals are mostly estimator noise (clustered CI trustworthy);
+		 * >>1 means cross-block truth heterogeneity dominates (clustered CI
+		 * over-wide by roughly that factor).  lindeberg_max certifies no
+		 * single round dominates the noise (Fix-3 telemetry).
+		 */
+		{
+			double		ci_noise = 1.96 * pop
+				* sqrt(st->var_noise > 0.0 ? st->var_noise : 0.0)
+				/ st->weight_sum;
+			double		het_ratio = -1.0;	/* -1: undefined (var_noise==0) */
+
+			if (st->var_noise > 0.0 && st->n_blocks >= 2)
+			{
+				double		g = (double) st->n_blocks;
+
+				het_ratio = (st->clust_ss * g / (g - 1.0)) / st->var_noise;
+			}
+
+			elog(INFO,
+				 "ROSL_SUMM final_est_join=%.2f ci_halfwidth=%.2f "
+				 "ci_clust=%.2f ci_split=%.2f ci_eb=%.2f est_eb=%.2f "
+				 "ci_noise=%.2f het_ratio=%.2f lindeberg_max=%.3e "
+				 "n_blocks=%ld "
+				 "rounds=%ld sample_matches=%ld pairs_seen=%.0f t_steps=%ld "
+				 "act_outer=%.0f num_outer=%.0f num_inner=%.0f",
+				 est_join, ci_half, ci_clust, ci_split, ci_eb, est_eb,
+				 ci_noise, het_ratio, st->max_h2v,
+				 st->n_blocks, st->rounds, st->sample_matches, st->est_den,
+				 st->t_steps, st->act_outer, st->num_outer, st->num_inner);
+		}
 	}
 	else
 		elog(INFO,
@@ -1610,12 +2060,15 @@ ExecEndNestLoop(NestLoopState *node)
 		pfree(st->qhat);
 		pfree(st->cum);
 		pfree(st->in_cache);
+		pfree(st->in_half_a);
+		pfree(st->in_half_b);
 		pfree(st->interim);
 		pfree(st->cache_midx);
 		pfree(st->traj_round);
 		pfree(st->traj_mean_per_pair);
 		pfree(st->traj_est_join);
 		pfree(st->traj_ci_halfwidth);
+		pfree(st->traj_ci_eb);
 		pfree(st->traj_pairs_seen);
 		pfree(st->traj_sample_matches);
 		pfree(st->traj_elapsed_ms);
@@ -1675,6 +2128,16 @@ ExecReScanNestLoop(NestLoopState *node)
 		st->mom_pp = 0.0;
 		st->stick = 1.0;
 		st->round_idx = 0;
+		st->eb_sx = st->eb_sxx = st->eb_max = 0.0;
+		st->eb_n = 0;
+		st->blk_ynum = st->blk_wpair = 0.0;
+		st->blk_ya = st->blk_wa = st->blk_yb = st->blk_wb = 0.0;
+		st->blk_round = 0;
+		st->blk_open = false;
+		st->clust_ss = st->split_ss = 0.0;
+		st->var_noise = 0.0;
+		st->max_h2v = 0.0;
+		st->n_blocks = 0;
 		st->act_outer = 0.0;			/* exact |R| accumulator restarts       */
 
 		st->rounds = 0;
