@@ -107,6 +107,23 @@
  * deduplication is a sort of the drawn indices and a single linear pass.
  * Assumes a non-parameterised inner (nestParams == NIL) and targets
  * INNER-join cardinality.
+ *
+ * ANYTIME-VALID CONFIDENCE SEQUENCE (ROSL_HOWARD, Section-9 upgrade):
+ * alongside the fixed-horizon self-normalized CI (ci_halfwidth) and the
+ * fixed-n empirical-Bernstein guard band (ci_eb), the build maintains a
+ * TIME-UNIFORM empirical-Bernstein confidence sequence after Howard, Ramdas,
+ * McAuliffe & Sekhon (Ann. Statist. 2021) on the bounded per-round rate
+ * X_r = Yhat_r / pairs_r: predictable running-mean centre, predictable
+ * variance process V_r = sum (X_r - Xhat_r)^2, polynomial stitched boundary
+ * (eta = ROSL_HCS_ETA, s = ROSL_HCS_S).  Emitted as ci_hcs (plug-in range
+ * bound, width-comparable to ci_eb) and ci_hcs_strict (fully predictable
+ * epsilon-floor range envelope).  At round r the CS covers the running
+ * average of per-round conditional means: the seen-slice mean rate in tiling
+ * mode (equal to the population per-pair rate only at exhaustion), p_M
+ * uniformly at every round in single-M mode.  These are the intervals with
+ * an actual coverage guarantee at a data-dependent stop (output LIMIT,
+ * mid-run look); ci_eb remains emitted for A/B continuity only.  Full
+ * construction, estimand caveats, and rollback at the ROSL_HOWARD banner.
  *-------------------------------------------------------------------------
  */
 
@@ -304,6 +321,76 @@ bool		enable_rosl = false;
  */
 #define ROSL_TRAJ_CAP		1000000	/* max per-round trajectory rows retained */
 
+/*
+ * ================= HOWARD ANYTIME-VALID CONFIDENCE SEQUENCE =================
+ * Opt-out upgrade of the Section-8/9 "guard band": a genuine TIME-UNIFORM
+ * confidence sequence (CS) in the sense of Howard, Ramdas, McAuliffe & Sekhon,
+ * "Time-uniform, nonparametric, nonasymptotic confidence sequences"
+ * (Ann. Statist. 2021) -- empirical-Bernstein flavour with the polynomial
+ * stitched boundary (their Thm 1 + the sub-exponential extension, section
+ * 3.2/5).  Emitted ALONGSIDE -- never instead of -- ci_halfwidth and ci_eb.
+ *
+ * Why the existing ci_eb is not this: the Maurer-Pontil display is a FIXED-n
+ * bound (valid at each n marginally, not uniformly over n), its variance term
+ * is the sample variance around the FINAL mean (not a predictable process),
+ * and its range bound eb_max is the realized max (not measurable before the
+ * rounds it bounds).  The CS repairs all three: a predictable running-mean
+ * center Xhat_r, a predictable variance process V_r = sum (X_r - Xhat_r)^2,
+ * and a stitched iterated-logarithm boundary that holds simultaneously over
+ * every round -- so a mid-run look, or a run stopped by an output LIMIT,
+ * reads an interval with an actual coverage guarantee.
+ *
+ * Estimand and scoping (Section-7-spirit caveats; keep in sync with the
+ * record_trajectory / PrintRoslCounters comments):
+ *   1. At round r the CS covers the running average of per-round conditional
+ *      means (1/r) sum_j E[X_j | F_{j-1}].  In TILING mode per-round
+ *      conditional means differ across M-blocks, so a mid-run CS statement is
+ *      about the pairs-seen-so-far average rate, converging to the population
+ *      per-pair rate exactly at exhaustion (blocks tile R x S); do NOT
+ *      advertise mid-run ci_hcs * pop as covering final J with the full
+ *      guarantee.  In SINGLE-M mode the conditional mean is common across
+ *      rounds, so the CS covers p_M uniformly at every round -- the cleanest
+ *      deployment of this interval.
+ *   2. A match-count-triggered stop still biases the CENTER (the Section-7
+ *      change-(3) caveat); the CS makes the interval valid AT the stop time
+ *      for its own estimand (the running mean above), but does not repair the
+ *      extrapolation-to-full-J mismatch when the outer scan is incomplete.
+ *   3. Like est_eb, the CS center is the UNWEIGHTED mean of per-round rates;
+ *      with a short final K-block this differs from total/total-pairs by at
+ *      most one round's share.  Documented, not fixed.
+ *
+ * Two range-bound tracks are maintained (both O(1)):
+ *   Track A (ci_hcs, default comparison track): plug-in running max
+ *       c_r = max_j |X_j - Xhat_j| -- same epistemic status as the eb_max
+ *       plug-in, directly width-comparable to ci_eb; not fully rigorous
+ *       (c not predictable).
+ *   Track B (ci_hcs_strict, fully valid): a PREDICTABLE per-round envelope
+ *       from the epsilon-floor: before round r is probed every cached tuple's
+ *       inclusion probability satisfies pi >= pi_floor_r, so the AIPW score
+ *       obeys a pre-round bound on |X_r - Xhat_r| with every quantity frozen
+ *       before the draw (see the B_pred computation in the finalizers).
+ *       Expect Track B materially wider; that gap is itself a finding.
+ *
+ * Memory: 5 scalars + 2 trajectory arrays (8 bytes x ROSL_TRAJ_CAP each =
+ * 16 MB at the current cap, on top of the ~64-bytes-a-row base trajectory).
+ *
+ * Rollback at every stage is ROSL_HOWARD = 0, which compiles the whole track
+ * out (same convention as ROSL_SINGLE_M / ROSL_FLAT_WEIGHTS) and reproduces
+ * the prior binary modulo dead #defines.
+ * =============================================================================
+ */
+#ifndef ROSL_HOWARD
+#define ROSL_HOWARD			1		/* 0 compiles the whole CS track out     */
+#endif
+#define ROSL_HCS_ALPHA		0.05	/* two-sided level; alpha/2 per side     */
+#define ROSL_HCS_ETA		2.0		/* stitching geometric spacing eta       */
+#define ROSL_HCS_S			1.4		/* stitching polynomial exponent s       */
+#define ROSL_HCS_V0			1.0		/* variance-process origin (stitching
+									 * clamp v_bar = max(v, v0); affects
+									 * WIDTH only, never validity -- sweep in
+									 * the simulator, units of one round's
+									 * typical (X - Xhat)^2)                 */
+
 /* State-machine phases for the streaming ROSL driver. */
 typedef enum RoslPhase
 {
@@ -397,17 +484,40 @@ typedef struct RoslJoinState
 	double		stick;				/* stick-breaking residual 1 - sum h^2 V  */
 
 	/*
-	 * ---- Empirical-Bernstein confidence sequence (Section 8 guard band) ----
-	 * Anytime-valid interval on the bounded per-round rate X_r = Yhat/pairs.
-	 * Needs no variance convergence and remains meaningful at a data-dependent
-	 * stop (output LIMIT) -- the one residue the fixed-horizon CI cannot cover.
-	 * Three O(1) accumulators; emitted alongside (never instead of) the
+	 * ---- Empirical-Bernstein FIXED-n bound (Section 8 guard band) ----
+	 * Maurer-Pontil interval on the bounded per-round rate X_r = Yhat/pairs.
+	 * Needs no variance convergence, but NOTE (Section-9 honesty posture):
+	 * this is a fixed-n bound -- valid at each n marginally, NOT uniformly
+	 * over n -- so it carries no coverage guarantee when read at a
+	 * data-dependent stopping time.  The interval with the actual anytime
+	 * guarantee is the Howard CS below (ci_hcs / ci_hcs_strict); ci_eb is
+	 * kept emitted for A/B continuity with prior runs.  Three O(1)
+	 * accumulators; emitted alongside (never instead of) the
 	 * self-normalized CI.
 	 */
 	double		eb_sx;				/* sum_r X_r                              */
 	double		eb_sxx;				/* sum_r X_r^2                            */
 	double		eb_max;				/* max_r |X_r| (Bernstein range bound B)  */
 	long		eb_n;				/* rounds folded into the EB moments      */
+
+#if ROSL_HOWARD
+	/*
+	 * ---- Howard et al. anytime-valid CS (time-uniform, Section 9 upgrade) --
+	 * See the ROSL_HOWARD banner at the #define site for construction,
+	 * estimand, and scoping.  hcs_s / hcs_n duplicate eb_sx / eb_n by value
+	 * (same X folded, same count) -- kept separate so the CS track is fully
+	 * self-contained and ROSL_HOWARD = 0 removes it without touching the EB
+	 * fields.
+	 */
+	double		hcs_s;				/* sum_r X_r                              */
+	double		hcs_v;				/* PREDICTABLE variance process:
+									 * sum_r (X_r - Xhat_r)^2, Xhat_r = running
+									 * mean over rounds 1..r-1 (0 for r=1)    */
+	double		hcs_cmax;			/* Track A: max_r |X_r - Xhat_r| (plug-in)*/
+	double		hcs_cpred;			/* Track B: predictable envelope
+									 * max_r (B_pred_r + |Xhat_r|)            */
+	long		hcs_n;				/* rounds folded in                       */
+#endif
 
 	/*
 	 * ---- M-block-clustered / split-half variance (Section 7.h) ----
@@ -442,20 +552,15 @@ typedef struct RoslJoinState
 	double		num_outer;			/* |R| (planner row estimate)             */
 	double		num_inner;			/* |S| (planner row estimate)             */
 	double		act_outer;			/* |R| ACTUAL: running sum of m_count      */
-	bool		outer_exhausted;	/* true iff the run reached its terminal
-									 * exhaustion transition (the driver's scan
-									 * ran dry) rather than being cut short by a
-									 * data-dependent stop (output LIMIT, client
-									 * cancel).  Set ONLY at the true completion
-									 * site(s), never inferred from PH_DONE (other
-									 * paths, e.g. empty outer, also reach it).
-									 * Tiling driver: certifies act_outer == exact
-									 * |R|, so teardown may use the exact-|R| scale.
-									 * Single-M driver: act_outer == m is only the
-									 * sample size (never |R|), so the scale stays
-									 * num_outer either way; here the flag serves
-									 * ONLY to emit run_complete, distinguishing an
-									 * S-exhausted run from a LIMIT-truncated one. */
+	bool		outer_exhausted;	/* true iff the run reached its natural
+									 * completion.  Tiling driver: the outer
+									 * scan ran dry, so act_outer == exact |R|.
+									 * Single-M driver: S was streamed to
+									 * exhaustion (or the outer was empty), the
+									 * sampling join is complete.  Set ONLY at
+									 * the true completion site(s) adjacent to
+									 * their PH_DONE transitions -- never
+									 * inferred from phase at teardown.        */
 
 	/* PH_PROBE resume cursors (persist across calls within one round) */
 	int			probe_ci;			/* cache index to resume from                */
@@ -483,9 +588,21 @@ typedef struct RoslJoinState
 	double	   *traj_mean_per_pair;	/* mu_hat at this round                   */
 	double	   *traj_est_join;		/* J_hat at this round                    */
 	double	   *traj_ci_halfwidth;	/* 95% CI half-width on J_hat             */
-	double	   *traj_ci_eb;			/* EB-CS guard-band half-width (Sec. 8);
-									 * the anytime interval a mid-run look or
-									 * LIMIT-stopped run should read           */
+	double	   *traj_ci_eb;			/* EB guard-band half-width (Sec. 8).
+									 * FIXED-n bound: no anytime guarantee; a
+									 * mid-run look or LIMIT-stopped run should
+									 * read traj_ci_hcs instead (kept for A/B
+									 * continuity)                             */
+#if ROSL_HOWARD
+	double	   *traj_ci_hcs;		/* Howard CS half-width, Track A (plug-in
+									 * range bound).  THE interval a mid-run
+									 * look or LIMIT-stopped run should read:
+									 * every per-round row is a coverage-
+									 * scorable time-uniform interval          */
+	double	   *traj_ci_hcs_strict;	/* Howard CS half-width, Track B
+									 * (predictable epsilon-floor envelope;
+									 * fully valid, expected wider)            */
+#endif
 	double	   *traj_pairs_seen;	/* est_den (cumulative Mn*Kn)             */
 	long	   *traj_sample_matches;/* cumulative sample_matches at this round */
 	double	   *traj_elapsed_ms;	/* ms from first-row start to this round  */
@@ -980,9 +1097,152 @@ close_block(RoslJoinState *st)
 	st->blk_open = false;
 }
 
+#if ROSL_HOWARD
+/*
+ * Riemann zeta(s) for s > 1, computed once and cached (Euler-Maclaurin:
+ * partial sum to N plus tail integral and first two correction terms; with
+ * N = 256 this is accurate to well below 1e-12 for s >= 1.1).  Computed at
+ * run time rather than hardcoded so ROSL_HCS_S stays a genuine tunable --
+ * a hardcoded zeta(1.4) would silently rot if s were changed.
+ */
+static double
+rosl_hcs_zeta(double s)
+{
+	static double cached_s = 0.0;
+	static double cached_z = 0.0;
+	double		z = 0.0;
+	double		N = 256.0;
+	int			k;
+
+	if (cached_s == s)
+		return cached_z;
+
+	for (k = 1; k <= 256; k++)
+		z += pow((double) k, -s);
+	/* Euler-Maclaurin tail: integral + boundary + first Bernoulli term */
+	z += pow(N, 1.0 - s) / (s - 1.0)
+		- 0.5 * pow(N, -s)
+		+ (s / 12.0) * pow(N, -s - 1.0);
+
+	cached_s = s;
+	cached_z = z;
+	return z;
+}
+
+/*
+ * rosl_hcs_boundary -- the polynomial stitched uniform boundary u_a(v, c) of
+ * Howard, Ramdas, McAuliffe & Sekhon (2021), Eq. (10), sub-exponential form.
+ * Pure function; one sqrt, two logs (plus the one-time zeta).
+ *
+ * ---- VERIFIED-CONSTANTS DERIVATION (mandatory per implementation plan) ----
+ * Paper Eq. (10), polynomial stitching with geometric crossing-epoch spacing
+ * eta and polynomial exponent s, for a sub-exponential process with variance
+ * process v and scale c, crossing probability a:
+ *
+ *   u_a(v) = k1 * sqrt(vbar * ell(vbar)) + k2 * c * ell(vbar)
+ *   ell(v) = s * loglog(eta * v / v0) + ln( zeta(s) / (a * (ln eta)^s) )
+ *   k1     = (eta^{1/4} + eta^{-1/4}) / sqrt(2)
+ *   k2     = sqrt(eta) + 1
+ *   vbar   = max(v, v0)          (boundary stated for v >= v0)
+ *
+ * Cross-check against the paper's widely quoted eta=2, s=1.4 simplification
+ *   u_a(v) ~ 1.7 * sqrt(v (loglog(2v) + 0.72 ln(5.2/a)))
+ *          + 3.4 * c * (loglog(2v) + 0.72 ln(5.2/a)):
+ *   k1 * sqrt(s) = ((2^.25 + 2^-.25)/sqrt(2)) * sqrt(1.4)
+ *                = 1.43557 * 1.18322 = 1.69861            ~ 1.7   OK
+ *   k2 * s       = (sqrt(2) + 1) * 1.4 = 3.37990          ~ 3.4   OK
+ *   1/s          = 0.71429                                ~ 0.72  OK
+ *   zeta(1.4)/(ln 2)^1.4 = 3.10555 / 0.59865 = 5.18760    ~ 5.2   OK
+ * (Factor out s from ell to see the correspondence.)
+ *
+ * DEVIATION NOTE vs the plan's section 2.2 display: the plan writes
+ * ln(2*zeta(s)/(a ln^s eta)).  That extra 2 double-counts the two-sidedness:
+ * the paper's one-sided boundary at crossing probability a has no 2, and the
+ * two-sided CS is obtained by CALLING this with a = alpha/2 per side (which
+ * record_trajectory / PrintRoslCounters do).  The plan's own "5.2/a"
+ * simplification confirms the no-2 form (5.19 = zeta(s)/(ln eta)^s exactly).
+ * Implemented paper-faithfully; unit test T1 checks against an independent
+ * evaluation of Eq. (10).
+ * --------------------------------------------------------------------------
+ *
+ * The v0 clamp guarantees eta * vbar / v0 >= eta > 1, so the inner log is
+ * positive and loglog is defined; the explicit guard below cannot fire after
+ * the clamp but is kept per the plan (defence against a future v0 <= 0 edit).
+ * ell is additionally clamped at 0 so a pathological (huge) `a` cannot drive
+ * the boundary negative.
+ */
+static double
+rosl_hcs_boundary(double v, double c, double a)
+{
+	const double eta = ROSL_HCS_ETA;
+	const double s = ROSL_HCS_S;
+	const double v0 = ROSL_HCS_V0;
+	double		k1 = (pow(eta, 0.25) + pow(eta, -0.25)) / sqrt(2.0);
+	double		k2 = sqrt(eta) + 1.0;
+	double		vbar = (v > v0) ? v : v0;
+	double		inner = eta * vbar / v0;
+	double		ell;
+
+	if (inner <= 1.0)
+		inner = eta;				/* loglog guard; unreachable post-clamp  */
+
+	ell = s * log(log(inner))
+		+ log(rosl_hcs_zeta(s) / (a * pow(log(eta), s)));
+	if (ell < 0.0)
+		ell = 0.0;
+
+	return k1 * sqrt(vbar * ell) + k2 * c * ell;
+}
+
+/*
+ * rosl_hcs_fold -- fold one round's rate X into the CS accumulators, with the
+ * caller-supplied PRE-ROUND Track-B range bound B_pred (frozen before the
+ * round's cache was drawn; see the finalizers).
+ *
+ * PREDICTABILITY DISCIPLINE (the I3 bug class -- the -34% adaptive-weights
+ * incident of Section 11 was exactly a quantity of this kind computed from
+ * the round's own outcome): Xhat MUST be read from hcs_s / hcs_n BEFORE X is
+ * folded in.  Everything on the right of the updates below is
+ * F_{r-1}-measurable except X itself, which enters only as the increment --
+ * that is what makes hcs_v a legal predictable variance process.  Do not
+ * reorder these statements.
+ */
+static void
+rosl_hcs_fold(RoslJoinState *st, double X, double B_pred)
+{
+	/* predictable center: running mean of PRIOR rounds (0 for round 1) */
+	double		Xhat = (st->hcs_n > 0) ? st->hcs_s / (double) st->hcs_n : 0.0;
+	double		d = X - Xhat;
+	double		ad = (d < 0.0) ? -d : d;
+	double		cpred = B_pred + ((Xhat < 0.0) ? -Xhat : Xhat);
+
+	st->hcs_v += d * d;
+	if (ad > st->hcs_cmax)
+		st->hcs_cmax = ad;			/* Track A: realized plug-in max         */
+	if (cpred > st->hcs_cpred)
+		st->hcs_cpred = cpred;		/* Track B: predictable monotone envelope*/
+
+	/* fold X last (see predictability discipline above) */
+	st->hcs_s += X;
+	st->hcs_n++;
+}
+#endif							/* ROSL_HOWARD */
+
+/*
+ * hcs_bpred (ROSL_HOWARD only) is the PRE-ROUND Track-B range bound computed
+ * by the caller [plan D4]: only the finalizers hold the frozen distribution
+ * (epsilon, block sizes, frozen pi_t) from which a predictable bound can be
+ * built, so it is threaded through as a new argument rather than recomputed
+ * here.  (This is a NEW argument on a new feature; the "no signature change"
+ * constraint applied to the FLAT/legacy A/B, not here.)
+ */
 static void
 accumulate_round(RoslJoinState *st, double round_pairs, double Yhat,
-				 double pi_repr, double v_round)
+				 double pi_repr, double v_round
+#if ROSL_HOWARD
+				 , double hcs_bpred
+#endif
+				 )
 {
 	double		h2;
 	double		h;
@@ -1072,6 +1332,11 @@ accumulate_round(RoslJoinState *st, double round_pairs, double Yhat,
 		if (ax > st->eb_max)
 			st->eb_max = ax;
 		st->eb_n++;
+
+#if ROSL_HOWARD
+		/* Howard CS: predictable fold of the same rate (see rosl_hcs_fold) */
+		rosl_hcs_fold(st, X, hcs_bpred);
+#endif
 	}
 
 	/*
@@ -1117,6 +1382,10 @@ record_trajectory(RoslJoinState *st)
 	double		Vhat;
 	double		ci_half;
 	double		ci_eb = 0.0;
+#if ROSL_HOWARD
+	double		ci_hcs = 0.0;
+	double		ci_hcs_strict = 0.0;
+#endif
 
 	st->rounds++;
 
@@ -1134,11 +1403,16 @@ record_trajectory(RoslJoinState *st)
 	ci_half = 1.96 * st->num_outer * st->num_inner * sqrt(Vhat);
 
 	/*
-	 * Per-round EB-CS guard band (Section 8), O(1) from the running moments.
-	 * This is the interval a mid-run look -- or a run about to be stopped by
-	 * an output LIMIT -- should read: the self-normalized ci_half above is
+	 * Per-round EB guard band (Section 8), O(1) from the running moments.
+	 * FIXED-n bound: valid at each round marginally, not uniformly over
+	 * rounds, so it carries no guarantee at a data-dependent look; kept for
+	 * A/B continuity.  The interval a mid-run look -- or a run about to be
+	 * stopped by an output LIMIT -- should read is ci_hcs below (Howard CS),
+	 * which IS time-uniform.  The self-normalized ci_half above is
 	 * fixed-horizon-only.  Uses |R|*|S| (planner inner) like ci_half; the
-	 * teardown ROSL_SUMM recomputes both against the exact act_outer.
+	 * teardown ROSL_SUMM recomputes all of them against the exact act_outer
+	 * only on complete runs (outer_exhausted); on truncated runs it keeps
+	 * this planner num_outer scale, so the summary equals this row exactly.
 	 */
 	if (st->eb_n > 1)
 	{
@@ -1153,6 +1427,37 @@ record_trajectory(RoslJoinState *st)
 			+ (7.0 / 3.0) * st->eb_max * lg / (double) st->eb_n;
 		ci_eb = half_rate * st->num_outer * st->num_inner;
 	}
+
+#if ROSL_HOWARD
+	/*
+	 * Howard CS half-widths, both tracks, on the J scale (rate half-width
+	 * u/r times the same |R|*|S| the trajectory already uses).  THE
+	 * TRAJECTORY IS WHERE ANYTIME VALIDITY EARNS ITS KEEP: unlike ci_eb,
+	 * every one of these per-round rows is a coverage-scorable time-uniform
+	 * interval (subject to the estimand caveats in the ROSL_HOWARD banner:
+	 * tiling-mode rows cover the seen-slice mean rate, single-M rows cover
+	 * p_M).  Two-sided at ROSL_HCS_ALPHA: alpha/2 crossing probability per
+	 * side.
+	 */
+	if (st->hcs_n >= 1)
+	{
+		double		a = ROSL_HCS_ALPHA / 2.0;
+		double		pop_traj = st->num_outer * st->num_inner;
+		double		rn = (double) st->hcs_n;
+		double		hwA = rosl_hcs_boundary(st->hcs_v, st->hcs_cmax, a) / rn;
+		double		hwB = rosl_hcs_boundary(st->hcs_v, st->hcs_cpred, a) / rn;
+
+		ci_hcs = hwA * pop_traj;
+		ci_hcs_strict = hwB * pop_traj;
+		/*
+		 * The CS center est_hcs = (hcs_s/hcs_n) * pop equals est_eb's center
+		 * (same X, same count); it is emitted only at teardown -- the
+		 * per-round row's traj_mean_per_pair differs (weighted mean), which
+		 * is why the harness must center CS coverage checks on hcs_s/hcs_n,
+		 * not mu.
+		 */
+	}
+#endif
 
 	if (st->traj_count < ROSL_TRAJ_CAP)
 	{
@@ -1176,6 +1481,10 @@ record_trajectory(RoslJoinState *st)
 		st->traj_est_join[st->traj_count]       = Jhat;
 		st->traj_ci_halfwidth[st->traj_count]   = ci_half;
 		st->traj_ci_eb[st->traj_count]          = ci_eb;
+#if ROSL_HOWARD
+		st->traj_ci_hcs[st->traj_count]         = ci_hcs;
+		st->traj_ci_hcs_strict[st->traj_count]  = ci_hcs_strict;
+#endif
 		st->traj_pairs_seen[st->traj_count]     = st->est_den;
 		st->traj_sample_matches[st->traj_count] = st->sample_matches;
 		st->traj_elapsed_ms[st->traj_count]     = elapsed_ms;
@@ -1281,7 +1590,35 @@ finalize_round(RoslJoinState *st)
 	v = 0.25 * (corrA - corrB) * (corrA - corrB);
 
 	round_pairs = (double) st->m_count * Kn;
+
+#if ROSL_HOWARD
+	{
+		/*
+		 * Track-B PRE-ROUND range bound (plan section 2.3): every tuple's
+		 * inclusion probability under the epsilon-smoothed exploitation
+		 * distribution satisfies pi_t >= pi_floor = 1 - (1 - eps/|M|)^L,
+		 * from the FROZEN epsilon and block size -- known before the round's
+		 * cache was drawn.  With match(t) <= |K| and |resid| <= |K|*max(1,qhat)
+		 * (qhat <= 1), the AIPW score obeys 0 <= base <= |M|*|K| and
+		 * |corr| <= L*|K|/pi_floor, so |X_r| <= 1 + L/(|M|*pi_floor), every
+		 * quantity frozen before the draw.
+		 */
+		double		Mn = (double) st->m_count;
+		double		Ld = (double) st->exp_cache_lim;
+		double		hcs_bpred = 0.0;
+
+		if (Mn > 0.0)
+		{
+			double		pi_floor = 1.0 - pow(1.0 - st->epsilon_fixed / Mn, Ld);
+
+			if (pi_floor > 0.0)
+				hcs_bpred = 1.0 + Ld / (Mn * pi_floor);
+		}
+		accumulate_round(st, round_pairs, Yhat, pi_repr, v, hcs_bpred);
+	}
+#else
 	accumulate_round(st, round_pairs, Yhat, pi_repr, v);
+#endif
 	record_trajectory(st);
 }
 
@@ -1337,7 +1674,28 @@ finalize_explore_round(RoslJoinState *st)
 	v = 0.25 * (YA - YB) * (YA - YB);
 
 	round_pairs = Mn * (double) st->p_count;
+
+#if ROSL_HOWARD
+	{
+		/*
+		 * Track-B PRE-ROUND range bound: exploration is a raw HT score over
+		 * a UNIFORM draw with the EXACT common inclusion probability pi_exp
+		 * (frozen by Mn and L before the draw).  Each of the <= L cached
+		 * tuples contributes at most p_count matches / pi_exp, so
+		 * 0 <= Yhat <= L * p_count / pi_exp and
+		 * 0 <= X_r <= L / (Mn * pi_exp)  -- no baseline term here, hence no
+		 * leading 1 (the AIPW "+1" covers the base <= |M|*|K| term, which the
+		 * raw-HT exploration score does not have).
+		 */
+		double		hcs_bpred = 0.0;
+
+		if (pi_exp > 0.0)
+			hcs_bpred = (double) st->exp_cache_lim / (Mn * pi_exp);
+		accumulate_round(st, round_pairs, Yhat, pi_exp, v, hcs_bpred);
+	}
+#else
 	accumulate_round(st, round_pairs, Yhat, pi_exp, v);
+#endif
 	record_trajectory(st);
 }
 
@@ -1371,7 +1729,11 @@ finalize_explore_round(RoslJoinState *st)
 static void
 accumulate_round_single_m(RoslJoinState *st, double round_pairs, double Yhat,
 						  double Vpred, double pi_mix, double v_round,
-						  bool force_last)
+						  bool force_last
+#if ROSL_HOWARD
+						  , double hcs_bpred
+#endif
+						  )
 {
 	double		h2;
 	double		h;
@@ -1461,6 +1823,16 @@ accumulate_round_single_m(RoslJoinState *st, double round_pairs, double Yhat,
 		if (ax > st->eb_max)
 			st->eb_max = ax;
 		st->eb_n++;
+
+#if ROSL_HOWARD
+		/*
+		 * Howard CS: predictable fold of the same rate.  Note this fold runs
+		 * even on post-horizon rounds (rr > T, h = 0): those rounds are
+		 * excluded from the weighted point estimate only; like the EB
+		 * moments, the CS keeps folding every completed round.
+		 */
+		rosl_hcs_fold(st, X, hcs_bpred);
+#endif
 	}
 }
 
@@ -1506,6 +1878,12 @@ finalize_round_single_m(RoslJoinState *st)
 	double		corrB = 0.0;
 	double		Vpred = 0.0;
 	double		pi_sum = 0.0;		/* for the two-point mix parameter       */
+#if ROSL_HOWARD
+	double		pi_min = 1.0;		/* min FROZEN inclusion prob over M (the
+									 * exact predictable floor; from q_t, so
+									 * H_{t-1}-measurable)                    */
+	bool		pi_min_set = false;
+#endif
 	double		vbar;
 	double		nug;
 	double		Yhat;
@@ -1551,6 +1929,13 @@ finalize_round_single_m(RoslJoinState *st)
 
 			Vpred += (mhat * mhat + nug) * odds;
 			pi_sum += pi;
+#if ROSL_HOWARD
+			if (!pi_min_set || pi < pi_min)
+			{
+				pi_min = pi;
+				pi_min_set = true;
+			}
+#endif
 		}
 	}
 
@@ -1608,8 +1993,39 @@ finalize_round_single_m(RoslJoinState *st)
 	 */
 	force_last = (st->k_count < st->k_lim);
 
+#if ROSL_HOWARD
+	{
+		/*
+		 * Track-B PRE-ROUND range bound, single-M: the frozen distribution
+		 * q_t gives the EXACT per-arm inclusion probabilities pi_t(r) before
+		 * the round's cache is drawn (pi_min above; with steering off q is
+		 * uniform and pi_min is the exact common pi).  This is tighter than,
+		 * and dominated below by, the analytic epsilon floor
+		 * 1 - (1 - eps/m)^L, which is used as the fallback if the min was
+		 * never set (degenerate p[]).  As in the tiling exploitation round,
+		 * base <= m*|K| and |corr| <= L*|K|/pi_min give
+		 * |X_r| <= 1 + L/(m * pi_min), all quantities frozen pre-draw.
+		 */
+		double		Ld = (double) L;
+		double		nn = (double) n;
+		double		hcs_bpred = 0.0;
+		double		pfloor = 0.0;
+
+		if (pi_min_set)
+			pfloor = pi_min;
+		else if (nn > 0.0)
+			pfloor = 1.0 - pow(1.0 - st->epsilon_fixed / nn, Ld);
+
+		if (nn > 0.0 && pfloor > 0.0)
+			hcs_bpred = 1.0 + Ld / (nn * pfloor);
+
+		accumulate_round_single_m(st, round_pairs, Yhat, Vpred, pi_mix, v,
+								  force_last, hcs_bpred);
+	}
+#else
 	accumulate_round_single_m(st, round_pairs, Yhat, Vpred, pi_mix, v,
 							  force_last);
+#endif
 
 	/*
 	 * Steering / weight updates land strictly AFTER the round closes (I2).
@@ -1740,6 +2156,10 @@ rosl_state_init(NestLoopState *node)
 	st->traj_est_join       = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
 	st->traj_ci_halfwidth   = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
 	st->traj_ci_eb          = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
+#if ROSL_HOWARD
+	st->traj_ci_hcs         = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
+	st->traj_ci_hcs_strict  = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
+#endif
 	st->traj_pairs_seen     = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
 	st->traj_sample_matches = (long *)   palloc(sizeof(long) * ROSL_TRAJ_CAP);
 	st->traj_elapsed_ms     = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
@@ -1759,6 +2179,10 @@ rosl_state_init(NestLoopState *node)
 	st->round_idx = 0;
 	st->eb_sx = st->eb_sxx = st->eb_max = 0.0;
 	st->eb_n = 0;
+#if ROSL_HOWARD
+	st->hcs_s = st->hcs_v = st->hcs_cmax = st->hcs_cpred = 0.0;
+	st->hcs_n = 0;
+#endif
 	st->blk_ynum = st->blk_wpair = 0.0;
 	st->blk_ya = st->blk_wa = st->blk_yb = st->blk_wb = 0.0;
 	st->blk_round = 0;
@@ -1768,7 +2192,7 @@ rosl_state_init(NestLoopState *node)
 	st->max_h2v = 0.0;
 	st->n_blocks = 0;
 	st->act_outer = 0.0;			/* exact |R|: accumulated per M-block      */
-	st->outer_exhausted = false;	/* set true only at the true completion site */
+	st->outer_exhausted = false;	/* set only where the scan truly runs dry  */
 
 #if ROSL_SINGLE_M
 	st->phase = PH_LOAD_M;			/* draw M once, then stream S in K-blocks   */
@@ -1964,7 +2388,7 @@ ExecRoslNestLoop(NestLoopState *node)
 						 * returning None -- no NOTICE parsing, no deadlock.
 						 */
 						st->phase = PH_DONE;
-						st->outer_exhausted = true;	/* scan ran dry: act_outer == |R| */
+						st->outer_exhausted = true;	/* act_outer == |R| now */
 						break;
 					}
 
@@ -2252,7 +2676,7 @@ ExecRoslSingleM(NestLoopState *node)
 					if (st->m_count == 0)
 					{
 						st->phase = PH_DONE;	/* empty outer: nothing to do  */
-						st->outer_exhausted = true;	/* not a client cut: run finished */
+						st->outer_exhausted = true;	/* trivially complete      */
 						break;
 					}
 
@@ -2287,17 +2711,9 @@ ExecRoslSingleM(NestLoopState *node)
 					st->k_count = load_inner_block(st, innerPlan);
 					if (st->k_count == 0)
 					{
-						/*
-						 * S exhausted: the sampling join is complete.  This is
-						 * the single-M run's true completion (the whole inner
-						 * was streamed), as opposed to a data-dependent stop
-						 * (output LIMIT / client cancel) that halts mid-stream
-						 * with S unfinished.  act_outer stays == m (a sample
-						 * size, not |R|), so the teardown scale is unchanged;
-						 * the flag only drives the run_complete token.
-						 */
+						/* S exhausted: the sampling join is complete. */
 						st->phase = PH_DONE;
-						st->outer_exhausted = true;
+						st->outer_exhausted = true;	/* natural completion   */
 						break;
 					}
 
@@ -2542,6 +2958,30 @@ PrintRoslCounters(RoslJoinState *st)
 	/* per-round trajectory: one INFO line per recorded round */
 	for (i = 0; i < st->traj_count; i++)
 	{
+#if ROSL_HOWARD
+		/*
+		 * ci_hcs / ci_hcs_strict appended per line (numeric key=value only,
+		 * so the harness tokenizer needs no change).  The plan's section 5.6
+		 * asked only for ci_hcs=; ci_hcs_strict= is emitted too so the
+		 * stored Track-B trajectory actually reaches the harness -- gate
+		 * G-H1 scores the ENTIRE trajectory for both tracks (additive
+		 * deviation, recorded in the update summary).
+		 */
+		elog(INFO,
+			 "ROSL_TRAJ round=%ld mean_per_pair=%.10f est_join=%.2f "
+			 "ci_halfwidth=%.2f pairs_seen=%.0f sample_matches=%ld "
+			 "elapsed_ms=%.3f ci_eb=%.2f ci_hcs=%.2f ci_hcs_strict=%.2f",
+			 st->traj_round[i],
+			 st->traj_mean_per_pair[i],
+			 st->traj_est_join[i],
+			 st->traj_ci_halfwidth[i],
+			 st->traj_pairs_seen[i],
+			 st->traj_sample_matches[i],
+			 st->traj_elapsed_ms[i],
+			 st->traj_ci_eb[i],
+			 st->traj_ci_hcs[i],
+			 st->traj_ci_hcs_strict[i]);
+#else
 		elog(INFO,
 			 "ROSL_TRAJ round=%ld mean_per_pair=%.10f est_join=%.2f "
 			 "ci_halfwidth=%.2f pairs_seen=%.0f sample_matches=%ld "
@@ -2554,6 +2994,7 @@ PrintRoslCounters(RoslJoinState *st)
 			 st->traj_sample_matches[i],
 			 st->traj_elapsed_ms[i],
 			 st->traj_ci_eb[i]);
+#endif
 	}
 
 	if (st->traj_truncated)
@@ -2636,10 +3077,25 @@ PrintRoslCounters(RoslJoinState *st)
 	/*
 	 * Final summary.  The point estimate uses the WEIGHTED denominator
 	 * weight_sum (adaptively-weighted mean), not the raw pair count est_den.
-	 * The extrapolation now uses the EXACT outer count act_outer (summed over
-	 * every M-block, so it is exact once the scan has finished) instead of the
-	 * planner's plan_rows -- the sampler only estimates a per-pair rate, and the
-	 * outer population size is known exactly by the time we get here.  The inner
+	 *
+	 * Population-scale contract (tiling driver):
+	 *   - Complete runs (outer_exhausted): scale by the EXACT scanned outer
+	 *     count act_outer (summed over every M-block, so act_outer == |R|).
+	 *     Output is byte-identical to prior builds except the trailing
+	 *     run_complete=1 token, so validated results reproduce.
+	 *   - Truncated runs (LIMIT / client cut): fall back to the planner
+	 *     num_outer, i.e. final_est_join = mu * num_outer * num_inner --
+	 *     equal by construction to the LAST EMITTED ROSL_TRAJ row (the last
+	 *     safe point), since partial rounds are never folded into mu.
+	 *     (Exception: if ROSL_TRAJ_CAP was hit, the log's last row predates
+	 *     the last completed round.)  Accuracy here is bounded by the
+	 *     planner's num_outer estimate quality; the exact-|R| correction
+	 *     exists only on complete runs.  Do NOT "fix" this by reintroducing
+	 *     the raw scanned count: act_outer on a truncated run rescales to
+	 *     the scanned-R x S sub-join, biased low by ~act_outer/|R|.
+	 *   - act_outer is still printed raw so consumers can recover the seen
+	 *     fraction.
+	 * The inner
 	 * size is still the planner estimate num_inner (this version rescans S per
 	 * M-block rather than materialising it, so it never counts |S| exactly; see
 	 * note in the header).  A final self-normalized CI half-width is recomputed
@@ -2660,33 +3116,23 @@ PrintRoslCounters(RoslJoinState *st)
 		 * Single-M extrapolation: M is a sample of m from R, so the outer
 		 * multiplier is the FULL planner population N_R (num_outer), NOT the m
 		 * tuples actually loaded (act_outer == m here).  The estimand is
-		 * J_M = mu * N_R * N_S, an unbiased estimator of realized J.  This is
-		 * ALREADY the planner scale on every run, so a data-dependent stop
-		 * (output LIMIT / client cut) needs no scale switch -- it changes only
-		 * the run_complete token below (never re-scale a single-M run by
-		 * act_outer == m; that would collapse the estimate to the m x S
-		 * sub-join).  outer_exhausted therefore gates the token, not the scale.
+		 * J_M = mu * N_R * N_S, an unbiased estimator of realized J.
+		 *
+		 * This is already the planner scale on both complete and truncated
+		 * runs, so no truncation-conditional switch is needed here (variant:
+		 * planner-estimate-unconditional).  Note the consequence: complete
+		 * single-M runs forgo the exact-|R| correction the tiling driver
+		 * gets; run_complete=0/1 below still classifies truncation.
 		 */
-		double		pop_outer = st->num_outer;
-		double		pop = pop_outer * st->num_inner;
+		double		pop = st->num_outer * st->num_inner;
 #else
 		/*
-		 * Tiling extrapolation, last-safe-point rule.  On a COMPLETE run
-		 * (outer_exhausted: load_outer_block ran dry, so act_outer summed the
-		 * whole outer and equals exact |R|) use the exact scanned count.  On a
-		 * TRUNCATED run (output LIMIT / client cut: act_outer < |R|, biased low
-		 * by ~act_outer/|R|) fall back to the planner num_outer, which makes the
-		 * teardown SUMM equal the LAST COMPLETED round's estimate -- identical
-		 * to the final ROSL_TRAJ row (the "last safe point"), since trajectory
-		 * rows always used num_outer.  Do NOT "fix" the truncated case by
-		 * reintroducing the raw act_outer scale: that reinstates the low bias
-		 * this correction removes.  Truncated-run accuracy is then bounded by
-		 * the planner's num_outer estimate; the exact-|R| correction exists only
-		 * on complete runs.  The raw act_outer is still printed below for
-		 * seen-fraction recovery.
+		 * Tiling driver: complete runs use the exact scanned |R|; truncated
+		 * runs fall back to the planner num_outer (the last-safe-point scale,
+		 * == the last ROSL_TRAJ row).  See the contract comment above.
 		 */
-		double		pop_outer = st->outer_exhausted ? st->act_outer	/* exact |R|   */
-													: st->num_outer;	/* last safe pt */
+		double		pop_outer = st->outer_exhausted ? st->act_outer	/* exact |R| */
+													: st->num_outer;	/* last safe point */
 		double		pop = pop_outer * st->num_inner;
 #endif
 		double		est_join = mu * pop;
@@ -2698,6 +3144,11 @@ PrintRoslCounters(RoslJoinState *st)
 		double		ci_split;
 		double		ci_eb;
 		double		est_eb;
+#if ROSL_HOWARD
+		double		ci_hcs;
+		double		ci_hcs_strict;
+		double		est_hcs;
+#endif
 #if ROSL_SINGLE_M
 		double		ci_within;
 		double		ci_between = 0.0;
@@ -2741,13 +3192,16 @@ PrintRoslCounters(RoslJoinState *st)
 			ci_split = ci_half;
 
 		/*
-		 * Empirical-Bernstein confidence sequence (Section 8 guard band) on
-		 * the bounded per-round rate X = Yhat/pairs.  Maurer-Pontil form:
+		 * Empirical-Bernstein FIXED-n bound (Section 8 guard band) on the
+		 * bounded per-round rate X = Yhat/pairs.  Maurer-Pontil form:
 		 *   |Xbar - mu| <= sqrt(2 Vx ln(2/alpha) / N) + (7/3) B ln(2/alpha)/N.
 		 * est_eb centres on Xbar (the unweighted per-round mean), which the
 		 * bound is stated for; the weighted mu above remains the primary point
-		 * estimate.  This interval needs no variance convergence and is the
-		 * only one here valid at a data-dependent stop (output LIMIT).
+		 * estimate.  This interval needs no variance convergence, but it is a
+		 * fixed-n bound: at a data-dependent stop (output LIMIT, mid-run
+		 * look) the interval with the actual guarantee is ci_hcs below (the
+		 * Howard time-uniform CS); ci_eb stays emitted for A/B continuity
+		 * with prior runs.
 		 */
 		if (st->eb_n > 1)
 		{
@@ -2768,6 +3222,34 @@ PrintRoslCounters(RoslJoinState *st)
 			ci_eb = ci_half;
 			est_eb = est_join;
 		}
+
+#if ROSL_HOWARD
+		/*
+		 * Howard anytime-valid CS, teardown recomputation against the
+		 * teardown pop (tiling mode: exact act_outer on complete runs,
+		 * planner num_outer on truncated runs; single-M: planner N_R
+		 * unconditionally), mirroring the ci_eb recomputation above.  Both tracks
+		 * at two-sided ROSL_HCS_ALPHA (alpha/2 per side); centre est_hcs is
+		 * the unweighted per-round mean (== est_eb's centre by construction).
+		 */
+		if (st->hcs_n >= 1)
+		{
+			double		a = ROSL_HCS_ALPHA / 2.0;
+			double		rn = (double) st->hcs_n;
+
+			ci_hcs = (rosl_hcs_boundary(st->hcs_v, st->hcs_cmax, a) / rn)
+				* pop;
+			ci_hcs_strict = (rosl_hcs_boundary(st->hcs_v, st->hcs_cpred, a)
+							 / rn) * pop;
+			est_hcs = (st->hcs_s / rn) * pop;
+		}
+		else
+		{
+			ci_hcs = ci_half;
+			ci_hcs_strict = ci_half;
+			est_hcs = est_join;
+		}
+#endif
 
 #if ROSL_SINGLE_M
 		/*
@@ -2875,6 +3357,35 @@ PrintRoslCounters(RoslJoinState *st)
 			 * M-block) and fall back to ci_within; the charts prefer
 			 * ci_eb > ci_total > ci_halfwidth in this mode.
 			 */
+#if ROSL_HOWARD
+			/*
+			 * Howard-CS tokens appended (numeric key=value only, tokenizer-
+			 * safe): the two half-widths + centre, plus the raw CS
+			 * accumulators (variance process and both range-bound tracks)
+			 * for the G-H4 C-vs-simulator parity diff.
+			 */
+			elog(INFO,
+				 "ROSL_SUMM final_est_join=%.2f ci_halfwidth=%.2f "
+				 "ci_clust=%.2f ci_split=%.2f ci_eb=%.2f est_eb=%.2f "
+				 "ci_noise=%.2f het_ratio=%.2f lindeberg_max=%.3e "
+				 "n_blocks=%ld "
+				 "rounds=%ld sample_matches=%ld pairs_seen=%.0f t_steps=%ld "
+				 "act_outer=%.0f num_outer=%.0f num_inner=%.0f "
+				 "weight_mode=%d m_size=%d ci_within=%.2f ci_between=%.2f "
+				 "ci_total=%.2f p_m_hat=%.10f t_rounds=%ld t_planned=%.0f "
+				 "ci_hcs=%.2f ci_hcs_strict=%.2f est_hcs=%.2f "
+				 "hcs_v=%.12e hcs_c=%.12e hcs_c_pred=%.12e "
+				 "run_complete=%d",
+				 est_join, ci_half, ci_clust, ci_split, ci_eb, est_eb,
+				 ci_noise, het_ratio, st->max_h2v,
+				 st->n_blocks, st->rounds, st->sample_matches, st->est_den,
+				 st->t_steps, st->act_outer, st->num_outer, st->num_inner,
+				 (int) ROSL_WEIGHT_MODE, st->m_count, ci_within, ci_between,
+				 ci_total, p_m_hat, t_rounds, st->t_planned,
+				 ci_hcs, ci_hcs_strict, est_hcs,
+				 st->hcs_v, st->hcs_cmax, st->hcs_cpred,
+				 st->outer_exhausted ? 1 : 0);
+#else
 			elog(INFO,
 				 "ROSL_SUMM final_est_join=%.2f ci_halfwidth=%.2f "
 				 "ci_clust=%.2f ci_split=%.2f ci_eb=%.2f est_eb=%.2f "
@@ -2892,6 +3403,27 @@ PrintRoslCounters(RoslJoinState *st)
 				 (int) ROSL_WEIGHT_MODE, st->m_count, ci_within, ci_between,
 				 ci_total, p_m_hat, t_rounds, st->t_planned,
 				 st->outer_exhausted ? 1 : 0);
+#endif
+#else
+#if ROSL_HOWARD
+			/* Howard-CS tokens appended; see the single-M branch comment. */
+			elog(INFO,
+				 "ROSL_SUMM final_est_join=%.2f ci_halfwidth=%.2f "
+				 "ci_clust=%.2f ci_split=%.2f ci_eb=%.2f est_eb=%.2f "
+				 "ci_noise=%.2f het_ratio=%.2f lindeberg_max=%.3e "
+				 "n_blocks=%ld "
+				 "rounds=%ld sample_matches=%ld pairs_seen=%.0f t_steps=%ld "
+				 "act_outer=%.0f num_outer=%.0f num_inner=%.0f "
+				 "ci_hcs=%.2f ci_hcs_strict=%.2f est_hcs=%.2f "
+				 "hcs_v=%.12e hcs_c=%.12e hcs_c_pred=%.12e "
+				 "run_complete=%d",
+				 est_join, ci_half, ci_clust, ci_split, ci_eb, est_eb,
+				 ci_noise, het_ratio, st->max_h2v,
+				 st->n_blocks, st->rounds, st->sample_matches, st->est_den,
+				 st->t_steps, st->act_outer, st->num_outer, st->num_inner,
+				 ci_hcs, ci_hcs_strict, est_hcs,
+				 st->hcs_v, st->hcs_cmax, st->hcs_cpred,
+				 st->outer_exhausted ? 1 : 0);
 #else
 			elog(INFO,
 				 "ROSL_SUMM final_est_join=%.2f ci_halfwidth=%.2f "
@@ -2907,23 +3439,23 @@ PrintRoslCounters(RoslJoinState *st)
 				 st->t_steps, st->act_outer, st->num_outer, st->num_inner,
 				 st->outer_exhausted ? 1 : 0);
 #endif
+#endif
 		}
 	}
 	else
 		/*
-		 * Degenerate branch: no round ever completed.  This is also where a
-		 * LIMIT that fires before the first round finishes lands -- the most
-		 * truncated case of all -- so run_complete must appear here too, or that
-		 * case is the one that can't be classified.  Emit run_complete as the
-		 * last KEY=VALUE token, BEFORE the free-text parenthetical, so the
-		 * harness key=value regex captures it and the trailing prose does not
-		 * confuse extraction.
+		 * Degenerate branch (no completed rounds).  This is exactly where a
+		 * LIMIT firing before any round completes lands, i.e. the most-
+		 * truncated case -- so it MUST carry run_complete too.  The token is
+		 * the last key=value pair; the trailing prose after it is not of
+		 * key=value shape and cannot confuse the harness tokenizer (RE_KV).
 		 */
 		elog(INFO,
 			 "ROSL_SUMM final_est_join=0.00 rounds=0 sample_matches=%ld "
 			 "run_complete=%d "
 			 "(no completed rounds: outer empty or join produced no pairs)",
-			 st->sample_matches, st->outer_exhausted ? 1 : 0);
+			 st->sample_matches,
+			 st->outer_exhausted ? 1 : 0);
 }
 
 
@@ -3055,6 +3587,10 @@ ExecReScanNestLoop(NestLoopState *node)
 		st->round_idx = 0;
 		st->eb_sx = st->eb_sxx = st->eb_max = 0.0;
 		st->eb_n = 0;
+#if ROSL_HOWARD
+		st->hcs_s = st->hcs_v = st->hcs_cmax = st->hcs_cpred = 0.0;
+		st->hcs_n = 0;
+#endif
 		st->blk_ynum = st->blk_wpair = 0.0;
 		st->blk_ya = st->blk_wa = st->blk_yb = st->blk_wb = 0.0;
 		st->blk_round = 0;
@@ -3064,7 +3600,7 @@ ExecReScanNestLoop(NestLoopState *node)
 		st->max_h2v = 0.0;
 		st->n_blocks = 0;
 		st->act_outer = 0.0;			/* exact |R| accumulator restarts       */
-		st->outer_exhausted = false;	/* fresh run: not yet completed         */
+		st->outer_exhausted = false;	/* fresh run: completion not yet seen   */
 
 #if ROSL_SINGLE_M
 		/*

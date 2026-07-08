@@ -4,7 +4,7 @@
 SUFFIX=$(date +"%-m_%-d")
  
 # VERSION="ProbNFailure_HowardCI"
-VERSION="SingleM_AdaptiveWeights"
+VERSION="SingleM_AdaptiveWeights_HowardCI"
  
 # If you prefer to include the time (e.g., 6_16_13_45 for 1:45 PM), 
 # comment out the line above and uncomment the line below:

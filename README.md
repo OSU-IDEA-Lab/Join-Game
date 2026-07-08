@@ -1,4 +1,4 @@
-# ROSL — Single-M AIPW with Per-K-Block Cache Redraw and Hadad Weighting
+# ROSL — Single-M AIPW with Per-K-Block Cache Redraw, Hadad Weighting, and a Howard Anytime-Valid CS
 
 A sampling-based join operator for PostgreSQL that replaces the inner loop of
 the executor's nested-loop node with a joinability-guided (bandit-style)
@@ -6,6 +6,17 @@ sampler and produces a running, confidence-interval-backed estimate of the
 total join size as it streams matching rows. ROSL trades exactness for early,
 progressively-accurate estimates: it can report an approximate `|R ⋈ S|` — with
 an error bar — long before a full join would finish.
+
+Two cross-cutting upgrades over the older build documented here:
+
+- **Howard anytime-valid confidence sequence** (`ROSL_HOWARD`, default on) — a
+  time-uniform interval, emitted per round and at teardown, that carries a real
+  coverage guarantee at data-dependent stops (mid-run looks, output `LIMIT`s),
+  which none of the fixed-horizon/fixed-n intervals do. See §1.1.
+- **Truncation-safe teardown scaling** (tiling driver) — a run stopped early no
+  longer rescales the final summary to the scanned sub-join; it falls back to
+  the last completed round's estimate (the "last safe point"), and every
+  `ROSL_SUMM` line now carries a `run_complete=0/1` classifier. See §3/§4.
 
 The node ships **two mutually-exclusive estimator drivers**, selected at
 compile time:
@@ -140,6 +151,38 @@ v_r = ¼ (corrA − corrB)²     (base cancels in the difference of two AIPW sco
 weight** — it feeds only the interval-side accumulators — and it is a mild
 **upper** gauge of the full-cache score's own noise, so it errs conservative.
 
+### 1.1 Howard anytime-valid confidence sequence (`ROSL_HOWARD`, default 1)
+
+Every other interval in the family is either fixed-horizon (the self-normalized
+`ci_halfwidth`, the single-M `ci_within`/`ci_total`) or fixed-n (`ci_eb`), so
+none of them carries a guarantee when the run is *looked at* or *stopped* on a
+data-dependent rule — exactly the LIMIT/mid-run-look regime the trajectory
+invites. The Howard track closes that gap with a **stitched time-uniform
+confidence sequence** on the bounded per-round rate, maintained in O(1) per
+round alongside the EB moments:
+
+- A running variance process `hcs_v` and sum `hcs_s` (centre = the unweighted
+  per-round mean, the same centre as `est_eb` by construction), against a
+  stitched boundary with geometric spacing `ROSL_HCS_ETA = 2.0`, polynomial
+  exponent `ROSL_HCS_S = 1.4`, origin `ROSL_HCS_V0 = 1.0`, at two-sided level
+  `ROSL_HCS_ALPHA = 0.05` (α/2 per side).
+- **Track A** (`ci_hcs`) uses the plug-in range bound `hcs_c` (running max
+  observed per-round range) — the headline anytime interval.
+- **Track B** (`ci_hcs_strict`) uses the **pre-round predictable** ε-floor
+  range envelope `hcs_c_pred` (`H_{t-1}`-measurable, hence fully valid with no
+  plug-in step; expected wider).
+
+Every `ROSL_TRAJ` row carries both half-widths, so **each per-round row is a
+coverage-scorable time-uniform interval** — the interval a mid-run look or a
+LIMIT-stopped run should read. Teardown recomputes both against the teardown
+population scale (`ci_hcs`, `ci_hcs_strict`, centre `est_hcs`) and dumps the
+raw accumulators (`hcs_v`, `hcs_c`, `hcs_c_pred`) for C-vs-simulator parity
+diffs. `ci_eb` stays emitted for A/B continuity with prior runs, but at any
+data-dependent stop the interval with the actual guarantee is `ci_hcs`.
+
+`ROSL_HOWARD = 0` compiles the entire track out (same convention as
+`ROSL_SINGLE_M`) and reproduces the previous build's output byte-for-byte.
+
 ---
 
 ## 2. The classic tiling estimator (`ROSL_SINGLE_M = 0`, default)
@@ -153,12 +196,15 @@ The default driver is unchanged from the flat-weighted build. In brief:
   Horvitz–Thompson (no control variate yet); each **exploitation round** over a
   K-block scores `M × K` with the AIPW form above.
 - Every round is pooled with **flat per-pair weights** `h_r = 1/pairs_r`, so
-  `Ĵ` is the plain per-pair average of round scores scaled by
-  `act_outer · num_inner`.
+  `Ĵ` is the plain per-pair average of round scores. At teardown the scale is
+  **completion-conditional**: `act_outer · num_inner` on complete runs (exact
+  `|R|`), `num_outer · num_inner` on truncated runs (the last safe point — see
+  §3/§4).
 - A self-normalized König–Huygens variance backs the primary `ci_halfwidth`,
   and a family of alternative brackets (`ci_clust`, `ci_split`, `ci_eb`/
-  `est_eb`, `ci_noise`, `het_ratio`, `lindeberg_max`) is maintained alongside,
-  all O(1) per round. None feeds back into the point estimate.
+  `est_eb`, `ci_noise`, `het_ratio`, `lindeberg_max`, plus the anytime
+  `ci_hcs`/`ci_hcs_strict` of §1.1) is maintained alongside, all O(1) per
+  round. None feeds back into the point estimate.
 
 Because M-blocks tile `R`, the block-clustered interval `ci_clust` **conflates
 cross-block truth heterogeneity with noise**; `het_ratio` = clustered SS /
@@ -184,22 +230,54 @@ impossible.)
 **Per-round trajectory** (one line per round, in order):
 
 ```
-ROSL_TRAJ round=<n> mean_per_pair=<μ̂> est_join=<Ĵ> ci_halfwidth=<half> pairs_seen=<est_den> sample_matches=<m> elapsed_ms=<t> ci_eb=<eb-half>
+ROSL_TRAJ round=<n> mean_per_pair=<μ̂> est_join=<Ĵ> ci_halfwidth=<half> pairs_seen=<est_den> sample_matches=<m> elapsed_ms=<t> ci_eb=<eb-half> ci_hcs=<hcs-half> ci_hcs_strict=<hcs-B-half>
 ```
 
-`ci_halfwidth` is the running self-normalized diagnostic CI; `ci_eb` is the
-empirical-Bernstein guard-band half-width (running width indicator only — not a
-coverage-scorable interval mid-run). Trajectory `Ĵ` and both widths use the
-planner's `num_outer · num_inner` scaling.
+(`ci_hcs`/`ci_hcs_strict` present when `ROSL_HOWARD = 1`.) `ci_halfwidth` is
+the running self-normalized diagnostic CI; `ci_eb` is the empirical-Bernstein
+guard-band half-width (fixed-n — a width indicator only, not coverage-scorable
+mid-run); `ci_hcs` is the Howard time-uniform half-width — **the** interval a
+mid-run look or LIMIT-stopped run should read (§1.1). Trajectory `Ĵ` and all
+widths use the planner's `num_outer · num_inner` scaling.
+
+If the run exceeded `ROSL_TRAJ_CAP` rounds, a marker line follows the dump:
+
+```
+ROSL_TRAJ truncated: more than <cap> rounds; trajectory capped …
+```
+
+(the harness detects this via `RE_TRAJ_TRUNC`; when it fires, the log's last
+trajectory row predates the last completed round, which matters for the
+truncated-run equality below).
 
 **Final summary** (one line at teardown; classic driver):
 
 ```
-ROSL_SUMM final_est_join=<Ĵ> ci_halfwidth=<half> ci_clust=<half> ci_split=<half> ci_eb=<half> est_eb=<Ĵ_eb> ci_noise=<half> het_ratio=<r> lindeberg_max=<x> n_blocks=<G> rounds=<n> sample_matches=<m> pairs_seen=<est_den> t_steps=<t> act_outer=<|R| exact> num_outer=<|R| planner> num_inner=<|S| planner>
+ROSL_SUMM final_est_join=<Ĵ> ci_halfwidth=<half> ci_clust=<half> ci_split=<half> ci_eb=<half> est_eb=<Ĵ_eb> ci_noise=<half> het_ratio=<r> lindeberg_max=<x> n_blocks=<G> rounds=<n> sample_matches=<m> pairs_seen=<est_den> t_steps=<t> act_outer=<|R| scanned, raw> num_outer=<|R| planner> num_inner=<|S| planner> ci_hcs=<half> ci_hcs_strict=<half> est_hcs=<Ĵ_hcs> hcs_v=<v> hcs_c=<c> hcs_c_pred=<c_pred> run_complete=<0|1>
 ```
 
-**Single-M** appends its own numeric tokens to the same line (§5.4) and prints
-a free-text mode banner:
+(HCS tokens present when `ROSL_HOWARD = 1`; `run_complete` is always the
+**last** token, so positional eyeballing of pre-existing tokens is
+undisturbed.)
+
+**Population-scale contract** (tiling driver):
+
+- `run_complete=1` (outer scan ran dry): the estimate and every CI are scaled
+  by the **exact** scanned `act_outer · num_inner`. Output is byte-identical
+  to pre-fix builds except this trailing token, so validated results
+  reproduce.
+- `run_complete=0` (LIMIT / client cut): the teardown scale falls back to the
+  planner `num_outer · num_inner`, making `final_est_join` equal **by
+  construction** to the last emitted `ROSL_TRAJ` row — the last completed
+  round, i.e. the *last safe point*. Partial rounds are never salvaged.
+  (Exception: if `ROSL_TRAJ_CAP` was hit, the log's last row predates the last
+  completed round.) Accuracy on truncated runs is bounded by the planner's
+  `num_outer` estimate quality — the exact-`|R|` correction exists only on
+  complete runs, by design. `act_outer` is still printed raw so consumers can
+  recover the seen fraction (`act_outer / num_outer`).
+
+**Single-M** appends its own numeric tokens between the classic block and the
+HCS/`run_complete` tail (§5.4) and prints a free-text mode banner:
 
 ```
 ROSL_MODE single_m weight=<FLAT|HADAD_CONST|HADAD_2PT> steering=<0|1> m=<m> T_planned=<T>
@@ -212,8 +290,13 @@ string weight-mode name fails the numeric value class); the machine-readable
 If the outer relation was empty or no round completed:
 
 ```
-ROSL_SUMM final_est_join=0.00 rounds=0 sample_matches=<m> (no completed rounds: outer empty or join produced no pairs)
+ROSL_SUMM final_est_join=0.00 rounds=0 sample_matches=<m> run_complete=<0|1> (no completed rounds: outer empty or join produced no pairs)
 ```
+
+This degenerate branch is exactly where a LIMIT firing before *any* round
+completes lands — the most-truncated case — so it carries `run_complete` too
+(as the last key=value pair; the trailing prose is not of `key=value` shape
+and does not confuse the tokenizer).
 
 ### Cluster requirements
 
@@ -259,10 +342,20 @@ results — the guard takes priority over the GUC.
   variance the intervals report.
 - **Plan-shape guard.** Falls back to the stock join rather than sampling under
   an assumption that doesn't hold.
-- **Exact outer population** (tiling mode). The summary uses `act_outer` — the
-  exact sum of every M-block's size — for `|R|`; `|S|` stays the planner's
-  `num_inner`, since this mode rescans `S` per M-block. (In single-M `act_outer`
-  is just `m` and is a diagnostic — see §5.4.)
+- **Completion-conditional outer population** (tiling mode). A dedicated
+  `outer_exhausted` flag is set **only** at the site where `load_outer_block`
+  runs dry (never inferred from the terminal phase), initialized and
+  rescan-reset alongside `act_outer`. The summary uses `act_outer` — the exact
+  sum of every M-block's size — for `|R|` only when that flag is set; on
+  truncated runs it uses the planner `num_outer`, because rescaling to the
+  scanned `act_outer` would price the scanned-`R × S` sub-join and bias the
+  estimate low by roughly the seen fraction `act_outer/|R|`. `|S|` stays the
+  planner's `num_inner`, since this mode rescans `S` per M-block. (In single-M
+  `act_outer` is just `m` and is a diagnostic; the scale is the planner
+  `num_outer` unconditionally, and the flag exists only to compute
+  `run_complete` — set at S-exhaustion and on the empty-outer fast path. Note
+  the consequence: complete single-M runs forgo the exact-`|R|` correction.
+  See §5.4.)
 
 ### Tunable constants
 
@@ -283,6 +376,11 @@ results — the guard takes priority over the GUC.
 | `ROSL_WEIGHT_MODE`   | FLAT      | Single-M: `FLAT` / `HADAD_CONST` / `HADAD_2PT` pooling weights          |
 | `ROSL_VPRED_NUGGET`  | 1.0       | Single-M: fixed per-arm prior residual variance (formula constant)      |
 | `ROSL_EMIT_MKEYS`    | 0         | Single-M diagnostic: dump M's join keys for the truth_M decomposition   |
+| **`ROSL_HOWARD`**    | **1**     | **1 = Howard anytime CS track (§1.1); 0 compiles it out entirely**      |
+| `ROSL_HCS_ALPHA`     | 0.05      | Howard CS two-sided level (α/2 per side)                                |
+| `ROSL_HCS_ETA`       | 2.0       | Stitching geometric spacing η                                           |
+| `ROSL_HCS_S`         | 1.4       | Stitching polynomial exponent s                                         |
+| `ROSL_HCS_V0`        | 1.0       | Variance-process origin for the stitched boundary                       |
 
 `ROSL_ALPHA` is not a propensity knob under single-M — with the ε-floor
 `e_t(r) ≥ ε/m` (`α = 0`), the exponent survives only as a fixed formula
@@ -328,7 +426,9 @@ Enforced legality invariants:
   consumed even if `T` was misestimated.
 - **I5** — the Hadad self-normalized CI is fixed-horizon: `ci_within` /
   `ci_total` are valid (and coverage-scored) only on runs that exhaust the
-  stream. The EB interval remains primary at a data-dependent stop.
+  stream (`run_complete=1`). At a data-dependent stop the interval with the
+  actual guarantee is the Howard `ci_hcs` (§1.1); `ci_eb` is fixed-n and kept
+  for A/B continuity only.
 
 ### 5.2 Pooling weights — three modes (`ROSL_WEIGHT_MODE`)
 
@@ -400,14 +500,19 @@ is scored only on `exhausted` runs (I5).
 
 Single-M appends these numeric tokens to the standard `ROSL_SUMM` line (so the
 worker's key=value tokenizer picks them up with no code change), keeping the
-classic tokens verbatim:
+classic tokens verbatim; the HCS tokens (§1.1) and the trailing `run_complete`
+follow them:
 
 ```
-… weight_mode=<0 FLAT|1 CONST|2 2PT> m_size=<m> ci_within=<half> ci_between=<half> ci_total=<half> p_m_hat=<p̂_M> t_rounds=<T actual> t_planned=<T planner>
+… weight_mode=<0 FLAT|1 CONST|2 2PT> m_size=<m> ci_within=<half> ci_between=<half> ci_total=<half> p_m_hat=<p̂_M> t_rounds=<T actual> t_planned=<T planner> [ci_hcs=… ci_hcs_strict=… est_hcs=… hcs_v=… hcs_c=… hcs_c_pred=…] run_complete=<0|1>
 ```
 
 `act_outer` is `m` (a diagnostic — the extrapolation scales by the planner
-`num_outer = N_R`, not `m`). `t_planned` vs `t_rounds` makes any horizon
+`num_outer = N_R`, not `m`, on complete *and* truncated runs alike, so no
+truncation-conditional scale switch applies in this mode; `run_complete` still
+classifies whether `S` was streamed to exhaustion, which is what gates the
+fixed-horizon `ci_within`/`ci_total` coverage scoring under I5). `t_planned`
+vs `t_rounds` makes any horizon
 misestimation visible: if the planner underestimated `N_S`, rounds past `T` get
 `h = 0` (excluded from the weighted point estimate but still folded into the EB
 moments and the stage-2 accumulators); an overestimate is benign because
@@ -491,7 +596,13 @@ SET log_min_messages = info;      -- estimator dump reaches the server log
   grouped SQL against the same schema, and emits the decomposition columns
   `truth_m`, `err_within` (`final_est − truth_M`), `err_between`
   (`truth_M − truth`). The summary schema also gains `weight_mode`, `m_size`,
-  `ci_within`, `ci_between`, `ci_total`, `ci_total_covers_truth`.
+  `ci_within`, `ci_between`, `ci_total`, `ci_total_covers_truth`, plus the new
+  numeric tokens `run_complete` (0/1 truncation classifier) and, when
+  `ROSL_HOWARD = 1`, `ci_hcs` / `ci_hcs_strict` / `est_hcs` /
+  `hcs_v` / `hcs_c` / `hcs_c_pred` — all picked up by the existing `key=value`
+  tokenizer with no worker change. The worker's `RE_TRAJ_TRUNC` detection of a
+  capped trajectory gates the truncated-run assertion
+  `final_est_join == last ROSL_TRAJ est_join`.
 - **`accuracy_charts.py`** — plots estimator error versus fraction of true
   output sampled, prefers CI bands in the order `ci_eb > ci_total >
   ci_halfwidth` (`ci_total` is fixed-horizon; the `--ci_col` override and the
@@ -513,12 +624,20 @@ worker, and chart script:
 | Q12   | 1,000       |
 | Q15   | 43,800      |
 
-> **Coverage caveat.** In the tiling mode, runs that hit these LIMITs stop on a
-> rule correlated with the estimand and bias the point estimate low, so
-> coverage-validation sweeps for `ci_halfwidth` should run without output
-> limits. In single-M, output is confined to `M × S`, so paper-cap runs mostly
-> end `exhausted` — conveniently the regime where the fixed-horizon `ci_within`
-> / `ci_total` intervals are valid (I5).
+> **Coverage caveat.** Runs that hit these LIMITs stop on a rule correlated
+> with the estimand. In the tiling mode the teardown summary now degrades
+> gracefully: it reports the **last safe point** (planner-scaled, equal to the
+> last `ROSL_TRAJ` row) and flags itself with `run_complete=0`, instead of the
+> old scanned-fraction rescale that biased the point estimate low by
+> ~`act_outer/|R|`. Truncated cells are therefore comparable across
+> implementations without relabeling in the analysis layer — provided the
+> baseline being compared also planner-scales its truncated runs; verify that
+> before leaning on it. Fixed-horizon intervals (`ci_halfwidth`, and single-M
+> `ci_within`/`ci_total`) still carry no guarantee at a data-dependent stop:
+> score their coverage on `run_complete=1` runs only, and read `ci_hcs` (§1.1)
+> at LIMIT stops and mid-run looks. In single-M, output is confined to
+> `M × S`, so paper-cap runs mostly end exhausted — conveniently the regime
+> where the fixed-horizon intervals are valid (I5).
 
 ### Trajectory CSV columns
 
@@ -548,7 +667,11 @@ catastrophic cell.
 
 Everything lands behind `ROSL_SINGLE_M` / `ROSL_WEIGHT_MODE` with FLAT tiling as
 the untouched default, all schema changes are additive, and the legacy A/B paths
-stay compiled out but preserved — **rollback is a define flip**.
+stay compiled out but preserved — **rollback is a define flip**. The Howard CS
+track follows the same convention: `ROSL_HOWARD = 0` removes it entirely
+without touching the EB state or any other interval. The truncation-scale fix
+has no define of its own but is output-inert on complete runs: byte-identical
+to the pre-fix build except the trailing `run_complete=1` token.
 
 ---
 
@@ -556,7 +679,7 @@ stay compiled out but preserved — **rollback is a define flip**.
 
 | File                 | Role                                                                                                        |
 |----------------------|-------------------------------------------------------------------------------------------------------------|
-| `nodeNestloop.c`     | ROSL executor node: classic tiling driver + single-M driver, AIPW estimator, weight modes, interval family, log dump |
+| `nodeNestloop.c`     | ROSL executor node: classic tiling driver + single-M driver, AIPW estimator, weight modes, interval family incl. Howard CS, completion-conditional teardown scaling, log dump |
 | `tpch_manager.py`    | Sweep manager: fan-out, timing, CSV merge, mode tag                                                          |
 | `worker.py`          | Per-config runner: truth, ROSL run, server-log read, truth_M decomposition                                  |
 | `accuracy_charts.py` | Accuracy + decomposition plots from merged `trajectory.csv`                                                  |
