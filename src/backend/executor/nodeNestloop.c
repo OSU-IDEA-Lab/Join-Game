@@ -331,6 +331,9 @@ typedef struct RoslJoinState
 	double		num_outer;			/* |R| (planner row estimate)             */
 	double		num_inner;			/* |S| (planner row estimate)             */
 	double		act_outer;			/* |R| ACTUAL: running sum of m_count      */
+	bool		outer_exhausted;	/* true iff load_outer_block ran dry, i.e.
+									 * act_outer == exact |R|; set at the one
+									 * true completion site in PH_NEW_MBLOCK */
 
 	/* PH_PROBE resume cursors (persist across calls within one round) */
 	int			probe_ci;			/* cache index to resume from                */
@@ -1314,6 +1317,7 @@ rosl_state_init(NestLoopState *node)
 	st->max_h2v = 0.0;
 	st->n_blocks = 0;
 	st->act_outer = 0.0;			/* exact |R|: accumulated per M-block      */
+	st->outer_exhausted = false;
 
 	st->phase = PH_NEW_MBLOCK;
 
@@ -1492,6 +1496,7 @@ ExecRoslNestLoop(NestLoopState *node)
 						 * canonical description is at PrintRoslCounters.
 						 */
 						st->phase = PH_DONE;
+						st->outer_exhausted = true;	/* act_outer == |R| now */
 						break;
 					}
 
@@ -1900,14 +1905,24 @@ PrintRoslCounters(RoslJoinState *st)
 	 * instead of the planner's plan_rows, and the planner num_inner for the
 	 * inner (S is rescanned per M-block, never counted; header note (3)).
 	 *
-	 * act_outer CAVEAT: act_outer is the SCANNED outer -- exact for |R| only
-	 * if the outer scan completed (phase reached PH_DONE).  At a data-
-	 * dependent stop (output LIMIT, client cut) this line rescales the
-	 * estimate to the scanned-R x S sub-join, biased low for J by roughly
-	 * act_outer/|R|, while trajectory rows keep the planner num_outer
-	 * scaling.  A consumer that prefers SUMM values over the last trajectory
-	 * row (the current harness does) inherits that bias on early-stopped
-	 * runs; compare act_outer against num_outer before trusting SUMM there.
+	 * Population-scale contract (run_complete token):
+	 *   COMPLETE runs (outer_exhausted): scale by act_outer -- the exact |R|
+	 *   summed over M-blocks.  Unchanged from prior builds, so all validated
+	 *   complete-run results reproduce byte-identically (modulo the new
+	 *   run_complete=1 token).
+	 *   TRUNCATED runs (LIMIT / client cut before the outer ran dry): scale
+	 *   by the planner num_outer, i.e. report mu * num_outer * num_inner.
+	 *   Since mu and every moment accumulator contain only COMPLETED rounds
+	 *   (a mid-round stop never reaches finalize_round), this equals the
+	 *   last emitted ROSL_TRAJ row exactly (unless the trajectory hit
+	 *   ROSL_TRAJ_CAP, in which case the log's last row predates the last
+	 *   round) -- the "last safe point" the estimator's guarantees cover,
+	 *   NOT a rescale to the scanned-R x S sub-join (which would be biased
+	 *   low by ~act_outer/|R|).  Residual caveat: on truncated runs accuracy
+	 *   is therefore bounded by the PLANNER's cardinality estimate quality;
+	 *   the exact-|R| correction only exists once the scan completed.  Do
+	 *   not "fix" this by reintroducing raw act_outer here.  act_outer is
+	 *   still printed raw so consumers can recover the seen fraction.
 	 *
 	 * A final self-normalized CI half-width is recomputed here from the
 	 * moment accumulators (Konig-Huygens), matching the per-round trajectory.
@@ -1922,7 +1937,9 @@ PrintRoslCounters(RoslJoinState *st)
 	if (st->weight_sum > 0.0)
 	{
 		double		mu = st->est_num / st->weight_sum;
-		double		pop = st->act_outer * st->num_inner;
+		double		pop_outer = st->outer_exhausted ? st->act_outer	/* exact |R| */
+													: st->num_outer;	/* last safe point */
+		double		pop = pop_outer * st->num_inner;
 		double		est_join = mu * pop;
 		double		ss = st->mom_yy - 2.0 * mu * st->mom_yp
 			+ mu * mu * st->mom_pp;
@@ -2028,18 +2045,22 @@ PrintRoslCounters(RoslJoinState *st)
 				 "ci_noise=%.2f het_ratio=%.2f lindeberg_max=%.3e "
 				 "n_blocks=%ld "
 				 "rounds=%ld sample_matches=%ld pairs_seen=%.0f t_steps=%ld "
-				 "act_outer=%.0f num_outer=%.0f num_inner=%.0f",
+				 "act_outer=%.0f num_outer=%.0f num_inner=%.0f "
+				 "run_complete=%d",
 				 est_join, ci_half, ci_clust, ci_split, ci_eb, est_eb,
 				 ci_noise, het_ratio, st->max_h2v,
 				 st->n_blocks, st->rounds, st->sample_matches, st->est_den,
-				 st->t_steps, st->act_outer, st->num_outer, st->num_inner);
+				 st->t_steps, st->act_outer, st->num_outer, st->num_inner,
+				 st->outer_exhausted ? 1 : 0);
 		}
 	}
 	else
 		elog(INFO,
 			 "ROSL_SUMM final_est_join=0.00 rounds=0 sample_matches=%ld "
+			 "run_complete=%d "
 			 "(no completed rounds: outer empty or join produced no pairs)",
-			 st->sample_matches);
+			 st->sample_matches,
+			 st->outer_exhausted ? 1 : 0);
 }
 
 
@@ -2172,6 +2193,7 @@ ExecReScanNestLoop(NestLoopState *node)
 		st->max_h2v = 0.0;
 		st->n_blocks = 0;
 		st->act_outer = 0.0;			/* exact |R| accumulator restarts       */
+		st->outer_exhausted = false;
 
 		st->rounds = 0;
 		st->t_steps = 0;
