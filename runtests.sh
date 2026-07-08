@@ -3,7 +3,8 @@
 # Generates the current date in M_D format (e.g., 6_16)
 SUFFIX=$(date +"%-m_%-d")
  
-VERSION="SingleM_AdaptiveWeights"
+VERSION="ProbNFailure_HowardCI"
+# VERSION="SingleM_AdaptiveWeights"
  
 # If you prefer to include the time (e.g., 6_16_13_45 for 1:45 PM), 
 # comment out the line above and uncomment the line below:

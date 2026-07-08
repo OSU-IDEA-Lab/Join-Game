@@ -30,7 +30,7 @@ The worker's trajectory schema is:
 
 Usage Examples:
     python3 test/accuracy_charts.py --results_dir 6_18_floor_50 --epsilon_floor 0.5 --limit ON
-    python3 test/accuracy_charts.py --results_dir 7_7_ProbNFailure_FlatAW_NewTestScript_ --epsilon_floor 0.2 --limit ON
+    python3 test/accuracy_charts.py --results_dir 7_7_ProbNFailure_HowardCI_ --epsilon_floor 0.2 --limit ON
 """
 
 import argparse

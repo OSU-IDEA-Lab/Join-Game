@@ -38,14 +38,39 @@
  *
  *   (B) The ESTIMATOR is now the adaptively-weighted AIPW estimator:
  *         - Per exploitation round the raw HT score is replaced by an AIPW
- *           score that uses the frozen average joinability q(t) as a control
+ *           score using the frozen average joinability q(t) as a control
  *           variate; under sparse joins this absorbs almost all the variance.
- *         - Per-round scores are pooled with variance-stabilizing evaluation
- *           weights h_r (stick-breaking recursion, two-point allocation rate)
- *           instead of uniform summation, restoring asymptotic normality.
- *         - A self-normalized variance is maintained in O(1) per round via
- *           three moment accumulators (Konig-Huygens form), so every round
- *           emits an approximate 95% confidence interval on J_hat.
+ *         - Per-round scores are POOLED WITH FLAT WEIGHTS BY DEFAULT
+ *           (h_r = 1/round_pairs: the plain per-pair average of round
+ *           scores).  The paper's variance-stabilizing weights (stick-
+ *           breaking, two-point allocation) remain available under
+ *           ROSL_FLAT_WEIGHTS=0 for A/B reproduction only: they target a
+ *           precision-weighted mean, which equals the population mean only
+ *           under a common-mean regime, whereas ROSL's M-blocks have
+ *           genuinely different per-block truths, so variance-tracking
+ *           weights bias the estimand toward low-variance (cold) slices.
+ *           Flat weights measured equal-or-better on every tested cell and
+ *           are the shipped default -- variance information belongs in
+ *           intervals, never in weights.
+ *         - A self-normalized variance (three O(1) moment accumulators,
+ *           Konig-Huygens form) gives every round an approximate 95% CI on
+ *           J_hat (ci_half), independent of the flat-vs-legacy weight choice.
+ *         - The node also emits: a split-cache noise-only interval and its
+ *           per-round variance track v_r (telemetry only, never a weight);
+ *           M-block-clustered and split-half interval brackets (the block,
+ *           not the round, as the independence unit); the het_ratio
+ *           diagnostic (~1: the clustered CI is honest; >>1: it is over-wide
+ *           from cross-block heterogeneity); and an anytime-valid guard band
+ *           for mid-run looks or a run about to be cut off by an output
+ *           LIMIT.  The guard band is now Howard et al.'s stitched
+ *           time-uniform empirical-Bernstein CONFIDENCE SEQUENCE (Section 9
+ *           port, replacing the Section-8 fixed-n Maurer-Pontil form): a
+ *           proven time-uniform interval under the ROSL_CS_CMAX assumption
+ *           with a predictable analytic range envelope, honestly WIDE from
+ *           round 1 instead of the old zero-then-spike wedge.  The MP band
+ *           is retained behind ROSL_KEEP_MP_BAND (token ci_mp) for one A/B
+ *           release; the fixed-horizon ci_halfwidth remains the primary
+ *           interval at natural end ("emit both", Section 9.b).
  *
  * The epsilon-FLOOR is retained: it guarantees the propensity-decay lower
  * bound the CLT requires, so it is now a precondition for valid inference
@@ -173,126 +198,33 @@ bool		enable_rosl = false;
 									 * 0: legacy stick-breaking/two-point
 									 * path, kept for A/B reproduction.      */
 
-/*
- * ======================= SINGLE-M ROSL (opt-in) =======================
- * A second, mutually-exclusive estimator mode selected at COMPILE TIME by
- * ROSL_SINGLE_M (default 0).  When 0 the classic sequential-tiling driver
- * above is compiled and behaves EXACTLY as before -- every symbol below is
- * #if'd out, so the shipped default build is byte-for-byte the tiling engine.
- * When 1 the tiling driver is replaced by a single-M driver whose design is:
- *
- *   * M is a UNIFORM sample of m tuples from R, drawn ONCE (the first m outer
- *     tuples under the physical shuffle) and held for the entire execution.
- *   * S is streamed in K-blocks B_1 .. B_T with ONE fresh cache realization
- *     per K-block round -- no exploration prefix, no per-block M reset.
- *   * Per round t: freeze the eps-smoothed sampling distribution q_t from
- *     rounds 1..t-1, draw the split cache, probe it against B_t, score with
- *     the existing full-cache AIPW estimator, and pool by ROSL_WEIGHT_MODE.
- *
- * This is the configuration in which the Hadad et al. (2021) adaptively-
- * weighted AIPW machinery applies verbatim (conditional on M the arm set is
- * fixed and finite, the eps-floor supplies known history-adapted propensities
- * e_t(r) >= eps/m -- their condition (13) with alpha = 0 -- and the horizon T
- * is known up front).  Emitted rows come only from M x S, so this is an
- * ESTIMATOR node, not a full-join replacement; the estimand conditional on M
- * is J_M = (N_R/m) * sum_{r in M} deg_S(r), and the gap J_M - J (the realized
- * join) is a one-shot finite-population sampling error reported as a second CI
- * stage (ci_between), never hidden.
- *
- * THE ONE CORRECTION vs the retired adaptive-weights build: the variance proxy
- * entering the stick-breaking recursion is the PRE-ROUND PREDICTED variance
- * computed from the frozen sampling distribution q_t (H_{t-1}-measurable),
- * NEVER round t's own realized variance.  That single substitution is what
- * separates the -34%-bias version from a theoretically sound one (invariant I3
- * below).  Legality invariants enforced here:
- *   I1  M drawn before any probing, never replaced.
- *   I2  q_t / pi_t frozen across the whole round; steering/weight updates land
- *       strictly between rounds.
- *   I3  h_t is H_{t-1}-measurable: V_pred_t comes from q_t and completed-round
- *       statistics only (never round t's outcome).
- *   I4  the horizon T is fixed at round 1 (from the inner planner estimate);
- *       lambda = 1 is forced on the true final round so the stick is consumed.
- *   I5  the Hadad self-normalized interval is fixed-horizon: ci_within /
- *       ci_total are valid (and should be coverage-scored) only on runs that
- *       exhaust the stream; the EB interval remains primary at a data-
- *       dependent stop.
- * ======================================================================
- */
-#ifndef ROSL_SINGLE_M
-#define ROSL_SINGLE_M		0		/* 1: single-M estimator; 0: classic tiling */
-#endif
+/* ---- Anytime-valid confidence-sequence tunables (Section 9, Howard et al.) ---- */
+#define ROSL_CS_ALPHA		0.05	/* two-sided miscoverage over ALL look times */
+#define ROSL_CS_ETA			2.0		/* stitching geometric spacing (eta > 1)     */
+#define ROSL_CS_S			1.4		/* stitching polynomial exponent (s > 1)     */
+#define ROSL_CS_V_MIN		1e-12	/* variance-process floor: boundary defined
+									 * from the first round, no eb_n>1 gate     */
+#define ROSL_CS_ANALYTIC_B	1		/* 1: predictable analytic range envelope
+									 * (eps-floor + pi_min), 0: legacy plug-in
+									 * realized max (A/B only)  [DEV-2]         */
+#define ROSL_KEEP_MP_BAND	1		/* 1: also emit legacy fixed-n Maurer-Pontil
+									 * band as ci_mp for one release (A/B)
+									 * [DEV-4]                                  */
 
 /*
- * ROSL_M_MULT scales the single-M sample size m = ROSL_M_LIM * ROSL_M_MULT
- * (probe cost scales with the cache draws L, not with m, so a large m is
- * nearly free at run time -- see the M-lottery risk note).  Used only when
- * ROSL_SINGLE_M is 1; lets the accuracy sweep test m in {1x, 4x, 16x} without
- * disturbing the K-block size.
+ * ROSL_CS_CMAX: max per-pair match multiplicity assumed by the analytic range
+ * envelope B_r (see build_distribution).  1.0 is CORRECT ONLY for the
+ * equijoin-on-key workloads this engine targets (each (t,s) pair matches at
+ * most once per inner tuple, so a cached outer tuple contributes at most Kn
+ * matches per round).  *** NON-KEY / MANY-MATCH JOINS MUST RAISE THIS *** to
+ * the true multiplicity bound, or fall back to the plug-in realized range by
+ * setting ROSL_CS_ANALYTIC_B to 0 (which forfeits the CS proof and reverts to
+ * a robustness heuristic).  Rationale: the Howard et al. proof needs a range
+ * bound that is H_{r-1}-measurable, i.e. known BEFORE the round's randomness;
+ * eta=2, s=1.4 above are the worked constants from Howard et al.'s stitched-
+ * boundary example -- formula constants, not fit parameters.
  */
-#ifndef ROSL_M_MULT
-#define ROSL_M_MULT			1
-#endif
-
-/*
- * ROSL_STEERING (single-M only).  0: the sampling distribution q_t stays
- * uniform every round (the AIPW control variate still learns from matches, so
- * variance reduction is unaffected -- only the DRAW is uniform).  1: q_t is
- * joinability-weighted from match history (eps-floored).  Steering ships OFF
- * by default: it is the A/B that gives the Hadad weights a non-vacuous job
- * (with steering off the arms are exchangeable and flat pooling is optimal).
- * With M memory-resident, steering has zero I/O penalty in this design.
- */
-#ifndef ROSL_STEERING
-#define ROSL_STEERING		0
-#endif
-
-/*
- * ROSL_WEIGHT_MODE (single-M only) selects the per-round pooling weights.
- *   ROSL_WM_FLAT        h_t = 1/round_pairs         (the shipped fallback)
- *   ROSL_WM_HADAD_CONST constant allocation lambda_t = 1/(T-t+1)   (Eq. 15)
- *   ROSL_WM_HADAD_2PT   two-point allocation rate                  (Eq. 18)
- * Both Hadad modes drive the stick-breaking recursion h_t^2 * V_pred_t =
- * stick * lambda_t (Eq. 12) with the I3-legal PREDICTED variance V_pred_t.
- * (ROSL_ALPHA is retired for propensity decay: the eps-floor bounds e_t(r)
- * below by eps/m, i.e. alpha = 0 in their condition (13).  The exponent that
- * survives lives only inside the two-point allocation rate, as a fixed formula
- * constant, and is NOT a tunable propensity knob.)
- */
-/*
- * ROSL_VPRED_NUGGET: fixed per-arm prior residual variance (squared matches)
- * entering the predicted-variance proxy V_pred (see finalize_round_single_m).
- * Order one match^2 per arm is the right scale for sparse equijoins.  This is
- * a fixed formula constant like the numerical floors, not a tuning knob: any
- * positive value preserves the I3 legality argument; its magnitude affects
- * only how much weight the earliest (predictor-free) rounds receive.
- */
-#define ROSL_VPRED_NUGGET	1.0
-
-#define ROSL_WM_FLAT		0
-#define ROSL_WM_HADAD_CONST	1
-#define ROSL_WM_HADAD_2PT	2
-#ifndef ROSL_WEIGHT_MODE
-#define ROSL_WEIGHT_MODE	ROSL_WM_FLAT
-#endif
-
-/*
- * ROSL_EMIT_MKEYS (single-M diagnostic, default 0).  When 1, teardown emits
- * M's outer join keys in chunked "ROSL_MKEYS k1,k2,..." lines so the harness
- * can compute truth_M = (N_R/m) * sum deg_S(key) and split the error into
- * within-M and M-lottery components.  ASSUMES the outer join key is attribute
- * 1 of the outer tuple and is an integer-like by-value type (true for the
- * TPC-H equijoins this targets); the truth_M query MUST use the same column.
- */
-#ifndef ROSL_EMIT_MKEYS
-#define ROSL_EMIT_MKEYS		0
-#endif
-
-#if ROSL_EMIT_MKEYS
-#define ROSL_MKEYS_PER_LINE	64		/* join keys per ROSL_MKEYS log line */
-/* headers used only by the opt-in ROSL_MKEYS diagnostic */
-#include "lib/stringinfo.h"
-#include "utils/lsyscache.h"
-#endif
+#define ROSL_CS_CMAX		1.0		/* per-pair match multiplicity bound       */
 
 /*
  * Per-round trajectory is buffered in C and dumped once at executor teardown
@@ -312,13 +244,6 @@ typedef enum RoslPhase
 	PH_NEW_SBLOCK,					/* load next inner (body) block, draw cache  */
 	PH_PROBE,						/* probe cache x K-block, emit matches       */
 	PH_DONE							/* outer exhausted: sampling join complete   */
-#if ROSL_SINGLE_M
-	,
-	/* --- single-M driver phases; unused by the tiling driver --- */
-	PH_LOAD_M,						/* draw M once (first m outer tuples), rewind S */
-	PH_STREAM_SBLOCK,				/* load next inner K-block, draw fresh cache  */
-	PH_STREAM_PROBE					/* probe cache x K-block, emit matches        */
-#endif
 } RoslPhase;
 
 /*
@@ -397,17 +322,38 @@ typedef struct RoslJoinState
 	double		stick;				/* stick-breaking residual 1 - sum h^2 V  */
 
 	/*
-	 * ---- Empirical-Bernstein confidence sequence (Section 8 guard band) ----
-	 * Anytime-valid interval on the bounded per-round rate X_r = Yhat/pairs.
-	 * Needs no variance convergence and remains meaningful at a data-dependent
-	 * stop (output LIMIT) -- the one residue the fixed-horizon CI cannot cover.
-	 * Three O(1) accumulators; emitted alongside (never instead of) the
-	 * self-normalized CI.
+	 * ---- Empirical-Bernstein moments (Section 8 / 9) ----
+	 * Running moments of the bounded per-round rate X_r = Yhat/pairs.  They
+	 * feed (a) Xbar, the center of the anytime-valid CS below, (b) the legacy
+	 * fixed-n Maurer-Pontil band kept behind ROSL_KEEP_MP_BAND for A/B, and
+	 * (c) the plug-in range fallback when ROSL_CS_ANALYTIC_B = 0.  The
+	 * plug-in-range validity caveat now applies ONLY to that fallback path;
+	 * the shipped CS path uses the predictable cs_* envelope (see below).
+	 * Emitted alongside (never instead of) the self-normalized CI.
 	 */
 	double		eb_sx;				/* sum_r X_r                              */
 	double		eb_sxx;				/* sum_r X_r^2                            */
 	double		eb_max;				/* max_r |X_r| (Bernstein range bound B)  */
 	long		eb_n;				/* rounds folded into the EB moments      */
+
+	/*
+	 * --- anytime-valid EB confidence sequence (Howard et al., Section 9) ---
+	 * cs_v is the intrinsic-time variance process sum_r (X_r - Xhat_{r-1})^2,
+	 * with Xhat_{r-1} the PREDICTABLE running mean before folding X_r (first
+	 * round predicts 0, matching the q-hat untried=>zero convention; this only
+	 * widens, never narrows, the band).  [DEV-3]  cs_b / cs_bmax carry the
+	 * predictable analytic range envelope B_r computed in build_distribution()
+	 * from (Mn, L, eps) only -- all fixed before the round's randomness -- so
+	 * the stitched-boundary proof goes through under the ROSL_CS_CMAX
+	 * multiplicity assumption.  [DEV-2]  With ROSL_CS_ANALYTIC_B = 0 the
+	 * boundary instead plugs in the realized max eb_max, and the old caveat
+	 * applies: that path is a robustness heuristic, not a proven confidence
+	 * sequence.  The CS is interval-valid -- NOT center-corrective -- at a
+	 * data-dependent stop (see the Section 7 change (3) caveat at teardown).
+	 */
+	double		cs_v;				/* sum_r (X_r - Xhat_{r-1})^2 (intrinsic t)*/
+	double		cs_b;				/* envelope B in force this round [DEV-2] */
+	double		cs_bmax;			/* running max of predictable B_r         */
 
 	/*
 	 * ---- M-block-clustered / split-half variance (Section 7.h) ----
@@ -442,6 +388,11 @@ typedef struct RoslJoinState
 	double		num_outer;			/* |R| (planner row estimate)             */
 	double		num_inner;			/* |S| (planner row estimate)             */
 	double		act_outer;			/* |R| ACTUAL: running sum of m_count      */
+	bool		outer_exhausted;	/* true iff the outer scan ran dry, i.e.
+									 * act_outer equals exact |R|; set ONLY at
+									 * the true completion site (the sole
+									 * load_outer_block-runs-dry PH_DONE
+									 * transition), never inferred from phase */
 
 	/* PH_PROBE resume cursors (persist across calls within one round) */
 	int			probe_ci;			/* cache index to resume from                */
@@ -469,9 +420,16 @@ typedef struct RoslJoinState
 	double	   *traj_mean_per_pair;	/* mu_hat at this round                   */
 	double	   *traj_est_join;		/* J_hat at this round                    */
 	double	   *traj_ci_halfwidth;	/* 95% CI half-width on J_hat             */
-	double	   *traj_ci_eb;			/* EB-CS guard-band half-width (Sec. 8);
-									 * the anytime interval a mid-run look or
-									 * LIMIT-stopped run should read           */
+	double	   *traj_ci_eb;			/* Howard et al. anytime-valid CS half-
+									 * width (Sec. 9): the coverage-scorable
+									 * interval a mid-run look or LIMIT-
+									 * stopped run should read, centered on
+									 * traj_est_eb                            */
+	double	   *traj_est_eb;		/* Xbar * pop: the CS's own center; score
+									 * per-row coverage against THIS          */
+	double	   *traj_ci_mp;			/* legacy fixed-n Maurer-Pontil half-width
+									 * (A/B only, behind ROSL_KEEP_MP_BAND;
+									 * 0 when disabled or eb_n < 2) [DEV-4]   */
 	double	   *traj_pairs_seen;	/* est_den (cumulative Mn*Kn)             */
 	long	   *traj_sample_matches;/* cumulative sample_matches at this round */
 	double	   *traj_elapsed_ms;	/* ms from first-row start to this round  */
@@ -484,27 +442,6 @@ typedef struct RoslJoinState
 
 	/* per-state PRNG (xorshift64*) -- independent stream per backend/node    */
 	uint64		rng_state;			/* never 0; seeded in rosl_state_init      */
-
-#if ROSL_SINGLE_M
-	/*
-	 * ---- single-M estimator state (ROSL_SINGLE_M) ----
-	 * M is fixed for the whole run, so reward[]/attempts[] accumulate across
-	 * every K-block round (never reset per block) and feed the frozen AIPW
-	 * predictor qhat_t.  Two O(m) per-arm accumulators support the M-lottery
-	 * (stage-2) interval:
-	 *   a1(r) += 1[r in C_t] * c_t(r) / pi_t(r)          -> Qhat(r) = a1/n_s
-	 *   a2(r) += (1[r in C_t] * c_t(r) / pi_t(r))^2      -> within-arm noise
-	 * V_pred_t (the I3-legal predicted variance) is built from the frozen
-	 * pi_t's plus the running mean of past within-round noise v (sum_v/nv).
-	 */
-	double	   *a1;					/* [m_lim] per-arm HT sum  (Qhat numerator) */
-	double	   *a2;					/* [m_lim] per-arm HT sum of squares        */
-	double		n_s_seen;			/* inner tuples streamed so far (= N_S if
-									 * exhausted); Qhat(r) = a1(r)/n_s_seen     */
-	double		sum_v;				/* running sum of past within-round noise v */
-	long		nv;					/* completed rounds folded into sum_v       */
-	double		t_planned;			/* horizon T = ceil(N_S / K), fixed round 1 */
-#endif
 } RoslJoinState;
 
 
@@ -634,6 +571,39 @@ load_prefix_block(RoslJoinState *st, PlanState *innerPlan)
 	return n;
 }
 
+#if ROSL_CS_ANALYTIC_B
+/*
+ * Fold this round's predictable analytic range envelope into the CS state
+ * [DEV-2].  With qmax = 1 (q-hat is a rate in [0,1]) and cmax = ROSL_CS_CMAX
+ * the per-round AIPW score obeys, crudely but validly,
+ *
+ *   |X_r| = |Yhat_r| / (Mn * Kn)
+ *         <= qmax + cmax * (1 + qmax) / pi_min_r  =:  B_r
+ *
+ * from Yhat = base + sum resid/pi with base <= Mn*qmax*Kn, |resid| <= Kn*cmax
+ * (per-tuple residual bounded by cmax*Kn matches plus a qhat*Kn <= Kn
+ * baseline, folded into the (1 + qmax) factor), and at most Mn cached tuples.
+ * pi_min_r is computed by the caller from (Mn, L, eps) alone, all fixed
+ * before the round's randomness, so B_r -- and hence cs_bmax -- is
+ * H_{r-1}-measurable, which is what the stitched-boundary proof requires.
+ */
+static inline void
+rosl_cs_set_envelope(RoslJoinState *st, double pi_min)
+{
+	double		qmax = 1.0;
+	double		b_r;
+
+	if (pi_min <= 0.0)
+		pi_min = 1e-12;				/* defensive; L >= 1 keeps pi_min > 0 */
+
+	b_r = qmax + ROSL_CS_CMAX * (1.0 + qmax) / pi_min;
+
+	st->cs_b = b_r;
+	if (b_r > st->cs_bmax)
+		st->cs_bmax = b_r;
+}
+#endif							/* ROSL_CS_ANALYTIC_B */
+
 /*
  * Custom epsilon-greedy smoothing over the current M-block, using the average
  * joinability accumulated so far in this M-block and the current epsilon.
@@ -700,6 +670,17 @@ build_distribution(RoslJoinState *st, bool uniform)
 	{
 		for (t = 0; t < n; t++)
 			st->p[t] = 1.0 / Mn;
+
+#if ROSL_CS_ANALYTIC_B
+		/* Predictable CS range envelope, uniform round: p(t) = 1/Mn exactly. */
+		if (Mn > 0.0)
+		{
+			double		pi_min = 1.0 - pow(1.0 - 1.0 / Mn,
+										   (double) st->exp_cache_lim);
+
+			rosl_cs_set_envelope(st, pi_min);
+		}
+#endif
 		return;
 	}
 
@@ -730,6 +711,31 @@ build_distribution(RoslJoinState *st, bool uniform)
 		for (t = 0; t < n; t++)
 			st->p[t] = 1.0 / Mn;
 	}
+
+#if ROSL_CS_ANALYTIC_B
+	/*
+	 * Predictable CS range envelope, exploitation round [DEV-2].  The epsilon
+	 * floor applied above guarantees p(t) >= eps/Mn for every t BEFORE any of
+	 * this round's randomness (q, eps, Mn, L are all H_{r-1}-measurable), so
+	 * pi_min_r = 1 - (1 - eps/Mn)^L is a predictable lower bound on every
+	 * cached tuple's inclusion probability.  (The final renormalization can
+	 * only DIVIDE by sum <= 1 -- the pre-normalized masses (1-eps)q/Qtot +
+	 * eps/Mn sum to at most 1 -- so it never pushes p(t) below eps/Mn.)
+	 * B_r depends only on those pre-round quantities, so cs_bmax is a
+	 * predictable envelope and the Howard et al. proof goes through under the
+	 * ROSL_CS_CMAX per-pair multiplicity assumption (see its definition:
+	 * non-key joins must raise it or fall back to ROSL_CS_ANALYTIC_B = 0).
+	 * One pow() per round -- negligible next to the per-tuple pow() in
+	 * finalize_round's inclusion probabilities.
+	 */
+	if (Mn > 0.0)
+	{
+		double		pi_min = 1.0 - pow(1.0 - eps / Mn,
+									   (double) st->exp_cache_lim);
+
+		rosl_cs_set_envelope(st, pi_min);
+	}
+#endif
 }
 
 /* One linear pass to build the cumulative distribution; pin the last to 1.0. */
@@ -813,7 +819,7 @@ draw_and_dedup_cache(RoslJoinState *st)
 	}
 }
 
-#if !ROSL_FLAT_WEIGHTS || (ROSL_SINGLE_M && ROSL_WEIGHT_MODE == ROSL_WM_HADAD_2PT)
+#if !ROSL_FLAT_WEIGHTS
 /*
  * Two-point allocation rate for round r (paper Eq. 18 / Theorem 3), computed
  * in closed form (no scan over future rounds).  pi_repr in [0,1] mixes the
@@ -866,21 +872,33 @@ two_point_lambda(RoslJoinState *st, long r, double pi_repr)
 
 	return lambda;
 }
-#endif							/* two_point_lambda needed */
+#endif							/* !ROSL_FLAT_WEIGHTS */
 
 /*
- * ACCUMULATE (paper subroutine): fold one round's HT/AIPW score into the
- * adaptively-weighted running estimate in O(1).
+ * ACCUMULATE: fold one round's HT/AIPW score into the running estimate, O(1).
+ *
+ * DEFAULT path (ROSL_FLAT_WEIGHTS=1): h_r = 1/round_pairs, so
+ *
+ *   mu = est_num / weight_sum = (1/R) * sum_r X_r,   X_r = Yhat_r / pairs_r
+ *
+ * i.e. the EQUAL-ROUND-WEIGHT mean of per-round per-pair rates (weight_sum
+ * simply counts rounds).  Precisely stated, this is NOT the pooled ratio
+ * sum(Yhat)/sum(pairs): the two differ when rounds are unequal (the short
+ * final K-block; exploration rounds with pairs = Mn * p_count), by at most
+ * one round's share.  Weights carry no variance information by design;
+ * rationale lives at the ROSL_FLAT_WEIGHTS definition.
+ *
+ * LEGACY path (ROSL_FLAT_WEIGHTS=0, A/B reproduction only):
  *
  *   V_r          = round_pairs / pi_repr        (conditional-variance proxy)
  *   h_r^2        = (stick * lambda_r) / V_r     (stick-breaking, Eq. 12)
  *   stick       -= h_r^2 * V_r                  (= stick * (1 - lambda_r))
- *   est_num     += h_r * Yhat
- *   weight_sum  += h_r * round_pairs
- *   mom_yy/yp/pp updated for the Konig-Huygens variance (Eq. 11), all O(1).
  *
- * est_den accumulates the UNWEIGHTED pair count so the summary/denominator
- * bookkeeping still reports pairs seen; the point estimate uses weight_sum.
+ * with two known defects documented at two_point_lambda().
+ *
+ * Both paths: est_num += h*Yhat, weight_sum += h*pairs, and mom_yy/yp/pp
+ * feed the Konig-Huygens variance (Eq. 11); est_den accumulates the
+ * UNWEIGHTED pair count for bookkeeping only.
  */
 /*
  * Two-sided t critical value at level 0.05 for df degrees of freedom.  Sparse
@@ -918,6 +936,69 @@ t_crit_975(long df)
 		}
 	}
 	return 1.96;
+}
+
+/*
+ * Time-uniform empirical-Bernstein boundary (Howard, Ramdas, McAuliffe,
+ * Sekhon; Theorem 1 / Eq. (10) polynomial-stitching construction), closed
+ * form.  Section 9 port: this replaces the fixed-n Maurer-Pontil guard band
+ * as the primary ci_eb.
+ *
+ *   v     : intrinsic time = cs_v, floored at ROSL_CS_V_MIN
+ *   b     : range envelope = cs_bmax (predictable, [DEV-2]) or the plug-in
+ *           eb_max when ROSL_CS_ANALYTIC_B = 0 (heuristic path)
+ *   alpha : PER-SIDE miscoverage -- callers pass ROSL_CS_ALPHA / 2 and use
+ *           Xbar +/- half, a union bound over the upper and lower sequences
+ *           (standard for the non-symmetric sub-exponential boundary)
+ *   n     : rounds folded so far (eb_n)
+ *
+ * Returns the half-width on the MEAN of X after n rounds: u(v)/n, with
+ *
+ *   l(v) = s ln(ln(eta v / vmin)) + ln( zeta(s) / (alpha ln(eta)^s) )
+ *   u(v) = k1 sqrt(v l(v)) + k2 b l(v)
+ *   k1   = (eta^{1/4} + eta^{-1/4}) / sqrt(2)
+ *   k2   = (sqrt(eta) + 1) / 2
+ *
+ * Properties (asserted, not proven here): u(v)/n is HUGE as v -> vmin at
+ * small n -- the honest wide-open early band that replaces the old
+ * zero-then-spike wedge [DEV-1]; it is monotone in v; and it decays at the
+ * sqrt(v loglog v)/n law-of-the-iterated-logarithm rate.  The ~2-3x width
+ * over the fixed-horizon CI that Section 9 measured is the expected
+ * steady-state anytime price ("slightly wider" per that section's honesty
+ * note), not a bug.
+ *
+ * zeta(ROSL_CS_S) is hard-coded for s = 1.4 to avoid a libm/special-function
+ * dependency; if ROSL_CS_S is changed the constant below MUST be updated.
+ */
+static double
+cs_boundary(double v, double b, double alpha, long n)
+{
+	const double eta = ROSL_CS_ETA;
+	const double s = ROSL_CS_S;
+	const double zeta_s = 3.105547277977581;	/* Riemann zeta(1.4) */
+	const double vmin = ROSL_CS_V_MIN;
+	double		k1;
+	double		k2;
+	double		lv;
+	double		uv;
+
+	if (n < 1)
+		return 0.0;					/* no rounds: caller should not ask */
+	if (v < vmin)
+		v = vmin;					/* floor => boundary defined from round 1 */
+
+	k1 = (pow(eta, 0.25) + pow(eta, -0.25)) / sqrt(2.0);
+	k2 = (sqrt(eta) + 1.0) / 2.0;
+
+	/* eta * v / vmin >= eta > 1, so the outer ln's argument is > 0 */
+	lv = s * log(log(eta * v / vmin))
+		+ log(zeta_s / (alpha * pow(log(eta), s)));
+	if (lv < 0.0)
+		lv = 0.0;					/* defensive; positive for all sane tunables */
+
+	uv = k1 * sqrt(v * lv) + k2 * b * lv;
+
+	return uv / (double) n;
 }
 
 /*
@@ -977,12 +1058,10 @@ accumulate_round(RoslJoinState *st, double round_pairs, double Yhat,
 
 #if ROSL_FLAT_WEIGHTS
 	/*
-	 * Flat weights: h = 1/round_pairs, so the pooled mu is the plain
-	 * per-pair average of round scores.  Weights carry NO variance
-	 * information by design -- see the ROSL_FLAT_WEIGHTS comment at the
-	 * definition site for the mechanism (inverse-variance weighting under
-	 * block heterogeneity biases the estimand toward low-variance slices).
-	 * pi_repr is retained in the signature for the legacy path only.
+	 * Flat weights: h = 1/round_pairs -- the equal-round-weight mean of
+	 * per-pair rates (see the function comment).  Rationale at the
+	 * ROSL_FLAT_WEIGHTS definition.  pi_repr is retained in the signature
+	 * for the legacy path only.
 	 */
 	(void) pi_repr;
 	if (round_pairs <= 0.0)
@@ -1038,20 +1117,37 @@ accumulate_round(RoslJoinState *st, double round_pairs, double Yhat,
 	}
 
 	/*
-	 * Empirical-Bernstein moments on the bounded per-round rate X = Yhat/pairs
-	 * (Section 8 guard band).  Both call sites guarantee round_pairs > 0
-	 * (finalize_explore_round returns early on an empty prefix; PH_NEW_SBLOCK
-	 * skips finalize_round when k_count == 0), but guard anyway so a future
-	 * call site cannot divide by zero.  Note the EB estimand is the UNWEIGHTED
-	 * mean of per-round rates: with unequal round sizes (the last K-block is
-	 * short) this weights small slices slightly more than total/total-pairs
-	 * does; the discrepancy is bounded by one round's share and vanishes as
-	 * rounds accumulate.
+	 * Empirical-Bernstein moments on the per-round rate X = Yhat/pairs
+	 * (feed Xbar, the MP A/B band, and the anytime CS -- validity notes at
+	 * the eb_* / cs_* struct comments).
+	 * Both call sites guarantee round_pairs > 0 (finalize_explore_round
+	 * returns early on an empty prefix; PH_NEW_SBLOCK skips finalize_round
+	 * when k_count == 0), but guard anyway so a future call site cannot
+	 * divide by zero.  The EB estimand is the unweighted mean of per-round
+	 * rates -- IDENTICAL to the pooled mu under the default flat weights;
+	 * the distinction matters only on the legacy weighted path.
 	 */
 	if (round_pairs > 0.0)
 	{
 		double		X = Yhat / round_pairs;
 		double		ax = (X < 0.0) ? -X : X;
+
+		/*
+		 * Anytime-valid CS variance process [DEV-3]: increments must be
+		 * centered at a PREDICTABLE plug-in Xhat_{r-1} (any H_{r-1}-measurable
+		 * predictor; the running mean BEFORE folding X_r is the standard
+		 * choice), unlike the eb_sxx sample variance below, which recenters
+		 * retroactively.  The first round predicts 0 -- the q-hat convention
+		 * (untried => predict zero) -- which only widens, never narrows, the
+		 * band.  Must run before the eb_sx / eb_n updates.
+		 */
+		{
+			double		xhat_prev = (st->eb_n > 0)
+				? st->eb_sx / (double) st->eb_n : 0.0;
+			double		d = X - xhat_prev;
+
+			st->cs_v += d * d;
+		}
 
 		st->eb_sx += X;
 		st->eb_sxx += X * X;
@@ -1103,6 +1199,8 @@ record_trajectory(RoslJoinState *st)
 	double		Vhat;
 	double		ci_half;
 	double		ci_eb = 0.0;
+	double		est_eb = 0.0;
+	double		ci_mp = 0.0;
 
 	st->rounds++;
 
@@ -1120,24 +1218,44 @@ record_trajectory(RoslJoinState *st)
 	ci_half = 1.96 * st->num_outer * st->num_inner * sqrt(Vhat);
 
 	/*
-	 * Per-round EB-CS guard band (Section 8), O(1) from the running moments.
-	 * This is the interval a mid-run look -- or a run about to be stopped by
-	 * an output LIMIT -- should read: the self-normalized ci_half above is
-	 * fixed-horizon-only.  Uses |R|*|S| (planner inner) like ci_half; the
-	 * teardown ROSL_SUMM recomputes both against the exact act_outer.
+	 * Per-round anytime-valid CS band (Section 9, Howard et al.), O(1) from
+	 * the running cs_* / eb_* state.  This row is now a COVERAGE-SCORABLE
+	 * interval at every round -- valid at arbitrary look times, including a
+	 * run stopped by an output LIMIT (the self-normalized ci_half above is
+	 * fixed-horizon-only).  Centered on est_eb = Xbar * pop; score coverage
+	 * against est_eb, not est_join (identical under the default flat weights
+	 * up to the documented equal-round-weight nuance).  The gate is eb_n >= 1
+	 * [DEV-1]: the CS is defined (and honestly huge) from round 1, which is
+	 * exactly the fix for the old zero-width start.  Uses |R|*|S| (planner
+	 * inner) like ci_half; the teardown ROSL_SUMM recomputes both against the
+	 * exact act_outer.  The CS makes the interval honest at every look time;
+	 * it does NOT repair a biased center (see the teardown caveats).
 	 */
-	if (st->eb_n > 1)
+	if (st->eb_n >= 1)
 	{
 		double		xb = st->eb_sx / (double) st->eb_n;
-		double		vx = st->eb_sxx / (double) st->eb_n - xb * xb;
-		double		lg = 3.6888794541139363;	/* ln(2/0.05) */
-		double		half_rate;
+		double		b = ROSL_CS_ANALYTIC_B ? st->cs_bmax : st->eb_max;
+		double		half = cs_boundary(st->cs_v, b, ROSL_CS_ALPHA / 2.0,
+									   st->eb_n);
 
-		if (vx < 0.0)
-			vx = 0.0;
-		half_rate = sqrt(2.0 * vx * lg / (double) st->eb_n)
-			+ (7.0 / 3.0) * st->eb_max * lg / (double) st->eb_n;
-		ci_eb = half_rate * st->num_outer * st->num_inner;
+		ci_eb = half * st->num_outer * st->num_inner;	/* token name kept */
+		est_eb = xb * st->num_outer * st->num_inner;
+
+#if ROSL_KEEP_MP_BAND
+		/* Legacy fixed-n Maurer-Pontil band, one release only [DEV-4]. */
+		if (st->eb_n > 1)
+		{
+			double		vx = st->eb_sxx / (double) st->eb_n - xb * xb;
+			double		lg = 3.6888794541139363;	/* ln(2/0.05) */
+			double		half_mp;
+
+			if (vx < 0.0)
+				vx = 0.0;
+			half_mp = sqrt(2.0 * vx * lg / (double) st->eb_n)
+				+ (7.0 / 3.0) * st->eb_max * lg / (double) st->eb_n;
+			ci_mp = half_mp * st->num_outer * st->num_inner;
+		}
+#endif
 	}
 
 	if (st->traj_count < ROSL_TRAJ_CAP)
@@ -1162,6 +1280,8 @@ record_trajectory(RoslJoinState *st)
 		st->traj_est_join[st->traj_count]       = Jhat;
 		st->traj_ci_halfwidth[st->traj_count]   = ci_half;
 		st->traj_ci_eb[st->traj_count]          = ci_eb;
+		st->traj_est_eb[st->traj_count]         = est_eb;
+		st->traj_ci_mp[st->traj_count]          = ci_mp;
 		st->traj_pairs_seen[st->traj_count]     = st->est_den;
 		st->traj_sample_matches[st->traj_count] = st->sample_matches;
 		st->traj_elapsed_ms[st->traj_count]     = elapsed_ms;
@@ -1327,291 +1447,6 @@ finalize_explore_round(RoslJoinState *st)
 	record_trajectory(st);
 }
 
-#if ROSL_SINGLE_M
-/*
- * ACCUMULATE (single-M): fold one K-block round's AIPW score into the
- * adaptively-weighted running estimate in O(1), under ROSL_WEIGHT_MODE.
- *
- * The ONLY quantity that must be H_{t-1}-measurable is the pooling weight h_t.
- * For the two Hadad modes it comes from the stick-breaking recursion driven by
- * the PREDICTED variance Vpred (invariant I3): the caller builds Vpred from the
- * frozen inclusion probabilities pi_t and the running mean of past within-round
- * noise, NEVER from round t's realized score.  The realized Yhat enters only
- * the numerator and the Konig-Huygens moment accumulators, exactly as the
- * self-normalized variance estimator (Eq. 11) requires.
- *
- * stick -= h_t^2 * Vpred = stick * lambda_t exactly, so with lambda = 1 forced
- * on the true final round (force_last) the stick telescopes to zero and
- * sum_t h_t^2 Vpred_t = 1 at T, independent of the Vpred values.
- *
- * pi_mix in [0,1] is the "stays high vs decays" mixing weight for the two-point
- * rate.  It is the MEAN frozen inclusion probability over all of M — computed
- * from q_t alone, before the cache is drawn — NOT the legacy path's minimum
- * over the REALIZED cache.  That legacy choice depended on which tuples the
- * round-t draw happened to include, i.e. on round t's own randomness, which is
- * exactly the kind of H_{t-1}-measurability defect invariant I3 exists to rule
- * out; the mean over the frozen pi_t's is a pre-round quantity.  It is unused
- * by the other two modes.  Because ROSL_WEIGHT_MODE is a compile constant,
- * exactly one branch is emitted and the unused arguments are cast away.
- */
-static void
-accumulate_round_single_m(RoslJoinState *st, double round_pairs, double Yhat,
-						  double Vpred, double pi_mix, double v_round,
-						  bool force_last)
-{
-	double		h2;
-	double		h;
-
-	st->round_idx++;
-
-#if ROSL_WEIGHT_MODE == ROSL_WM_FLAT
-	/* Flat pooling: h = 1/round_pairs (plain per-pair average of scores). */
-	(void) Vpred;
-	(void) pi_mix;
-	(void) force_last;
-	if (round_pairs <= 0.0)
-		return;						/* callers guarantee > 0; defensive      */
-	h = 1.0 / round_pairs;
-	h2 = h * h;
-#else
-	{
-		double		T = st->t_est;	/* horizon fixed at round 1 (I4)         */
-		double		rr = (double) st->round_idx;
-		double		lambda;
-
-		/*
-		 * If the planner UNDERestimated N_S, rr exceeds T before the stream
-		 * ends: lambda is forced to 1 at rr == T (consuming the stick), and
-		 * every later round gets h = 0 — its score is excluded from the
-		 * weighted point estimate, though it still feeds the EB moments and
-		 * the per-arm stage-2 accumulators below.  This is the documented
-		 * fixed-horizon trade-off; t_planned vs t_rounds in ROSL_SUMM makes
-		 * the misestimation visible, and the sim's ±20% T-sensitivity mode
-		 * prices it.  An OVERestimate is benign: force_last consumes the
-		 * stick on the true final (short) block.
-		 */
-		if (T < rr)
-			T = rr;					/* never let T fall below r              */
-
-		if (force_last || rr >= T)
-			lambda = 1.0;			/* consume the whole remaining stick     */
-#if ROSL_WEIGHT_MODE == ROSL_WM_HADAD_CONST
-		else
-			lambda = 1.0 / (T - rr + 1.0);	/* constant allocation (Eq. 15)  */
-		(void) pi_mix;
-#else							/* ROSL_WM_HADAD_2PT */
-		else
-			lambda = two_point_lambda(st, st->round_idx, pi_mix);	/* Eq. 18 */
-#endif
-
-		if (Vpred <= 0.0)
-			Vpred = 1e-12;			/* predicted-variance floor              */
-
-		h2 = (st->stick * lambda) / Vpred;
-		if (h2 < 0.0)
-			h2 = 0.0;				/* stick underflow guard                 */
-		h = sqrt(h2);
-
-		st->stick -= h2 * Vpred;	/* == stick * lambda exactly             */
-		if (st->stick < 0.0)
-			st->stick = 0.0;
-	}
-#endif
-
-	st->est_num += h * Yhat;
-	st->weight_sum += h * round_pairs;
-	st->est_den += round_pairs;
-
-	/* moment accumulators for the self-normalized variance (all O(1)) */
-	st->mom_yy += h2 * Yhat * Yhat;
-	st->mom_yp += h2 * Yhat * round_pairs;
-	st->mom_pp += h2 * round_pairs * round_pairs;
-
-	/* within-round (noise-only) track + Lindeberg max telemetry */
-	{
-		double		hv = h2 * v_round;
-
-		st->var_noise += hv;
-		if (hv > st->max_h2v)
-			st->max_h2v = hv;
-	}
-
-	/* Empirical-Bernstein moments on the bounded per-round rate X = Yhat/pairs */
-	if (round_pairs > 0.0)
-	{
-		double		X = Yhat / round_pairs;
-		double		ax = (X < 0.0) ? -X : X;
-
-		st->eb_sx += X;
-		st->eb_sxx += X * X;
-		if (ax > st->eb_max)
-			st->eb_max = ax;
-		st->eb_n++;
-	}
-}
-
-/*
- * Finalise a completed single-M round (M x one inner K-block B_t).
- *
- * Score: the SAME full-cache AIPW estimator as finalize_round --
- *   Yhat = sum_{r in M} qhat(r)*Kn                         (baseline)
- *        + sum_{r in C} (c_t(r) - qhat(r)*Kn) / pi_t(r)    (HT correction)
- * with pi_t(r) = 1 - (1 - q_t(r))^L the frozen inclusion probability and the
- * split halves giving v = 1/4 (corrA - corrB)^2 (base cancels).
- *
- * Predicted variance (I3): Vpred = sum_{r in M} (mhat(r)^2 + nug) *
- * (1 - pi_t(r))/pi_t(r), with mhat(r) = qhat(r)*Kn and the per-arm nugget
- *
- *   nug = ROSL_VPRED_NUGGET + vbar / m
- *
- * where vbar is the running mean of past within-round noise (spread as a
- * per-arm share) and ROSL_VPRED_NUGGET is a FIXED constant of order one
- * squared match per arm.  The nugget is load-bearing: at round 1 no arm has
- * been attempted, so qhat = 0 for all of M and vbar = 0 -- without it Vpred
- * collapses to zero, the numerical floor makes h_1 astronomically larger than
- * every later weight, and the run degenerates to a single-round estimate with
- * a vacuous self-normalized interval (observed live: lindeberg_max ~ 1e13,
- * ci_within = 0).  A fixed constant is trivially H_{t-1}-measurable and keeps
- * Vpred's units commensurate across rounds, so legality is untouched; only
- * weight efficiency depends on its value, and for sparse equijoins (per-arm
- * match counts of order one) 1.0 is the right order.  Every term remains
- * H_{t-1}-measurable (frozen qhat / q_t, completed-round noise); nothing from
- * THIS round's outcome enters the weight.  That is the substitution that
- * makes the stick-breaking legal.
- *
- * Per-arm accumulators (stage-2 / M-lottery interval): for each cached r,
- * a1(r) += c_t(r)/pi_t(r) and a2(r) += (c_t(r)/pi_t(r))^2.  Non-cached arms
- * have c_t(r) = 0 and contribute nothing, matching the indicator 1[r in C_t].
- */
-static void
-finalize_round_single_m(RoslJoinState *st)
-{
-	double		base = 0.0;
-	double		corr = 0.0;
-	double		corrA = 0.0;
-	double		corrB = 0.0;
-	double		Vpred = 0.0;
-	double		pi_sum = 0.0;		/* for the two-point mix parameter       */
-	double		vbar;
-	double		nug;
-	double		Yhat;
-	double		v;
-	double		pi_mix;
-	double		Kn = (double) st->k_count;
-	double		round_pairs;
-	int			L = st->exp_cache_lim;
-	int			La = st->exp_cache_lim / 2;
-	int			Lb = st->exp_cache_lim - La;
-	int			c;
-	int			t;
-	int			n = st->m_count;
-	bool		force_last;
-
-	vbar = (st->nv > 0) ? (st->sum_v / (double) st->nv) : 0.0;
-
-	/*
-	 * Per-arm variance nugget (see header comment): a fixed unit prior plus
-	 * the per-arm share of past round-level noise.  Never zero, so round 1
-	 * (qhat == 0 everywhere, vbar == 0) gets a Vpred of the same units as
-	 * every later round instead of collapsing onto the numerical floor.
-	 */
-	nug = ROSL_VPRED_NUGGET + ((n > 0) ? vbar / (double) n : 0.0);
-
-	/*
-	 * One pass over ALL of M: the AIPW baseline term AND the predicted
-	 * variance.  pi_t(r) here is the FROZEN inclusion probability from q_t
-	 * (st->p[]), known before the round was probed, so Vpred is
-	 * H_{t-1}-measurable.
-	 */
-	for (t = 0; t < n; t++)
-	{
-		double		mhat = st->qhat[t] * Kn;
-		double		pt = st->p[t];
-		double		pi = 1.0 - pow(1.0 - pt, (double) L);
-
-		base += mhat;
-
-		if (pi > 0.0)
-		{
-			double		odds = (1.0 - pi) / pi;		/* (1-pi)/pi >= 0        */
-
-			Vpred += (mhat * mhat + nug) * odds;
-			pi_sum += pi;
-		}
-	}
-
-	/* AIPW correction + split halves + per-arm accumulators over the cache. */
-	for (c = 0; c < st->cache_count; c++)
-	{
-		int			m = st->cache_midx[c];
-		double		pm = st->p[m];
-		double		pi = 1.0 - pow(1.0 - pm, (double) L);
-		double		mhat = st->qhat[m] * Kn;
-		double		cnt = (double) st->round_match[m];
-		double		resid = cnt - mhat;
-
-		if (pi > 0.0)
-		{
-			double		ht = cnt / pi;
-
-			corr += resid / pi;
-			st->a1[m] += ht;			/* 1[r in C_t] * c_t(r) / pi_t(r)    */
-			st->a2[m] += ht * ht;
-		}
-		if (st->in_half_a[m])
-		{
-			double		pia = 1.0 - pow(1.0 - pm, (double) La);
-
-			if (pia > 0.0)
-				corrA += resid / pia;
-		}
-		if (st->in_half_b[m])
-		{
-			double		pib = 1.0 - pow(1.0 - pm, (double) Lb);
-
-			if (pib > 0.0)
-				corrB += resid / pib;
-		}
-	}
-
-	Yhat = base + corr;
-	v = 0.25 * (corrA - corrB) * (corrA - corrB);
-
-	if (Vpred <= 0.0)
-		Vpred = 1e-12;					/* degenerate-early-round floor      */
-
-	/* mean frozen inclusion prob -> two-point "stays high vs decays" mix */
-	pi_mix = (n > 0) ? (pi_sum / (double) n) : 1.0;
-
-	round_pairs = (double) n * Kn;
-
-	/*
-	 * Force lambda = 1 on the true final round so the stick is consumed (I4).
-	 * A short K-block (k_count < k_lim) is unambiguously the last block; the
-	 * exact-multiple case (final block full) is caught by round_idx >= T inside
-	 * accumulate.  Either way t_planned vs t_rounds is reported so any horizon
-	 * misestimation is visible.
-	 */
-	force_last = (st->k_count < st->k_lim);
-
-	accumulate_round_single_m(st, round_pairs, Yhat, Vpred, pi_mix, v,
-							  force_last);
-
-	/*
-	 * Steering / weight updates land strictly AFTER the round closes (I2).
-	 * reward[]/attempts[] were updated during probing / block setup but do not
-	 * feed q_{t} (which was frozen before the probe); they feed q_{t+1}.  Here
-	 * we fold the completed round's noise into the running mean used by the
-	 * NEXT round's Vpred, and advance the streamed-inner counter.
-	 */
-	st->sum_v += v;
-	st->nv++;
-	st->n_s_seen += Kn;
-
-	record_trajectory(st);
-}
-#endif							/* ROSL_SINGLE_M */
-
 /*
  * Lazily allocate the ROSL working state the first time enable_rosl is on for
  * this node.  Kept out of ExecInitNestLoop so that stock-path nodes (the
@@ -1628,12 +1463,7 @@ rosl_state_init(NestLoopState *node)
 
 	st = (RoslJoinState *) palloc0(sizeof(RoslJoinState));
 
-#if ROSL_SINGLE_M
-	/* single-M: m = ROSL_M_LIM * ROSL_M_MULT, held for the whole run */
-	st->m_lim = ROSL_M_LIM * ROSL_M_MULT;
-#else
 	st->m_lim = ROSL_M_LIM;
-#endif
 	st->k_lim = ROSL_K_LIM;
 	st->exp_cache_lim = ROSL_EXP_CACHE_LIM;
 	st->n_probes = ROSL_N_PROBES;
@@ -1664,24 +1494,6 @@ rosl_state_init(NestLoopState *node)
 			st->t_est = 1.0;
 	}
 
-#if ROSL_SINGLE_M
-	/*
-	 * Single-M horizon (I4): T = ceil(N_S / K), fixed at round 1 from the
-	 * inner planner estimate.  M is streamed against one K-block per round with
-	 * no exploration prefix, so the round count is exactly the K-block count.
-	 * Drive the stick-breaking / two-point rate off this T (t_est), and keep
-	 * t_planned for the t_planned-vs-t_rounds misestimation report.
-	 */
-	{
-		double		T = ceil(st->num_inner / (double) st->k_lim);
-
-		if (T < 1.0)
-			T = 1.0;
-		st->t_planned = T;
-		st->t_est = T;
-	}
-#endif
-
 	outerDesc = ExecGetResultType(outerPlanState(node));
 	innerDesc = ExecGetResultType(innerPlanState(node));
 
@@ -1711,21 +1523,14 @@ rosl_state_init(NestLoopState *node)
 	st->interim = (int *) palloc(sizeof(int) * st->exp_cache_lim);
 	st->cache_midx = (int *) palloc(sizeof(int) * st->exp_cache_lim);
 
-#if ROSL_SINGLE_M
-	/* per-arm (stage-2 / M-lottery) accumulators, O(m) doubles */
-	st->a1 = (double *) palloc0(sizeof(double) * st->m_lim);
-	st->a2 = (double *) palloc0(sizeof(double) * st->m_lim);
-	st->n_s_seen = 0.0;
-	st->sum_v = 0.0;
-	st->nv = 0;
-#endif
-
 	/* per-round trajectory buffers (dumped once at teardown) */
 	st->traj_round          = (long *)   palloc(sizeof(long) * ROSL_TRAJ_CAP);
 	st->traj_mean_per_pair  = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
 	st->traj_est_join       = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
 	st->traj_ci_halfwidth   = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
 	st->traj_ci_eb          = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
+	st->traj_est_eb         = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
+	st->traj_ci_mp          = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
 	st->traj_pairs_seen     = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
 	st->traj_sample_matches = (long *)   palloc(sizeof(long) * ROSL_TRAJ_CAP);
 	st->traj_elapsed_ms     = (double *) palloc(sizeof(double) * ROSL_TRAJ_CAP);
@@ -1745,6 +1550,7 @@ rosl_state_init(NestLoopState *node)
 	st->round_idx = 0;
 	st->eb_sx = st->eb_sxx = st->eb_max = 0.0;
 	st->eb_n = 0;
+	st->cs_v = st->cs_b = st->cs_bmax = 0.0;
 	st->blk_ynum = st->blk_wpair = 0.0;
 	st->blk_ya = st->blk_wa = st->blk_yb = st->blk_wb = 0.0;
 	st->blk_round = 0;
@@ -1754,12 +1560,9 @@ rosl_state_init(NestLoopState *node)
 	st->max_h2v = 0.0;
 	st->n_blocks = 0;
 	st->act_outer = 0.0;			/* exact |R|: accumulated per M-block      */
+	st->outer_exhausted = false;	/* set only where load_outer_block runs dry */
 
-#if ROSL_SINGLE_M
-	st->phase = PH_LOAD_M;			/* draw M once, then stream S in K-blocks   */
-#else
 	st->phase = PH_NEW_MBLOCK;
-#endif
 
 	/*
 	 * Seed the per-state PRNG from a mix of high-resolution time, the backend
@@ -1899,14 +1702,6 @@ ExecStockNestLoop(NestLoopState *node)
  *		guaranteed non-NULL by the dispatcher.
  * ----------------------------------------------------------------
  */
-#if ROSL_SINGLE_M
-/*
- * When the single-M driver is selected, the classic tiling driver below is
- * retained (it is the rollback path and the reference for A/B diffs) but is
- * unreferenced by the dispatcher; mark it unused so -Werror builds stay clean.
- */
-static TupleTableSlot *ExecRoslNestLoop(NestLoopState *node) pg_attribute_unused();
-#endif
 static TupleTableSlot *
 ExecRoslNestLoop(NestLoopState *node)
 {
@@ -1939,16 +1734,12 @@ ExecRoslNestLoop(NestLoopState *node)
 					if (st->m_count == 0)
 					{
 						/*
-						 * Outer exhausted: no further M-blocks, so no further
-						 * rounds will ever run.  We do NOT emit anything here:
-						 * matching Saketh's model, the only mid-stream signal
-						 * the client gets is the cursor returning NULL.  The
-						 * full estimate + trajectory is dumped once at teardown
-						 * (PrintRoslCounters in ExecEndNestLoop).  Completion is
-						 * therefore detected client-side purely by fetchone()
-						 * returning None -- no NOTICE parsing, no deadlock.
+						 * Outer exhausted: no further rounds will run.  Emit
+						 * nothing here -- log-only communication model, whose
+						 * canonical description is at PrintRoslCounters.
 						 */
 						st->phase = PH_DONE;
+						st->outer_exhausted = true;	/* act_outer == |R| now */
 						break;
 					}
 
@@ -2191,188 +1982,6 @@ ExecRoslNestLoop(NestLoopState *node)
 }
 
 
-#if ROSL_SINGLE_M
-/* ----------------------------------------------------------------
- *		ExecRoslSingleM  --  streaming single-M sampling join + estimator
- *
- *		Draws M once (the first m outer tuples, uniform under the shuffle),
- *		rewinds the inner, then streams S in K-blocks with ONE fresh cache
- *		realization per block.  Per round: freeze q_t (uniform, or joinability-
- *		weighted when ROSL_STEERING), probe the cache against the K-block
- *		emitting matches one per call, then fold the AIPW score, the predicted
- *		variance and the per-arm accumulators.  Resume cursors (probe_ci,
- *		probe_kj) track position within a round across calls.  node->rosl is
- *		guaranteed non-NULL by the dispatcher.
- * ----------------------------------------------------------------
- */
-static TupleTableSlot *
-ExecRoslSingleM(NestLoopState *node)
-{
-	RoslJoinState *st = (RoslJoinState *) node->rosl;
-	PlanState  *outerPlan = outerPlanState(node);
-	PlanState  *innerPlan = innerPlanState(node);
-	ExprState  *joinqual = node->js.joinqual;
-	ExprState  *otherqual = node->js.ps.qual;
-	ExprContext *econtext = node->js.ps.ps_ExprContext;
-
-	ResetExprContext(econtext);
-
-	for (;;)
-	{
-		CHECK_FOR_INTERRUPTS();
-
-		switch (st->phase)
-		{
-			case PH_LOAD_M:
-				{
-					/*
-					 * Draw M ONCE (I1): the first m outer tuples, which are a
-					 * uniform sample under the physical shuffle, held for the
-					 * whole execution.  reward[]/attempts[] and the per-arm
-					 * accumulators are zeroed here and NEVER reset per block --
-					 * M is fixed, so the AIPW predictor learns across all rounds.
-					 */
-					st->m_count = load_outer_block(st, outerPlan);
-					if (st->m_count == 0)
-					{
-						st->phase = PH_DONE;	/* empty outer: nothing to do  */
-						break;
-					}
-
-					/* |M| actually loaded; act_outer is a diagnostic here (the
-					 * extrapolation uses the planner num_outer = N_R, not m). */
-					st->act_outer = (double) st->m_count;
-
-					if (!st->t_started)
-					{
-						st->t_start = GetCurrentTimestamp();
-						st->t_started = true;
-					}
-
-					memset(st->reward, 0, sizeof(int) * st->m_count);
-					memset(st->attempts, 0, sizeof(int) * st->m_count);
-					memset(st->a1, 0, sizeof(double) * st->m_count);
-					memset(st->a2, 0, sizeof(double) * st->m_count);
-
-					/*
-					 * Rewind the inner and stream it once, start to finish.
-					 * Unlike the tiling driver there is no per-M-block rescan:
-					 * M is a single fixed block, so S is a single pass.
-					 */
-					ExecReScan(innerPlan);
-
-					st->phase = PH_STREAM_SBLOCK;
-					break;
-				}
-
-			case PH_STREAM_SBLOCK:
-				{
-					st->k_count = load_inner_block(st, innerPlan);
-					if (st->k_count == 0)
-					{
-						/* S exhausted: the sampling join is complete. */
-						st->phase = PH_DONE;
-						break;
-					}
-
-					/*
-					 * Freeze q_t for this round (I2).  With steering OFF the
-					 * draw is uniform (the AIPW control variate still learns);
-					 * with steering ON it is joinability-weighted and eps-
-					 * floored.  qhat_t is frozen from reward/attempts over
-					 * rounds 1..t-1 in either case (H_{t-1}-measurable, I3).
-					 */
-#if ROSL_STEERING
-					build_distribution(st, false /* eps-greedy on joinability */);
-#else
-					build_distribution(st, true /* uniform draw */);
-#endif
-					build_cumulative(st);
-					draw_and_dedup_cache(st);
-					memset(st->round_match, 0, sizeof(int) * st->m_count);
-
-					/* a(t) += |K| for every uniquely cached tuple (probed
-					 * against all of B_t); added AFTER q_t was frozen. */
-					{
-						int			c;
-
-						for (c = 0; c < st->cache_count; c++)
-							st->attempts[st->cache_midx[c]] += st->k_count;
-					}
-
-					st->probe_ci = 0;
-					st->probe_kj = 0;
-					st->phase = PH_STREAM_PROBE;
-					break;
-				}
-
-			case PH_STREAM_PROBE:
-				{
-					int			ci = st->probe_ci;
-					int			kj = st->probe_kj;
-
-					while (ci < st->cache_count)
-					{
-						int			m = st->cache_midx[ci];
-						TupleTableSlot *outerSlot = st->m_slots[m];
-
-						while (kj < st->k_count)
-						{
-							TupleTableSlot *innerSlot = st->k_slots[kj];
-
-							CHECK_FOR_INTERRUPTS();
-
-							econtext->ecxt_outertuple = outerSlot;
-							econtext->ecxt_innertuple = innerSlot;
-							kj++;			/* advance now; resume picks up here */
-							st->t_steps++;
-
-							if (ExecQual(joinqual, econtext))
-							{
-								if (otherqual == NULL ||
-									ExecQual(otherqual, econtext))
-								{
-									st->reward[m]++;		/* -> q_{t+1}        */
-									st->round_match[m]++;	/* c_t(r), this round */
-									st->sample_matches++;
-									st->probe_ci = ci;
-									st->probe_kj = kj;
-									return ExecProject(node->js.ps.ps_ProjInfo);
-								}
-								else
-									InstrCountFiltered2(node, 1);
-							}
-							else
-								InstrCountFiltered1(node, 1);
-
-							ResetExprContext(econtext);
-						}
-						kj = 0;
-						ci++;
-					}
-
-					/*
-					 * Round complete: fold the AIPW score, the I3-legal
-					 * predicted variance, and the per-arm accumulators, then
-					 * emit the trajectory row.
-					 */
-					finalize_round_single_m(st);
-
-					st->probe_ci = 0;
-					st->probe_kj = 0;
-					st->phase = PH_STREAM_SBLOCK;
-					break;
-				}
-
-			case PH_DONE:
-			default:
-				return NULL;
-		}
-	}
-}
-#endif							/* ROSL_SINGLE_M */
-
-
 /* ----------------------------------------------------------------
  *		ExecNestLoop  --  dispatch on the enable_rosl GUC
  * ----------------------------------------------------------------
@@ -2403,11 +2012,7 @@ ExecNestLoop(PlanState *pstate)
 	if (node->rosl == NULL)
 		rosl_state_init(node);
 
-#if ROSL_SINGLE_M
-	return ExecRoslSingleM(node);
-#else
 	return ExecRoslNestLoop(node);
-#endif
 }
 
 
@@ -2491,10 +2096,11 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 /* ----------------------------------------------------------------
  *		PrintRoslCounters  --  dump the full ROSL trajectory + summary
  *
- *		The single point of measurement communication, called once from
- *		ExecEndNestLoop at executor teardown.  Mirrors Saketh's
- *		PrintNodeCounters: everything goes to the server log via elog(INFO),
- *		nothing to the client mid-stream.  A test harness recovers accuracy
+ *		CANONICAL description of the log-only communication model (other
+ *		comments point here).  The single point of measurement communication,
+ *		called once from ExecEndNestLoop at executor teardown.  Mirrors
+ *		Saketh's PrintNodeCounters: everything goes to the server log via
+ *		elog(INFO), nothing to the client mid-stream.  A test harness recovers accuracy
  *		and timing by parsing the *server log* after the cursor has drained,
  *		never from the row/notice stream during the join.
  *
@@ -2519,7 +2125,7 @@ PrintRoslCounters(RoslJoinState *st)
 		elog(INFO,
 			 "ROSL_TRAJ round=%ld mean_per_pair=%.10f est_join=%.2f "
 			 "ci_halfwidth=%.2f pairs_seen=%.0f sample_matches=%ld "
-			 "elapsed_ms=%.3f ci_eb=%.2f",
+			 "elapsed_ms=%.3f ci_eb=%.2f est_eb=%.2f ci_mp=%.2f",
 			 st->traj_round[i],
 			 st->traj_mean_per_pair[i],
 			 st->traj_est_join[i],
@@ -2527,7 +2133,9 @@ PrintRoslCounters(RoslJoinState *st)
 			 st->traj_pairs_seen[i],
 			 st->traj_sample_matches[i],
 			 st->traj_elapsed_ms[i],
-			 st->traj_ci_eb[i]);
+			 st->traj_ci_eb[i],
+			 st->traj_est_eb[i],
+			 st->traj_ci_mp[i]);
 	}
 
 	if (st->traj_truncated)
@@ -2535,90 +2143,36 @@ PrintRoslCounters(RoslJoinState *st)
 			 "ROSL_TRAJ truncated: more than %d rounds; trajectory capped "
 			 "(use a smaller scale factor)", ROSL_TRAJ_CAP);
 
-#if ROSL_SINGLE_M
-	{
-		/*
-		 * Free-text mode banner (NOT parsed by the key=value tokenizer: the
-		 * string weight-mode name deliberately fails the numeric value class).
-		 * The machine-readable weight_mode integer lives on the ROSL_SUMM line.
-		 */
-		static const char *const wm_names[] = {"FLAT", "HADAD_CONST",
-											   "HADAD_2PT"};
-		int			wm = ROSL_WEIGHT_MODE;
-
-		elog(INFO,
-			 "ROSL_MODE single_m weight=%s steering=%d m=%d T_planned=%.0f",
-			 (wm >= 0 && wm <= 2) ? wm_names[wm] : "?",
-			 (int) ROSL_STEERING, st->m_count, st->t_planned);
-	}
-
-#if ROSL_EMIT_MKEYS
-	/*
-	 * Diagnostic: dump M's outer join keys in chunked lines so the harness can
-	 * compute truth_M = (N_R/m) * sum deg_S(key) and decompose the error.
-	 * ASSUMES the outer join key is attribute 1 and an integer-like by-value
-	 * type (the TPC-H equijoins this targets); the truth_M query must match.
-	 */
-	if (st->m_count > 0)
-	{
-		StringInfoData buf;
-		TupleDesc	desc = st->m_slots[0]->tts_tupleDescriptor;
-		Oid			typid = TupleDescAttr(desc, 0)->atttypid;
-		Oid			foutoid;
-		bool		typisvarlena;
-		int			j;
-		int			on_line = 0;
-
-		/* resolve the attribute-1 output function once (any type: int/text) */
-		getTypeOutputInfo(typid, &foutoid, &typisvarlena);
-
-		initStringInfo(&buf);
-		appendStringInfoString(&buf, "ROSL_MKEYS ");
-		for (j = 0; j < st->m_count; j++)
-		{
-			bool		isnull;
-			Datum		d = slot_getattr(st->m_slots[j], 1, &isnull);
-
-			if (on_line > 0)
-				appendStringInfoChar(&buf, ',');
-			if (isnull)
-				appendStringInfoString(&buf, "NULL");
-			else
-			{
-				char	   *s = OidOutputFunctionCall(foutoid, d);
-
-				appendStringInfoString(&buf, s);
-				pfree(s);
-			}
-			on_line++;
-
-			if (on_line >= ROSL_MKEYS_PER_LINE)
-			{
-				elog(INFO, "%s", buf.data);
-				resetStringInfo(&buf);
-				appendStringInfoString(&buf, "ROSL_MKEYS ");
-				on_line = 0;
-			}
-		}
-		if (on_line > 0)
-			elog(INFO, "%s", buf.data);
-		pfree(buf.data);
-	}
-#endif							/* ROSL_EMIT_MKEYS */
-#endif							/* ROSL_SINGLE_M */
-
 	/*
 	 * Final summary.  The point estimate uses the WEIGHTED denominator
-	 * weight_sum (adaptively-weighted mean), not the raw pair count est_den.
-	 * The extrapolation now uses the EXACT outer count act_outer (summed over
-	 * every M-block, so it is exact once the scan has finished) instead of the
-	 * planner's plan_rows -- the sampler only estimates a per-pair rate, and the
-	 * outer population size is known exactly by the time we get here.  The inner
-	 * size is still the planner estimate num_inner (this version rescans S per
-	 * M-block rather than materialising it, so it never counts |S| exactly; see
-	 * note in the header).  A final self-normalized CI half-width is recomputed
-	 * here from the moment accumulators (Konig-Huygens), matching the per-round
-	 * trajectory.  The `final_est_join=` token is kept verbatim for the parser.
+	 * weight_sum (equal to the round count under the default flat weights),
+	 * not the raw pair count est_den.  The extrapolation uses act_outer
+	 * instead of the planner's plan_rows, and the planner num_inner for the
+	 * inner (S is rescanned per M-block, never counted; header note (3)).
+	 *
+	 * Population-scale contract (replaces the old act_outer CAVEAT):
+	 *
+	 * Complete runs (outer_exhausted): scale by the exact scanned |R|
+	 * (act_outer); output byte-identical to prior builds except the new
+	 * trailing run_complete=1 token, so validated results reproduce.
+	 *
+	 * Truncated runs (LIMIT, client cut): fall back to the planner scale,
+	 * mu x num_outer x num_inner -- the "last safe point", equal by
+	 * construction to the last emitted ROSL_TRAJ row (exception: if the
+	 * trajectory buffer hit ROSL_TRAJ_CAP, the log's last row predates the
+	 * last completed round).  Partial in-flight rounds are still discarded,
+	 * never salvaged here.
+	 *
+	 * Residual caveat: truncated-run accuracy is bounded by the QUALITY of
+	 * the planner's num_outer estimate; the exact-|R| correction exists only
+	 * on complete runs.  Do NOT "fix" this by reintroducing the raw scanned
+	 * count -- that rescales to the scanned-R x S sub-join, biased low by
+	 * ~act_outer/|R|.  act_outer is still printed raw so consumers can
+	 * recover the seen fraction.
+	 *
+	 * A final self-normalized CI half-width is recomputed here from the
+	 * moment accumulators (Konig-Huygens), matching the per-round trajectory.
+	 * The `final_est_join=` token is kept verbatim for the parser.
 	 */
 	/*
 	 * Fold the final (still-open) M-block into the block-level SS before the
@@ -2629,17 +2183,10 @@ PrintRoslCounters(RoslJoinState *st)
 	if (st->weight_sum > 0.0)
 	{
 		double		mu = st->est_num / st->weight_sum;
-#if ROSL_SINGLE_M
-		/*
-		 * Single-M extrapolation: M is a sample of m from R, so the outer
-		 * multiplier is the FULL planner population N_R (num_outer), NOT the m
-		 * tuples actually loaded (act_outer == m here).  The estimand is
-		 * J_M = mu * N_R * N_S, an unbiased estimator of realized J.
-		 */
-		double		pop = st->num_outer * st->num_inner;
-#else
-		double		pop = st->act_outer * st->num_inner;
-#endif
+		double		pop_outer = st->outer_exhausted
+			? st->act_outer		/* exact |R|       */
+			: st->num_outer;	/* last safe point */
+		double		pop = pop_outer * st->num_inner;
 		double		est_join = mu * pop;
 		double		ss = st->mom_yy - 2.0 * mu * st->mom_yp
 			+ mu * mu * st->mom_pp;
@@ -2649,13 +2196,7 @@ PrintRoslCounters(RoslJoinState *st)
 		double		ci_split;
 		double		ci_eb;
 		double		est_eb;
-#if ROSL_SINGLE_M
-		double		ci_within;
-		double		ci_between = 0.0;
-		double		ci_total;
-		double		p_m_hat;
-		long		t_rounds;
-#endif
+		double		ci_mp = 0.0;
 
 		if (ss < 0.0)
 			ss = 0.0;
@@ -2692,27 +2233,55 @@ PrintRoslCounters(RoslJoinState *st)
 			ci_split = ci_half;
 
 		/*
-		 * Empirical-Bernstein confidence sequence (Section 8 guard band) on
-		 * the bounded per-round rate X = Yhat/pairs.  Maurer-Pontil form:
-		 *   |Xbar - mu| <= sqrt(2 Vx ln(2/alpha) / N) + (7/3) B ln(2/alpha)/N.
-		 * est_eb centres on Xbar (the unweighted per-round mean), which the
-		 * bound is stated for; the weighted mu above remains the primary point
-		 * estimate.  This interval needs no variance convergence and is the
-		 * only one here valid at a data-dependent stop (output LIMIT).
+		 * Anytime-valid guard band (Section 9): Howard et al.'s stitched
+		 * time-uniform empirical-Bernstein confidence sequence, replacing the
+		 * old fixed-n Maurer-Pontil form (kept as ci_mp behind
+		 * ROSL_KEEP_MP_BAND for one A/B release [DEV-4]).  Under the
+		 * predictable analytic range envelope (ROSL_CS_ANALYTIC_B = 1, which
+		 * assumes ROSL_CS_CMAX bounds the per-pair match multiplicity --
+		 * equijoin-on-key only) ci_eb is a PROVEN time-uniform sequence,
+		 * valid at arbitrary look times; with ROSL_CS_ANALYTIC_B = 0 the
+		 * plug-in realized range makes it a robustness heuristic instead
+		 * (the old caveat, now narrowed to that path).  est_eb centres on
+		 * Xbar, the unweighted per-round mean -- identical to the pooled mu
+		 * under the default flat weights (they differ only on the legacy
+		 * weighted path) -- and coverage should be scored against est_eb.
+		 *
+		 * Data-dependent-stop caveat (cross-referencing Section 7 change
+		 * (3) verbatim): "a LIMIT stop still biases what that prefix
+		 * represents relative to full-J".  Cross-block truth heterogeneity
+		 * means Xbar's target is the average slice rate over rounds seen SO
+		 * FAR; at an output LIMIT the interval remains time-uniformly VALID
+		 * for that prefix target -- the CS is interval-valid, NOT
+		 * center-corrective -- so an escape late in a capped run reflects
+		 * the known center bias, not a CS failure.
 		 */
-		if (st->eb_n > 1)
+		if (st->eb_n >= 1)
 		{
 			double		xb = st->eb_sx / (double) st->eb_n;
-			double		vx = st->eb_sxx / (double) st->eb_n - xb * xb;
-			double		lg = 3.6888794541139363;	/* ln(2/0.05) */
-			double		half_rate;
+			double		b = ROSL_CS_ANALYTIC_B ? st->cs_bmax : st->eb_max;
+			double		half = cs_boundary(st->cs_v, b, ROSL_CS_ALPHA / 2.0,
+										   st->eb_n);
 
-			if (vx < 0.0)
-				vx = 0.0;
-			half_rate = sqrt(2.0 * vx * lg / (double) st->eb_n)
-				+ (7.0 / 3.0) * st->eb_max * lg / (double) st->eb_n;
-			ci_eb = half_rate * pop;
+			ci_eb = half * pop;				/* token name kept */
 			est_eb = xb * pop;
+
+#if ROSL_KEEP_MP_BAND
+			/* Legacy fixed-n Maurer-Pontil band, one release only [DEV-4]:
+			 *   |Xbar - mu| <= sqrt(2 Vx ln(2/a) / N) + (7/3) B ln(2/a)/N. */
+			if (st->eb_n > 1)
+			{
+				double		vx = st->eb_sxx / (double) st->eb_n - xb * xb;
+				double		lg = 3.6888794541139363;	/* ln(2/0.05) */
+				double		half_mp;
+
+				if (vx < 0.0)
+					vx = 0.0;
+				half_mp = sqrt(2.0 * vx * lg / (double) st->eb_n)
+					+ (7.0 / 3.0) * st->eb_max * lg / (double) st->eb_n;
+				ci_mp = half_mp * pop;
+			}
+#endif
 		}
 		else
 		{
@@ -2720,87 +2289,15 @@ PrintRoslCounters(RoslJoinState *st)
 			est_eb = est_join;
 		}
 
-#if ROSL_SINGLE_M
-		/*
-		 * Stage-2 (M-lottery) interval.  M is a uniform sample of m from N_R,
-		 * so J_M differs from realized J by a one-shot finite-population
-		 * sampling error with variance (1 - m/N_R) * S2_deg / m.  Estimate the
-		 * between-arm degree variance from the per-arm HT estimates
-		 * Qhat(r) = a1(r)/N_S, subtracting the mean within-arm estimation noise
-		 * nu(r) so only true heterogeneity remains, then lift to the J_M scale.
-		 *   ci_within : the self-normalized (Hadad) half-width (== ci_half).
-		 *   ci_between: the M-lottery half-width.
-		 *   ci_total  : sqrt(ci_within^2 + ci_between^2), the headline interval
-		 *               whose coverage against realized J is scored.  It is
-		 *               fixed-horizon, hence valid only on exhausted runs (I5);
-		 *               ci_within alone is EXPECTED to under-cover on skewed
-		 *               cells by exactly the stage-2 term (gate G2).
-		 */
-		ci_within = ci_half;
-		p_m_hat = mu;
-		t_rounds = st->round_idx;
-		{
-			int			mm = st->m_count;
-			double		ns = (st->n_s_seen > 0.0) ? st->n_s_seen : 1.0;
-			double		Tr = (double) t_rounds;
-			double		qbar = 0.0;
-			double		s2q = 0.0;
-			double		mean_nu = 0.0;
-			double		s2_between;
-			double		fpc;
-			double		var2;
-			int			r;
-
-			for (r = 0; r < mm; r++)
-				qbar += st->a1[r] / ns;
-			if (mm > 0)
-				qbar /= (double) mm;
-
-			for (r = 0; r < mm; r++)
-			{
-				double		qr = st->a1[r] / ns;
-				double		dq = qr - qbar;
-				double		ssr = st->a2[r] - (st->a1[r] * st->a1[r]) / Tr;
-				double		nu;
-
-				s2q += dq * dq;
-
-				if (ssr < 0.0)
-					ssr = 0.0;			/* FP-noise clamp                     */
-				if (Tr > 1.0)
-					nu = (Tr / (Tr - 1.0)) * ssr / (ns * ns);
-				else
-					nu = 0.0;
-				mean_nu += nu;
-			}
-			s2q = (mm > 1) ? s2q / (double) (mm - 1) : 0.0;
-			if (mm > 0)
-				mean_nu /= (double) mm;
-
-			s2_between = s2q - mean_nu;		/* de-noised between-arm variance  */
-			if (s2_between < 0.0)
-				s2_between = 0.0;
-
-			fpc = 1.0 - (double) mm / st->num_outer;	/* finite-pop correction */
-			if (fpc < 0.0)
-				fpc = 0.0;
-			if (fpc > 1.0)
-				fpc = 1.0;
-
-			var2 = (mm > 0) ? (fpc * s2_between / (double) mm) : 0.0;
-			ci_between = 1.96 * pop * sqrt(var2);
-		}
-		ci_total = sqrt(ci_within * ci_within + ci_between * ci_between);
-#endif
-
 		/*
 		 * Noise-only interval from the split-cache within-round variance,
 		 * plus the decomposition diagnostic the clustered CI needs:
 		 *   het_ratio = clustered SS / var_noise  --  ~1 means the clustered
 		 * residuals are mostly estimator noise (clustered CI trustworthy);
-		 * >>1 means cross-block truth heterogeneity dominates (clustered CI
-		 * over-wide by roughly that factor).  lindeberg_max certifies no
-		 * single round dominates the noise (Fix-3 telemetry).
+		 * >>1 means cross-block truth heterogeneity dominates, inflating the
+		 * clustered CI's WIDTH by roughly sqrt(het_ratio) (het_ratio is a
+		 * variance ratio).  lindeberg_max certifies no single round dominates
+		 * the noise (Fix-3 telemetry).
 		 */
 		{
 			double		ci_noise = 1.96 * pop
@@ -2815,17 +2312,6 @@ PrintRoslCounters(RoslJoinState *st)
 				het_ratio = (st->clust_ss * g / (g - 1.0)) / st->var_noise;
 			}
 
-#if ROSL_SINGLE_M
-			/*
-			 * Single-M summary: the classic tokens (final_est_join, ci_*, ...)
-			 * are kept verbatim so existing parsers keep working, and the new
-			 * single-M tokens are appended.  All new values are NUMERIC, so the
-			 * worker's key=value tokenizer picks them up with no code change;
-			 * weight_mode is emitted as the integer code (0 FLAT / 1 CONST /
-			 * 2 2PT).  n_blocks/ci_clust/ci_split are degenerate here (one fixed
-			 * M-block) and fall back to ci_within; the charts prefer
-			 * ci_eb > ci_total > ci_halfwidth in this mode.
-			 */
 			elog(INFO,
 				 "ROSL_SUMM final_est_join=%.2f ci_halfwidth=%.2f "
 				 "ci_clust=%.2f ci_split=%.2f ci_eb=%.2f est_eb=%.2f "
@@ -2833,34 +2319,22 @@ PrintRoslCounters(RoslJoinState *st)
 				 "n_blocks=%ld "
 				 "rounds=%ld sample_matches=%ld pairs_seen=%.0f t_steps=%ld "
 				 "act_outer=%.0f num_outer=%.0f num_inner=%.0f "
-				 "weight_mode=%d m_size=%d ci_within=%.2f ci_between=%.2f "
-				 "ci_total=%.2f p_m_hat=%.10f t_rounds=%ld t_planned=%.0f",
+				 "ci_mp=%.2f cs_b=%.6g cs_v=%.6g run_complete=%d",
 				 est_join, ci_half, ci_clust, ci_split, ci_eb, est_eb,
 				 ci_noise, het_ratio, st->max_h2v,
 				 st->n_blocks, st->rounds, st->sample_matches, st->est_den,
 				 st->t_steps, st->act_outer, st->num_outer, st->num_inner,
-				 (int) ROSL_WEIGHT_MODE, st->m_count, ci_within, ci_between,
-				 ci_total, p_m_hat, t_rounds, st->t_planned);
-#else
-			elog(INFO,
-				 "ROSL_SUMM final_est_join=%.2f ci_halfwidth=%.2f "
-				 "ci_clust=%.2f ci_split=%.2f ci_eb=%.2f est_eb=%.2f "
-				 "ci_noise=%.2f het_ratio=%.2f lindeberg_max=%.3e "
-				 "n_blocks=%ld "
-				 "rounds=%ld sample_matches=%ld pairs_seen=%.0f t_steps=%ld "
-				 "act_outer=%.0f num_outer=%.0f num_inner=%.0f",
-				 est_join, ci_half, ci_clust, ci_split, ci_eb, est_eb,
-				 ci_noise, het_ratio, st->max_h2v,
-				 st->n_blocks, st->rounds, st->sample_matches, st->est_den,
-				 st->t_steps, st->act_outer, st->num_outer, st->num_inner);
-#endif
+				 ci_mp, st->cs_bmax, st->cs_v,
+				 st->outer_exhausted ? 1 : 0);
 		}
 	}
 	else
 		elog(INFO,
 			 "ROSL_SUMM final_est_join=0.00 rounds=0 sample_matches=%ld "
+			 "run_complete=%d "
 			 "(no completed rounds: outer empty or join produced no pairs)",
-			 st->sample_matches);
+			 st->sample_matches,
+			 st->outer_exhausted ? 1 : 0);
 }
 
 
@@ -2918,15 +2392,13 @@ ExecEndNestLoop(NestLoopState *node)
 		pfree(st->in_half_b);
 		pfree(st->interim);
 		pfree(st->cache_midx);
-#if ROSL_SINGLE_M
-		pfree(st->a1);
-		pfree(st->a2);
-#endif
 		pfree(st->traj_round);
 		pfree(st->traj_mean_per_pair);
 		pfree(st->traj_est_join);
 		pfree(st->traj_ci_halfwidth);
 		pfree(st->traj_ci_eb);
+		pfree(st->traj_est_eb);
+		pfree(st->traj_ci_mp);
 		pfree(st->traj_pairs_seen);
 		pfree(st->traj_sample_matches);
 		pfree(st->traj_elapsed_ms);
@@ -2966,11 +2438,7 @@ ExecReScanNestLoop(NestLoopState *node)
 	/* reset the ROSL state machine + running estimator, if allocated */
 	if (st != NULL)
 	{
-#if ROSL_SINGLE_M
-		st->phase = PH_LOAD_M;			/* redraw M and restream S              */
-#else
 		st->phase = PH_NEW_MBLOCK;
-#endif
 		st->m_count = 0;
 		st->k_count = 0;
 		st->p_count = 0;
@@ -2992,6 +2460,7 @@ ExecReScanNestLoop(NestLoopState *node)
 		st->round_idx = 0;
 		st->eb_sx = st->eb_sxx = st->eb_max = 0.0;
 		st->eb_n = 0;
+		st->cs_v = st->cs_b = st->cs_bmax = 0.0;
 		st->blk_ynum = st->blk_wpair = 0.0;
 		st->blk_ya = st->blk_wa = st->blk_yb = st->blk_wb = 0.0;
 		st->blk_round = 0;
@@ -3001,20 +2470,7 @@ ExecReScanNestLoop(NestLoopState *node)
 		st->max_h2v = 0.0;
 		st->n_blocks = 0;
 		st->act_outer = 0.0;			/* exact |R| accumulator restarts       */
-
-#if ROSL_SINGLE_M
-		/*
-		 * Single-M per-arm accumulators and running-noise state restart.  The
-		 * a1/a2 arrays are re-zeroed here (and again in PH_LOAD_M for m_count)
-		 * so a rescanning parent gets a clean stage-2 estimate.  t_planned is a
-		 * fixed horizon from the planner estimate and is NOT reset.
-		 */
-		memset(st->a1, 0, sizeof(double) * st->m_lim);
-		memset(st->a2, 0, sizeof(double) * st->m_lim);
-		st->n_s_seen = 0.0;
-		st->sum_v = 0.0;
-		st->nv = 0;
-#endif
+		st->outer_exhausted = false;	/* re-scan: completion must recertify   */
 
 		st->rounds = 0;
 		st->t_steps = 0;
