@@ -140,6 +140,37 @@ v_r = ¼ (corrA − corrB)²     (base cancels in the difference of two AIPW sco
 weight** — it feeds only the interval-side accumulators — and it is a mild
 **upper** gauge of the full-cache score's own noise, so it errs conservative.
 
+### 1.1 Interval families at a glance
+
+The node emits several intervals; they differ in **which build produces them**,
+**what kind of validity they have**, and **whether that validity survives a
+data-dependent stop** (a mid-run look or an output `LIMIT`). At a high level:
+
+| Interval | Produced in | Validity type | Survives a data-dependent stop? |
+|----------|-------------|---------------|---------------------------------|
+| `ci_halfwidth` (= single-M `ci_within`) | both drivers | fixed-horizon, asymptotic-normal | No — score only on `run_complete=1` |
+| `ci_between`, `ci_total` | single-M only | fixed-horizon (adds the M-lottery stage) | No — score only on `run_complete=1` |
+| `ci_eb` | both drivers | fixed-`n` (empirical-Bernstein) | No — width indicator only |
+
+Three scope facts are easy to miss and worth stating plainly:
+
+- **No interval in this build is valid at a data-dependent stop.** Everything
+  here is either fixed-horizon or fixed-`n`; none is time-uniform. At a `LIMIT`
+  or a mid-run look, read the point estimate's *last safe point* (the
+  `run_complete=0` teardown; §3) and score CI coverage on complete runs only.
+  (An anytime-valid confidence sequence would close this gap; it is a separate
+  track, not present here.)
+- **The shipped default build computes neither the two-stage CI nor the
+  adaptive weights.** With `ROSL_SINGLE_M = 0` and `ROSL_WEIGHT_MODE = FLAT`
+  (both defaults), the `ci_within`/`ci_between`/`ci_total` family and the Hadad
+  **weights** are compiled out; they require the single-M build (and, for the
+  weights, a non-`FLAT` mode).
+- **"Implemented" is not "validated to cover."** Every interval here is present
+  and formula-faithful, but whether each achieves its nominal coverage is an
+  empirical question settled by the sweep harness and the §7 decision gate, not
+  asserted here. Coverage claims in this document are targets to verify, not
+  guarantees.
+
 ---
 
 ## 2. The classic tiling estimator (`ROSL_SINGLE_M = 0`, default)
@@ -192,11 +223,38 @@ empirical-Bernstein guard-band half-width (running width indicator only — not 
 coverage-scorable interval mid-run). Trajectory `Ĵ` and both widths use the
 planner's `num_outer · num_inner` scaling.
 
+If the run exceeded `ROSL_TRAJ_CAP` rounds, a marker line follows the dump:
+
+```
+ROSL_TRAJ truncated: more than <cap> rounds; trajectory capped …
+```
+
+When this fires, the log's last trajectory row predates the last completed
+round, which matters for the last-safe-point equality in the population-scale
+contract below.
+
 **Final summary** (one line at teardown; classic driver):
 
 ```
-ROSL_SUMM final_est_join=<Ĵ> ci_halfwidth=<half> ci_clust=<half> ci_split=<half> ci_eb=<half> est_eb=<Ĵ_eb> ci_noise=<half> het_ratio=<r> lindeberg_max=<x> n_blocks=<G> rounds=<n> sample_matches=<m> pairs_seen=<est_den> t_steps=<t> act_outer=<|R| exact> num_outer=<|R| planner> num_inner=<|S| planner>
+ROSL_SUMM final_est_join=<Ĵ> ci_halfwidth=<half> ci_clust=<half> ci_split=<half> ci_eb=<half> est_eb=<Ĵ_eb> ci_noise=<half> het_ratio=<r> lindeberg_max=<x> n_blocks=<G> rounds=<n> sample_matches=<m> pairs_seen=<est_den> t_steps=<t> act_outer=<|R| scanned, raw> num_outer=<|R| planner> num_inner=<|S| planner> run_complete=<0|1>
 ```
+
+`run_complete` is always the **last** token, so positional eyeballing of the
+pre-existing tokens is undisturbed.
+
+**Population-scale contract** (tiling driver):
+
+- `run_complete=1` (the outer scan ran dry): the estimate and every CI are
+  scaled by the **exact** scanned `act_outer · num_inner`.
+- `run_complete=0` (an output `LIMIT` or client cut stopped the run early): the
+  teardown scale falls back to the planner `num_outer · num_inner`, making
+  `final_est_join` equal **by construction** to the last emitted `ROSL_TRAJ`
+  row — the last completed round, the *last safe point*. Rescaling to the
+  scanned `act_outer` instead would price only the scanned-`R × S` sub-join and
+  bias the estimate low by roughly the seen fraction `act_outer/|R|`, so it is
+  deliberately not done. `act_outer` is still printed raw so a consumer can
+  recover the seen fraction (`act_outer / num_outer`). `|S|` stays the planner's
+  `num_inner`, since this mode rescans `S` per M-block.
 
 **Single-M** appends its own numeric tokens to the same line (§5.4) and prints
 a free-text mode banner:
@@ -212,8 +270,13 @@ string weight-mode name fails the numeric value class); the machine-readable
 If the outer relation was empty or no round completed:
 
 ```
-ROSL_SUMM final_est_join=0.00 rounds=0 sample_matches=<m> (no completed rounds: outer empty or join produced no pairs)
+ROSL_SUMM final_est_join=0.00 rounds=0 sample_matches=<m> run_complete=<0|1> (no completed rounds: outer empty or join produced no pairs)
 ```
+
+This degenerate branch is exactly where a `LIMIT` firing before *any* round
+completes lands — the most-truncated case — so it carries `run_complete` too,
+as the last `key=value` pair (the trailing prose is not of `key=value` shape and
+does not confuse the tokenizer).
 
 ### Cluster requirements
 
@@ -259,10 +322,17 @@ results — the guard takes priority over the GUC.
   variance the intervals report.
 - **Plan-shape guard.** Falls back to the stock join rather than sampling under
   an assumption that doesn't hold.
-- **Exact outer population** (tiling mode). The summary uses `act_outer` — the
-  exact sum of every M-block's size — for `|R|`; `|S|` stays the planner's
+- **Completion-conditional outer population** (tiling mode). A dedicated
+  `outer_exhausted` flag is set **only** where `load_outer_block` runs dry. The
+  summary uses `act_outer` — the exact sum of every M-block's size — for `|R|`
+  **only when that flag is set** (`run_complete=1`); on a truncated run
+  (`run_complete=0`) it falls back to the planner `num_outer`, because rescaling
+  to the scanned `act_outer` would price only the scanned-`R × S` sub-join and
+  bias the estimate low by roughly the seen fraction. `|S|` stays the planner's
   `num_inner`, since this mode rescans `S` per M-block. (In single-M `act_outer`
-  is just `m` and is a diagnostic — see §5.4.)
+  is just `m` and is a diagnostic: the scale is the planner `num_outer`
+  unconditionally, and the flag exists only to set `run_complete` — so complete
+  single-M runs forgo the exact-`|R|` correction. See §5.4.)
 
 ### Tunable constants
 
@@ -328,7 +398,12 @@ Enforced legality invariants:
   consumed even if `T` was misestimated.
 - **I5** — the Hadad self-normalized CI is fixed-horizon: `ci_within` /
   `ci_total` are valid (and coverage-scored) only on runs that exhaust the
-  stream. The EB interval remains primary at a data-dependent stop.
+  stream (`run_complete=1`). At a data-dependent stop **no** interval in this
+  build carries a guarantee — `ci_eb` is fixed-`n`, valid marginally at a
+  pre-specified round count but not uniformly over the trajectory, so it is
+  emitted as the least-bad width indicator, not a stopping-valid interval. (An
+  anytime-valid confidence sequence, which *would* be valid at a data-dependent
+  stop, is a separate track not present in this build.)
 
 ### 5.2 Pooling weights — three modes (`ROSL_WEIGHT_MODE`)
 
@@ -367,6 +442,29 @@ legality is untouched — only weight efficiency depends on its value.
 
 ### 5.3 Per-arm accumulators and the two-stage interval
 
+**Sampling units (read first — "unit" is overloaded here).** The two-stage
+interval is a textbook two-stage / cluster-sampling variance, and it rests on
+two different notions of "unit" that must be kept apart:
+
+- **Primary sampling units = the outer tuples `r ∈ M` (the "arms").** `M` is a
+  uniform *without-replacement* draw of `m` primary units from the `N_R`-tuple
+  outer population, each held fixed for the whole run (I1). The between-arm
+  variability among these `m` units is what the M-lottery (stage-2) interval
+  prices, and it is why that stage carries the `(1 − m/N_R)` finite-population
+  correction — the without-replacement correction for drawing `m` of `N_R`
+  primary units.
+- **Rounds `t = 1 … T` (K-blocks) are the replication / time axis, not primary
+  units.** Each round estimates a little more of every arm's inner degree
+  `deg_S(r)`; `ci_within` accumulates *across rounds*, within the fixed `M`.
+  Rounds are the second sampling stage in the classical sense (sampling *within*
+  a primary unit), never a fresh primary-unit draw.
+
+So the decomposition is: **stage 1 is within a primary unit** (estimate each
+arm's `deg_S(r)` from its rounds), and **stage 2 is between primary units** (the
+arm set `M` is only a sample of `R`, so the arm-set truth `J_M` differs from the
+realized `J`). `ci_within` is the across-rounds interval; `ci_between` is the
+across-arms interval.
+
 `M` is fixed, so `reward[]`/`attempts[]` accumulate across **every** round and
 feed the frozen predictor. Two O(m) per-arm accumulators support the M-lottery
 interval, updated in `finalize_round_single_m` over the cache:
@@ -379,17 +477,27 @@ A2(r) += (1[r ∈ C_t] · c_t(r)/π_t(r))²       →  within-arm noise ν̂(r)
 Memory is O(m) doubles, bounded by the same `work_mem` budget that sizes `M`.
 `PrintRoslCounters` assembles the two-stage interval (`pop = num_outer · num_inner`):
 
-- **Stage 1 (within-M):** `ci_within = ci_halfwidth`, the existing
-  König–Huygens self-normalized (Hadad Eq. 11) half-width re-based on the
-  weighted rounds. `p_m_hat = μ̂`.
-- **Stage 2 (M-lottery):**
-  `S²_between = max(0, sample-var_r(Q̂(r)) − mean_r ν̂(r))` (de-noised
-  between-arm degree variance), `Var_stage2 = (1 − m/N_R)·S²_between/m`,
+- **Stage 1 (within a primary unit, across rounds):** `ci_within =
+  ci_halfwidth`, the existing König–Huygens self-normalized (Hadad Eq. 11)
+  half-width re-based on the weighted rounds. The `1.96` is a normal quantile:
+  the Hadad adaptively-weighted estimator is asymptotically normal, so this
+  interval is an asymptotic (and fixed-horizon) one, which is exactly why it is
+  coverage-scored on exhausted runs only (I5). `p_m_hat = μ̂`.
+- **Stage 2 (M-lottery, between primary units):**
+  `S²_between = max(0, sample-var_r(Q̂(r)) − mean_r ν̂(r))`. The raw between-arm
+  spread `sample-var_r(Q̂(r))` overstates the true between-primary-unit variance
+  because each `Q̂(r)` is itself only an estimate; subtracting the mean
+  within-arm estimation noise `mean_r ν̂(r)` de-noises it back to the true spread
+  (the standard two-stage identity: observed between-unit variance = true
+  between-unit variance + mean within-unit sampling variance).
+  `Var_stage2 = (1 − m/N_R)·S²_between/m` applies the without-replacement
+  finite-population correction for the `m`-of-`N_R` primary-unit draw;
   `ci_between = 1.96·pop·√Var_stage2`.
 - **Total:** `ci_total = √(ci_within² + ci_between²)` — the headline interval
-  whose coverage against realized `J` is the number to score. `ci_within` alone
-  is **expected** to under-cover on skewed cells by exactly the stage-2 term;
-  that under-coverage is a prediction to verify, not a bug.
+  whose coverage against realized `J` (on exhausted runs) is the number to
+  score. `ci_within` alone is **expected** to under-cover on skewed cells by
+  exactly the stage-2 term; that under-coverage is a prediction to verify, not a
+  bug.
 
 `n_blocks` / `ci_clust` / `ci_split` are degenerate here (one fixed M-block) and
 fall back to `ci_within`. In the single-M mode the accuracy charts prefer
@@ -403,11 +511,16 @@ worker's key=value tokenizer picks them up with no code change), keeping the
 classic tokens verbatim:
 
 ```
-… weight_mode=<0 FLAT|1 CONST|2 2PT> m_size=<m> ci_within=<half> ci_between=<half> ci_total=<half> p_m_hat=<p̂_M> t_rounds=<T actual> t_planned=<T planner>
+… weight_mode=<0 FLAT|1 CONST|2 2PT> m_size=<m> ci_within=<half> ci_between=<half> ci_total=<half> p_m_hat=<p̂_M> t_rounds=<T actual> t_planned=<T planner> run_complete=<0|1>
 ```
 
-`act_outer` is `m` (a diagnostic — the extrapolation scales by the planner
-`num_outer = N_R`, not `m`). `t_planned` vs `t_rounds` makes any horizon
+These sit before the trailing `run_complete` (always the last token, shared with
+the classic block). `act_outer` is `m` (a diagnostic — the extrapolation scales
+by the planner `num_outer = N_R`, not `m`, on complete *and* truncated runs
+alike, so no truncation-conditional scale switch applies in this mode;
+`run_complete` still classifies whether `S` was streamed to exhaustion, which is
+what gates the fixed-horizon `ci_within`/`ci_total` coverage scoring under I5).
+`t_planned` vs `t_rounds` makes any horizon
 misestimation visible: if the planner underestimated `N_S`, rounds past `T` get
 `h = 0` (excluded from the weighted point estimate but still folded into the EB
 moments and the stage-2 accumulators); an overestimate is benign because
@@ -491,7 +604,9 @@ SET log_min_messages = info;      -- estimator dump reaches the server log
   grouped SQL against the same schema, and emits the decomposition columns
   `truth_m`, `err_within` (`final_est − truth_M`), `err_between`
   (`truth_M − truth`). The summary schema also gains `weight_mode`, `m_size`,
-  `ci_within`, `ci_between`, `ci_total`, `ci_total_covers_truth`.
+  `ci_within`, `ci_between`, `ci_total`, `ci_total_covers_truth`, plus the
+  numeric `run_complete` (0/1 truncation classifier), all picked up by the
+  existing `key=value` tokenizer with no worker change.
 - **`accuracy_charts.py`** — plots estimator error versus fraction of true
   output sampled, prefers CI bands in the order `ci_eb > ci_total >
   ci_halfwidth` (`ci_total` is fixed-horizon; the `--ci_col` override and the
@@ -513,12 +628,17 @@ worker, and chart script:
 | Q12   | 1,000       |
 | Q15   | 43,800      |
 
-> **Coverage caveat.** In the tiling mode, runs that hit these LIMITs stop on a
-> rule correlated with the estimand and bias the point estimate low, so
-> coverage-validation sweeps for `ci_halfwidth` should run without output
-> limits. In single-M, output is confined to `M × S`, so paper-cap runs mostly
-> end `exhausted` — conveniently the regime where the fixed-horizon `ci_within`
-> / `ci_total` intervals are valid (I5).
+> **Coverage caveat.** Runs that hit these LIMITs stop on a rule correlated with
+> the estimand. In the tiling mode the teardown summary now degrades gracefully:
+> it reports the **last safe point** (planner-scaled, equal to the last
+> `ROSL_TRAJ` row) and flags itself with `run_complete=0`, instead of the raw
+> scanned-fraction rescale that would bias the point estimate low by
+> ~`act_outer/|R|`. The intervals here are all fixed-horizon (`ci_halfwidth`) or
+> fixed-`n` (`ci_eb`), so none carries a guarantee at a data-dependent stop:
+> score their coverage on `run_complete=1` runs only. In single-M, output is
+> confined to `M × S`, so paper-cap runs mostly end `exhausted` — conveniently
+> the regime where the fixed-horizon `ci_within` / `ci_total` intervals are
+> valid (I5).
 
 ### Trajectory CSV columns
 
@@ -548,7 +668,10 @@ catastrophic cell.
 
 Everything lands behind `ROSL_SINGLE_M` / `ROSL_WEIGHT_MODE` with FLAT tiling as
 the untouched default, all schema changes are additive, and the legacy A/B paths
-stay compiled out but preserved — **rollback is a define flip**.
+stay compiled out but preserved — **rollback is a define flip**. The
+completion-conditional teardown scaling (§3/§4) has no define of its own but is
+output-inert on complete runs: byte-identical to a pre-fix build except the
+trailing `run_complete=1` token, so previously validated results reproduce.
 
 ---
 
