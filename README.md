@@ -12,7 +12,9 @@ Two cross-cutting upgrades over the older build documented here:
 - **Howard anytime-valid confidence sequence** (`ROSL_HOWARD`, default on) — a
   time-uniform interval, emitted per round and at teardown, that carries a real
   coverage guarantee at data-dependent stops (mid-run looks, output `LIMIT`s),
-  which none of the fixed-horizon/fixed-n intervals do. See §1.1.
+  which none of the fixed-horizon/fixed-n intervals do. The guarantee is carried
+  by the **strict (predictable) track**; a second, plug-in track is emitted
+  alongside as a width-matched diagnostic. See §1.1.
 - **Truncation-safe teardown scaling** (tiling driver) — a run stopped early no
   longer rescales the final summary to the scanned sub-join; it falls back to
   the last completed round's estimate (the "last safe point"), and every
@@ -166,11 +168,19 @@ round alongside the EB moments:
   stitched boundary with geometric spacing `ROSL_HCS_ETA = 2.0`, polynomial
   exponent `ROSL_HCS_S = 1.4`, origin `ROSL_HCS_V0 = 1.0`, at two-sided level
   `ROSL_HCS_ALPHA = 0.05` (α/2 per side).
-- **Track A** (`ci_hcs`) uses the plug-in range bound `hcs_c` (running max
-  observed per-round range) — the headline anytime interval.
-- **Track B** (`ci_hcs_strict`) uses the **pre-round predictable** ε-floor
-  range envelope `hcs_c_pred` (`H_{t-1}`-measurable, hence fully valid with no
-  plug-in step; expected wider).
+- **Track B** (`ci_hcs_strict`, the guarantee-bearing track) uses the
+  **pre-round predictable** ε-floor range envelope `hcs_c_pred`
+  (`H_{t-1}`-measurable). Because every ingredient is fixed before the round's
+  cache is drawn, this track is a fully valid confidence sequence with no
+  plug-in step — **this is the interval that actually carries the anytime
+  coverage guarantee.** It is expected to be the wider of the two.
+- **Track A** (`ci_hcs`) substitutes a **plug-in** range bound `hcs_c` (the
+  running max *observed* per-round range) for the predictable envelope. Because
+  that bound is read off realized data, Track A is not itself a rigorous
+  sequence; it is a **width-matched diagnostic** (comparable in width to `ci_eb`)
+  and the default A/B comparison track, not the object the guarantee rests on.
+  Do not advertise `ci_hcs` alone as covering the estimand at a stop — read it
+  next to Track B.
 
 Every `ROSL_TRAJ` row carries both half-widths, so **each per-round row is a
 coverage-scorable time-uniform interval** — the interval a mid-run look or a
@@ -178,10 +188,40 @@ LIMIT-stopped run should read. Teardown recomputes both against the teardown
 population scale (`ci_hcs`, `ci_hcs_strict`, centre `est_hcs`) and dumps the
 raw accumulators (`hcs_v`, `hcs_c`, `hcs_c_pred`) for C-vs-simulator parity
 diffs. `ci_eb` stays emitted for A/B continuity with prior runs, but at any
-data-dependent stop the interval with the actual guarantee is `ci_hcs`.
+data-dependent stop the interval with the rigorous guarantee is Track B
+`ci_hcs_strict`; `ci_hcs` (Track A) is read alongside it as a width-matched
+diagnostic, never on its own.
 
 `ROSL_HOWARD = 0` compiles the entire track out (same convention as
 `ROSL_SINGLE_M`) and reproduces the previous build's output byte-for-byte.
+
+### 1.2 Interval families at a glance
+
+The node emits several intervals; they differ in **which build produces them**,
+**what kind of validity they have**, and **whether that validity survives a
+data-dependent stop** (a mid-run look or an output `LIMIT`). At a high level:
+
+| Interval | Produced in | Validity type | Survives a data-dependent stop? |
+|----------|-------------|---------------|---------------------------------|
+| `ci_halfwidth` (= single-M `ci_within`) | both drivers | fixed-horizon, asymptotic-normal | No — score only on `run_complete=1` |
+| `ci_between`, `ci_total` | single-M only | fixed-horizon (adds the M-lottery stage) | No — score only on `run_complete=1` |
+| `ci_eb` | both drivers | fixed-`n` | No — width indicator only |
+| `ci_hcs_strict` (Track B) | both, `ROSL_HOWARD=1` | anytime, predictable | **Yes — the guarantee-bearing interval** |
+| `ci_hcs` (Track A) | both, `ROSL_HOWARD=1` | anytime, **plug-in** | Diagnostic only — width-matched to Track B |
+
+Two scope facts are easy to miss and worth stating plainly:
+
+- **The shipped default build computes only the Howard CS as a stopping-safe
+  interval.** With `ROSL_SINGLE_M = 0` and `ROSL_WEIGHT_MODE = FLAT` (both
+  defaults), the two-stage `ci_within`/`ci_between`/`ci_total` family and the
+  adaptive Hadad **weights** are compiled out; they require the single-M build
+  (and, for the weights, a non-`FLAT` mode). The Howard track is the only
+  data-dependent-stop-valid interval present by default.
+- **"Implemented" is not "validated to cover."** Every interval here is
+  present and formula-faithful, but whether each achieves its nominal coverage
+  is an empirical question settled by the sweep harness and the §7 decision
+  gate, not asserted here. Coverage claims in this document are targets to
+  verify, not guarantees.
 
 ---
 
@@ -236,9 +276,11 @@ ROSL_TRAJ round=<n> mean_per_pair=<μ̂> est_join=<Ĵ> ci_halfwidth=<half> pairs
 (`ci_hcs`/`ci_hcs_strict` present when `ROSL_HOWARD = 1`.) `ci_halfwidth` is
 the running self-normalized diagnostic CI; `ci_eb` is the empirical-Bernstein
 guard-band half-width (fixed-n — a width indicator only, not coverage-scorable
-mid-run); `ci_hcs` is the Howard time-uniform half-width — **the** interval a
-mid-run look or LIMIT-stopped run should read (§1.1). Trajectory `Ĵ` and all
-widths use the planner's `num_outer · num_inner` scaling.
+mid-run); `ci_hcs`/`ci_hcs_strict` are the Howard time-uniform half-widths —
+**the** intervals a mid-run look or LIMIT-stopped run should read (§1.1), with
+the rigorous guarantee carried by the strict Track B (`ci_hcs_strict`) and
+`ci_hcs` (Track A) read alongside as a width-matched diagnostic. Trajectory `Ĵ`
+and all widths use the planner's `num_outer · num_inner` scaling.
 
 If the run exceeded `ROSL_TRAJ_CAP` rounds, a marker line follows the dump:
 
@@ -427,8 +469,9 @@ Enforced legality invariants:
 - **I5** — the Hadad self-normalized CI is fixed-horizon: `ci_within` /
   `ci_total` are valid (and coverage-scored) only on runs that exhaust the
   stream (`run_complete=1`). At a data-dependent stop the interval with the
-  actual guarantee is the Howard `ci_hcs` (§1.1); `ci_eb` is fixed-n and kept
-  for A/B continuity only.
+  rigorous guarantee is the Howard strict track `ci_hcs_strict` (Track B, §1.1),
+  with `ci_hcs` (Track A) read alongside as a width-matched diagnostic; `ci_eb`
+  is fixed-n and kept for A/B continuity only.
 
 ### 5.2 Pooling weights — three modes (`ROSL_WEIGHT_MODE`)
 
@@ -467,6 +510,29 @@ legality is untouched — only weight efficiency depends on its value.
 
 ### 5.3 Per-arm accumulators and the two-stage interval
 
+**Sampling units (read first — "unit" is overloaded here).** The two-stage
+interval is a textbook two-stage / cluster-sampling variance, and it rests on
+two different notions of "unit" that must be kept apart:
+
+- **Primary sampling units = the outer tuples `r ∈ M` (the "arms").** `M` is a
+  uniform *without-replacement* draw of `m` primary units from the `N_R`-tuple
+  outer population, each held fixed for the whole run (I1). The between-arm
+  variability among these `m` units is what the M-lottery (stage-2) interval
+  prices, and it is why that stage carries the `(1 − m/N_R)` finite-population
+  correction — the without-replacement correction for drawing `m` of `N_R`
+  primary units.
+- **Rounds `t = 1 … T` (K-blocks) are the replication / time axis, not primary
+  units.** Each round estimates a little more of every arm's inner degree
+  `deg_S(r)`; `ci_within` and the Howard CS accumulate *across rounds*, within
+  the fixed `M`. Rounds are the second sampling stage in the classical sense
+  (sampling *within* a primary unit), never a fresh primary-unit draw.
+
+So the decomposition is: **stage 1 is within a primary unit** (estimate each
+arm's `deg_S(r)` from its rounds), and **stage 2 is between primary units**
+(the arm set `M` is only a sample of `R`, so the arm-set truth `J_M` differs
+from the realized `J`). `ci_within` is the across-rounds interval; `ci_between`
+is the across-arms interval.
+
 `M` is fixed, so `reward[]`/`attempts[]` accumulate across **every** round and
 feed the frozen predictor. Two O(m) per-arm accumulators support the M-lottery
 interval, updated in `finalize_round_single_m` over the cache:
@@ -479,15 +545,26 @@ A2(r) += (1[r ∈ C_t] · c_t(r)/π_t(r))²       →  within-arm noise ν̂(r)
 Memory is O(m) doubles, bounded by the same `work_mem` budget that sizes `M`.
 `PrintRoslCounters` assembles the two-stage interval (`pop = num_outer · num_inner`):
 
-- **Stage 1 (within-M):** `ci_within = ci_halfwidth`, the existing
-  König–Huygens self-normalized (Hadad Eq. 11) half-width re-based on the
-  weighted rounds. `p_m_hat = μ̂`.
-- **Stage 2 (M-lottery):**
-  `S²_between = max(0, sample-var_r(Q̂(r)) − mean_r ν̂(r))` (de-noised
-  between-arm degree variance), `Var_stage2 = (1 − m/N_R)·S²_between/m`,
+- **Stage 1 (within a primary unit, across rounds):** `ci_within =
+  ci_halfwidth`, the existing König–Huygens self-normalized (Hadad Eq. 11)
+  half-width re-based on the weighted rounds. The `1.96` is a normal quantile:
+  the Hadad adaptively-weighted estimator is asymptotically normal, so this
+  interval is an asymptotic (and fixed-horizon) one, which is exactly why it is
+  coverage-scored on exhausted runs only (I5). `p_m_hat = μ̂`.
+- **Stage 2 (M-lottery, between primary units):**
+  `S²_between = max(0, sample-var_r(Q̂(r)) − mean_r ν̂(r))`. The raw between-arm
+  spread `sample-var_r(Q̂(r))` overstates the true between-primary-unit variance
+  because each `Q̂(r)` is itself only an estimate; subtracting the mean
+  within-arm estimation noise `mean_r ν̂(r)` de-noises it back to the true
+  spread (the standard two-stage identity: observed between-unit variance = true
+  between-unit variance + mean within-unit sampling variance).
+  `Var_stage2 = (1 − m/N_R)·S²_between/m` applies the without-replacement
+  finite-population correction for the `m`-of-`N_R` primary-unit draw;
   `ci_between = 1.96·pop·√Var_stage2`.
-- **Total:** `ci_total = √(ci_within² + ci_between²)` — the headline interval
-  whose coverage against realized `J` is the number to score. `ci_within` alone
+- **Total:** `ci_total = √(ci_within² + ci_between²)` — the headline
+  *fixed-horizon* interval, whose coverage against realized `J` on exhausted
+  runs is the number to score (at a data-dependent stop the guarantee-bearing
+  interval is instead the Howard `ci_hcs_strict`; §1.1/I5). `ci_within` alone
   is **expected** to under-cover on skewed cells by exactly the stage-2 term;
   that under-coverage is a prediction to verify, not a bug.
 
@@ -634,8 +711,9 @@ worker, and chart script:
 > baseline being compared also planner-scales its truncated runs; verify that
 > before leaning on it. Fixed-horizon intervals (`ci_halfwidth`, and single-M
 > `ci_within`/`ci_total`) still carry no guarantee at a data-dependent stop:
-> score their coverage on `run_complete=1` runs only, and read `ci_hcs` (§1.1)
-> at LIMIT stops and mid-run looks. In single-M, output is confined to
+> score their coverage on `run_complete=1` runs only, and read the Howard CS
+> (§1.1) at LIMIT stops and mid-run looks — `ci_hcs_strict` for the rigorous
+> guarantee, `ci_hcs` as its width-matched diagnostic. In single-M, output is confined to
 > `M × S`, so paper-cap runs mostly end exhausted — conveniently the regime
 > where the fixed-horizon intervals are valid (I5).
 
