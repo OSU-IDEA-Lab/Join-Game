@@ -30,7 +30,7 @@ The worker's trajectory schema is:
 
 Usage Examples:
     python3 test/accuracy_charts.py --results_dir 6_18_floor_50 --epsilon_floor 0.5 --limit ON
-    python3 test/accuracy_charts.py --results_dir 7_7_ProbNFailure_FlatAW_NewTestScript_ --epsilon_floor 0.2 --limit ON
+    python3 test/accuracy_charts.py --results_dir /data/jinjo/alt/Join-Game/7_8_SingleM_AdaptiveWeights_HowardCI_ --epsilon_floor 0.2 --limit ON
 """
 
 import argparse
@@ -103,6 +103,9 @@ def main():
                         help="Whether the sweep applied output limits: 'ON' (default) uses "
                              "each query's cap from QUERY_LIMITS for the title; 'OFF' labels "
                              "the run as unlimited. The limit is not stored per row.")
+    parser.add_argument('--algo_name', type=str, default=None,
+                        help="Algorithm name to include in chart titles and "
+                             "output filenames (e.g., ROSL, Wander-Join)")
     parser.add_argument('--ci_col', type=str, default=None,
                         help="Trajectory column to use for the CI band "
                              "(default: ci_eb if present, else ci_halfwidth)")
@@ -267,7 +270,8 @@ def main():
         ax.set_ylabel('Estimator Error %', fontsize=14)
 
         size_part = f" on TPC-H {sz}GB" if size_present else ""
-        ax.set_title(f"{q} with limit {lim}{size_part}, z={z} / "
+        algo_part = f"{args.algo_name}: " if args.algo_name else ""
+        ax.set_title(f"{algo_part}{q} with limit {lim}{size_part}, z={z} / "
                      f"eps_floor={args.epsilon_floor}", fontsize=18)
 
         # ── legend: shuffle lines, marker-shape key, CI band ──────────────
@@ -294,7 +298,8 @@ def main():
         clean_q   = q.replace(' ', '_')
         clean_lim = str(lim).replace(' ', '_')
         size_tag  = f"_sz{sz}" if size_present else ""
-        out_name  = f"accuracy_{clean_q}{size_tag}_z{z}_lim{clean_lim}.png"
+        algo_tag  = f"{args.algo_name.replace(' ', '_')}_" if args.algo_name else ""
+        out_name  = f"accuracy_{algo_tag}{clean_q}{size_tag}_z{z}_lim{clean_lim}.png"
         out_path  = os.path.join(results_dir, out_name)
         plt.savefig(out_path, dpi=300)
         plt.close()
