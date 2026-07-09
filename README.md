@@ -368,6 +368,30 @@ scale of §2.3). None feeds back into `μ̂`.
   pooled noise (a finite-sample proxy for the Lindeberg condition behind the
   normal approximation).
 
+**At a glance.** The intervals differ along two axes that are otherwise spread
+across §2.5, §2.8, and §2.9 — what kind of validity each has, and which point
+estimate each brackets:
+
+| Interval | Validity type | Centered on | Valid at a data-dependent stop? |
+|----------|---------------|-------------|---------------------------------|
+| `ci_halfwidth` | fixed-horizon (self-normalized) | `Ĵ` | No |
+| `ci_clust` | fixed-horizon (block-clustered) | `Ĵ` | No |
+| `ci_split` | fixed-horizon (split-half floor) | `Ĵ` | No |
+| `ci_noise` | fixed-horizon (noise-only) | `Ĵ` | No |
+| `ci_eb` (CS) | **anytime-valid** (proven under `ROSL_CS_ANALYTIC_B = 1`) | `est_eb` | **Yes — for its prefix target** |
+| `ci_mp` | fixed-`n` (legacy Maurer–Pontil, A/B only) | `est_eb` | No |
+
+`het_ratio` and `lindeberg_max` are diagnostics, not intervals. Two things the
+table compresses: (a) `ci_eb` is the **only** interval valid at a
+data-dependent stop, and only for **its own** target — the prefix mean `est_eb`
+brackets (the running average slice rate over rounds seen so far), which equals
+full-`J` only insofar as the prefix is representative (§2.9); under
+`ROSL_CS_ANALYTIC_B = 0` even that degrades to a heuristic. (b) `ci_eb`/`ci_mp`
+center on `est_eb`; everything else centers on `Ĵ` — score coverage
+accordingly. Empirical coverage on the TPC-H z1 schemas is the practical gate
+and is still pending (§2.9), so these validity labels are the intervals'
+*designed* guarantees, not yet measured coverage.
+
 ### 2.9 Known limitations / open points
 
 - The round-level `ci_halfwidth` treats rounds as the independence unit and
@@ -592,10 +616,17 @@ band and **its own** centering estimate — score `ci_eb` coverage against
 `het_ratio` (heterogeneity diagnostic; `−1` = undefined), `lindeberg_max`
 (Lindeberg telemetry), `n_blocks` (the clustering `G`), `ci_mp` (legacy MP
 band, A/B only), `cs_b`/`cs_v` (the CS range envelope and intrinsic time, for
-offline boundary recomputation). `run_complete` is the **last** key=value
-token on every summary path, so existing positional eyeballing of old logs is
-undisturbed, and it parses with the harness's existing `key=value` regex — no
-worker change needed.
+offline boundary recomputation). The `cs_b` token carries the **predictable
+running-max envelope `cs_bmax`** — the value the boundary actually uses on the
+default `ROSL_CS_ANALYTIC_B = 1` path — not the single-round `cs_b`; to
+reproduce the half-width offline, feed `cs_boundary` this value as `b`, `cs_v`
+(floored at `ROSL_CS_V_MIN`) as `v`, the round count as `n`, and the **per-side**
+level `ROSL_CS_ALPHA / 2`. (On the `ROSL_CS_ANALYTIC_B = 0` heuristic path the
+boundary instead uses the realized `eb_max`, which is not emitted, so the
+summary alone cannot reproduce that band.) `run_complete` is the **last**
+key=value token on every summary path, so existing positional eyeballing of old
+logs is undisturbed, and it parses with the harness's existing `key=value`
+regex — no worker change needed.
 
 If the outer relation was empty or no round ever completed:
 
