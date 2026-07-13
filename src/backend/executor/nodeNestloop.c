@@ -66,9 +66,9 @@
  * ----------------------------------------------------------------
  */
 
-#define PGNST8_LEFT_PAGE_MAX_SIZE (1588/3)*1  //(1588/3)*1
+#define PGNST8_LEFT_PAGE_MAX_SIZE 100  //(1588/3)*1
 #define OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 3 * PGNST8_LEFT_PAGE_MAX_SIZE// 3226 // In Memory Size Right Table Cache Size, used for exploration. 
-#define MUST_EXPLORE_TUPLE_COUNT_N 1588 //3226 // Number of tuples that must be explored before Exploitation can happen. 
+#define MUST_EXPLORE_TUPLE_COUNT_N 1499 //3226 // Number of tuples that must be explored before Exploitation can happen. 
 #define FAILURE_COUNT_N 100 // Number of failures allowed during exploration, before jumping into next outer tuple, for exploration
 
 static void calculateConfidenceInterval(NestLoopState *node) {
@@ -563,34 +563,53 @@ ExecNestLoop(PlanState *pstate)
 			}
 
 			// elog(INFO, "The total prob is %f", total_prob_e_exploit);
+			double cum_prob = 0.0;
+			int    lo, hi, mid, chosen;
 			
-			if (total_prob_e_exploit != 1.0) {
-				for (i = 0; i < node->numExplored; i++) {
-					if (node->outertupleinfo[i].estimate_flag != 2){
-						node->outertupleinfo[i].prob_e_exploit /= total_prob_e_exploit;
-						node->outertupleinfo[i].exploit_reward_ratio = node->outertupleinfo[i].prob_e_exploit;
-					}
+			for (i = 0; i < node->numExplored; i++) {
+				if (node->outertupleinfo[i].estimate_flag != 2){
+					node->outertupleinfo[i].prob_e_exploit /= total_prob_e_exploit;
+					node->outertupleinfo[i].exploit_reward_ratio = node->outertupleinfo[i].prob_e_exploit;
+					cum_prob += node->outertupleinfo[i].prob_e_exploit;
+    				node->outertupleinfo[i].cum_prob = cum_prob;
 				}
-			} 
+			}
 			
 			int j = 0;
 			int count = -1;
 			double total = 0.0;
 			
 
-			for(i=0; i < PGNST8_LEFT_PAGE_MAX_SIZE; i++){
+			for (i = 0; i < PGNST8_LEFT_PAGE_MAX_SIZE; i++)
+			{
 				randomValue = (double) rand() / ((double) RAND_MAX + 1.0);
-				total = 0.0;
-				for(j=0; j<MUST_EXPLORE_TUPLE_COUNT_N; j++){
-					total += node->outertupleinfo[j].prob_e_exploit;
-					if(total >= randomValue){
-						if (TupIsNull(outerPlan->Exploit_cache[i])) {outerPlan->Exploit_cache[i] = MakeSingleTupleTableSlot(outerPlan->oslBnd8_currExploreTuple->tts_tupleDescriptor);}				
-						ExecCopySlot(outerPlan->Exploit_cache[i], outerPlan->pgNst8LeftPage[j]);
-						outerPlan->exploitCacheIndex[i] = i;
-						outerPlan->exploitCacheSize++;
-						outerPlan->exploitCacheHead = outerPlan->exploitCacheSize;
-						break;
+
+				lo = 0;
+				hi = MUST_EXPLORE_TUPLE_COUNT_N - 1;
+				chosen = -1;
+
+				while (lo <= hi)
+				{
+					mid = lo + (hi - lo) / 2;
+					if (node->outertupleinfo[mid].cum_prob >= randomValue)
+					{
+						chosen = mid;
+						hi = mid - 1;
 					}
+					else
+						lo = mid + 1;
+				}
+
+				if (chosen >= 0)
+				{
+					if (TupIsNull(outerPlan->Exploit_cache[i]))
+						outerPlan->Exploit_cache[i] =
+							MakeSingleTupleTableSlot(outerPlan->oslBnd8_currExploreTuple->tts_tupleDescriptor);
+
+					ExecCopySlot(outerPlan->Exploit_cache[i], outerPlan->pgNst8LeftPage[chosen]);
+					outerPlan->exploitCacheIndex[i] = i;
+					outerPlan->exploitCacheSize++;
+					outerPlan->exploitCacheHead = outerPlan->exploitCacheSize;
 				}
 			}
 			elog(INFO, "The exploit cache size is %d", outerPlan->exploitCacheSize);

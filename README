@@ -1,27 +1,96 @@
-PostgreSQL Database Management System
-=====================================
+# Code Explanation: Modified nodeNestloop.c
 
-This directory contains the source code distribution of the PostgreSQL
-database management system.
+This file replaces PostgreSQL's standard nested loop join with a sampling version. Each outer (left table) row is treated like a slot machine arm: comparing it against one inner (right table) row is a pull, and a match is a reward. The code first explores a batch of outer rows to learn which ones produce matches, then exploits the productive ones, and the whole time it maintains a running estimate of how big the full join result would be.
 
-PostgreSQL is an advanced object-relational database management system
-that supports an extended subset of the SQL standard, including
-transactions, foreign keys, subqueries, triggers, user-defined types
-and functions.  This distribution also contains C language bindings.
+Two things to know about the setting before reading the code. First, the PostgreSQL executor is pull-based: the parent operator calls `ExecNestLoop` every time it wants one more result row, so the function must return after each match and resume from saved state on the next call. That is why so much bookkeeping lives in the node's state instead of local variables. Second, a "tuple" is just a row, and a `TupleTableSlot` is a container holding one row in memory.
 
-PostgreSQL has many language interfaces, many of which are listed here:
+## Constants
 
-	https://www.postgresql.org/download
+```c
+PGNST8_LEFT_PAGE_MAX_SIZE 100          // outer tuples kept in the exploitation cache
+OSL_BND8_RIGHT_TABLE_CACHE_MAX_SIZE 300 // inner tuples cached during exploration
+MUST_EXPLORE_TUPLE_COUNT_N 1225        // outer tuples explored per batch
+FAILURE_COUNT_N 100                    // failed comparisons before giving up on an outer tuple
+```
 
-See the file INSTALL for instructions on how to build and install
-PostgreSQL.  That file also lists supported operating systems and
-hardware platforms and contains information regarding any other
-software packages that are required to build or run the PostgreSQL
-system.  Copyright and license information can be found in the
-file COPYRIGHT.  A comprehensive documentation set is included in this
-distribution; it can be read as described in the installation
-instructions.
+## LogSlotRelation
 
-The latest version of this software may be obtained at
-https://www.postgresql.org/download/.  For more information look at our
-web site located at https://www.postgresql.org/.
+A small helper that walks down a child plan node, skipping over Materialize wrappers, until it reaches an actual table scan (sequential scan, index scan, etc.) and returns the name of the table being scanned. It exists so log messages can say which relations are being joined. Note it is declared to return `char*` but has bare `return;` statements in the non-scan branches.
+
+## seedToExploitLeftPage (exploration phase)
+
+This function explores one batch ("page") of outer tuples. It gets re-entered every time it returns a match, so the flag `oslBnd8_ExplorationStarted` guards the initialization block: on the first entry for a new page it rescans the inner table and zeroes all the counters; on re-entries it skips straight to the loop.
+
+The main loop runs until the outer table is fully read or the batch reaches 1225 explored tuples. Inside it:
+
+**Getting a new outer tuple.** When `nl_NeedNewOuter` is set, the code pulls the next outer row via `ExecProcNode(outerPlan)`, copies it into `oslBnd8_currExploreTuple` so it survives across calls, resets the per-tuple reward and failure counters, and zeroes out that tuple's statistics record in `outertupleinfo[outerTupIdx]`. It also copies the outer row's join key values into the parameter slots the inner scan reads from (the `nestParams` loop), which is standard PostgreSQL plumbing.
+
+**Getting an inner tuple.** Instead of scanning the inner table fresh for every outer tuple, the code fills an in-memory cache (`oslBnd8RightTableCache`, up to 300 rows) the first time through, then serves inner tuples out of that cache. `oslBnd8RightTableCacheHead` is the read cursor; when it catches up to `oslBnd8RightTableCacheSize` and the cache is not yet full, one more inner row is pulled and appended.
+
+**Testing the pair.** `ExecQual(joinqual, econtext)` evaluates the join condition. Either way, the trial is recorded: the tuple's `explore_num_trails` and the global step counter `T_steps` increment, and a per-trial record is written into `outerestinfo[total_trails]` holding the outcome `Y` (1 for match, 0 for miss) and `e_value`, the selection probability in effect at that moment (copied from `explore_reward_ratio`). On a match the various success counters increment (`explore_success_count`, `overallCount`, etc.), and every 100 total matches `calculateConfidenceInterval` is called to refresh the estimate. On a miss the failure counter increments.
+
+**The selection probability math.** Once a tuple has been tried about 100 times, the code snapshots its failure count into `explore_Nvalue` and its empirical match rate into `p_r`. From then on, `explore_reward_ratio = 1 - (1 - p_r)^N`, the probability of seeing at least one success in N tries at rate p_r. Before enough trials have accumulated, the ratio defaults to 1. This value is what gets stored as `e_value` on each trial and later used to unbias the estimate. Note this formula is not itself an estimator of the join size; it is a parametric plug-in (a geometric model of "at least one success in N trials") used to construct the sampling probabilities that the estimation machinery later corrects for.
+
+**Moving on.** Exploration of the current outer tuple ends when either the inner cache is exhausted for it or its failures exceed `FAILURE_COUNT_N` (this is the early cutoff for unproductive rows). The tuple is then copied into the left page (`pgNst8LeftPage`) with its reward in `pgReward` and its index in `outerIndex`, `numExplored` increments, and its contribution is added to either `total_zeros` (no matches seen) or `totalReward` (matches seen). These two totals feed the exploitation probabilities later. The next tuple's initial `explore_reward_ratio` is also seeded from the current tuple's stats.
+
+If a match was found, the function immediately projects and returns the joined row. When the loop finally exits (batch complete or outer table done), `oslBnd8_ExplorationStarted` is cleared so the next page starts fresh.
+
+## ExecNestLoop (main entry point and exploitation phase)
+
+Called once per requested result row. Structure:
+
+**Termination.** If `numExplored >= numOuterTuples`, every outer tuple has been processed and the join returns NULL, signaling completion.
+
+**Starting a new page.** When `nl_needNewOuterPage` is set, it calls `seedToExploitLeftPage`. If exploration returned a match, that row is passed straight through. Otherwise exploration for this page is finished, and the code builds the exploitation probabilities (detailed in the next section). Tuples already frozen from prior pages (`estimate_flag == 2`) are skipped. Finally, the first 100 explored tuples are copied from the left page into the exploitation cache `Exploit_cache`.
+
+**Choosing an outer tuple.** During exploitation, outer tuples come from `Exploit_cache`, not from the table. `exploitCacheHead` walks downward through the cache and wraps back to the top when it hits zero, so the cached tuples are cycled through repeatedly.
+
+**Choosing an inner tuple.** The pattern is inverted from a normal nested loop: instead of one outer row against all inner rows, one inner row is tested against all cached outer rows. On the first cache position of each cycle, a fresh inner tuple is pulled from the inner table and stashed in `pgNst8_innertuple[0]`; the rest of the cycle reuses that stashed tuple. So each pass over the cache consumes exactly one inner row.
+
+**Inner table exhausted.** A NULL inner tuple means the page is done. All current tuples get `estimate_flag = 2`, which freezes their statistics out of future probability recalculations, and `nl_needNewOuterPage` is set so the next call starts exploring the next page. (The LEFT/ANTI join null-padding block here is retained from stock PostgreSQL.)
+
+**Testing the pair.** Same as exploration but recorded in the exploit-side counters: `exploit_num_trails`, `total_trails`, and `T_steps` increment on every comparison; on a match, `exploit_success_count` and `overallCount` increment, the estimate refreshes every 100 matches, and the joined row is projected and returned. The tuple being credited is identified through `exploitCacheIndex[exploitCacheHead]`, which maps a cache position back to the tuple's global index in `outertupleinfo`.
+
+## The Exploitation Probability Calculation
+
+Strictly speaking, this part is not one of the survey estimators. It is the sampling design: the thing the estimators later correct for. But it is built from recognizable pieces:
+
+**A plain empirical count (maximum likelihood plug-in).** Each tuple's exploitation probability comes from `explore_success_count / totalReward`, its observed success count as a share of all successes seen in exploration. No inverse weighting, no shrinkage, no confidence bonus. It is the naive frequentist plug-in estimate of relative productivity.
+
+**A PPS-style allocation (probability proportional to size).** Sampling effort is allocated proportionally to observed reward, the classic probability-proportional-to-size design from survey sampling, except "size" here is the empirically estimated reward rather than a known auxiliary variable.
+
+**An epsilon-greedy smoothing floor.** Ninety percent of the probability mass goes proportionally to tuples with observed successes, and ten percent is split evenly among the zero-reward tuples (`0.1 / total_zeros`). This is the same idea as epsilon-greedy in bandits or additive smoothing in estimation: zero observed successes on a small sample does not mean a zero true rate, so those arms keep a floor probability rather than being permanently starved.
+
+The whole distribution is then normalized to sum to 1, and each tuple's probability is stored into both `prob_e_exploit` and `exploit_reward_ratio`. The latter is what enters the estimation machinery as the `e_value` for exploit-phase trials.
+
+Two properties worth knowing. First, this is a greedy policy, not UCB or Thompson sampling: there is no uncertainty term, so a tuple that got lucky early keeps its inflated share for the rest of the page (probabilities freeze once `estimate_flag` hits 2). Second, there is a design/execution mismatch: the code computes these probabilities, but the exploitation loop actually cycles through the cache deterministically rather than sampling from them. The probabilities therefore function as importance weights fed to the estimator rather than as a realized sampling distribution, and the inverse-probability correction is only exact to the extent the deterministic cycling approximates uniform allocation across the cache.
+
+## calculateConfidenceInterval (the estimator)
+
+Runs every 100 matches. The goal: estimate the average probability that a random outer/inner pair matches, then multiply by `numOuterTuples * numInnerTuples` (planner row estimates captured at init) to get the estimated total join size.
+
+A plain average of observed outcomes would be biased, because the algorithm deliberately oversamples productive tuples. The fix is inverse probability weighting, done in layers. Each layer corresponds to a named technique from sampling theory:
+
+**Horvitz-Thompson correction (inverse probability weighting).** The core fix. For every recorded exploration trial, the code computes a weight `h_value = sqrt(e_value / T_steps)`, then accumulates `h_value * Y / e_value` in the numerator, where `Y` is 1 for a match and 0 for a miss and `e_value` was the selection probability when the trial happened. Dividing the outcome by its selection probability is the Horvitz-Thompson idea: rarely sampled observations count for more, cancelling the bias introduced by oversampling productive tuples. Exploit-phase trials use `exploit_reward_ratio` as their `e_value` and are folded in as bulk terms: the numerator gains `exploit_success_count * sqrt(exploit_reward_ratio / T_steps)` and the denominator gains `exploit_num_trails * sqrt(exploit_reward_ratio / T_steps)`.
+
+**Hajek (self-normalized) form.** The per-tuple mean is not the weighted sum divided by a fixed sample size; it is `mean_numr / mean_denr`, where the denominator is the sum of the `h_value` weights. Normalizing by the sum of weights instead of the trial count makes this a ratio-style, self-normalized estimator rather than pure Horvitz-Thompson. This is the standard move when selection probabilities are small and noisy: you accept a slight bias to cut variance substantially.
+
+**Stratified pooling.** Each outer tuple acts as a stratum. Per-tuple means are combined weighted by their total trial counts, summed across tuples, and divided by `T_steps`, so the effort spent on a tuple determines its weight in the overall mean. Multiplying the result by `total` gives `est_count`, the point estimate of the join size.
+
+**Normal-approximation confidence interval.** For each tuple, a variance is computed from the squared deviation of its total success count from its mean, divided by its trial count. Per-tuple variances are pooled (weighted by trial counts) into an overall variance, the standard error is `sqrt(overall_variance / T_steps)`, and a 95 percent interval is `mean ± 1.96 * SE`, with both endpoints scaled by `total`. This is a straight central-limit-theorem interval, nothing survey-specific.
+
+**What is not in here.** No Des Raj estimator (nothing tracks draw order or builds ordered per-draw estimates), no Hansen-Hurwitz in its pure form (that would divide by n rather than the weight sum), and no wander-join or ripple-join style estimator despite the similar setting. If naming the method in a writeup, the accurate description is: a self-normalized (Hajek-style) Horvitz-Thompson estimator with stratification over outer tuples, using adaptively constructed selection probabilities from the bandit policy.
+
+**Ground truth comparison.** The block of commented `actual_count` values holds the true join sizes for the benchmark queries used in experiments (TPC-H queries at 10 GB, and Cars/WDC/Movies similarity joins at various edit-distance levels); one line is uncommented per experiment. The function logs `x`, the percentage of the true result produced so far, and `y`, the relative error of the current estimate, followed by the raw count and the interval bounds. Note the `if (outerRelation != NULL) return;` line just before the logging, which suppresses output whenever the outer relation name resolves; it acts as a debug toggle.
+
+## ExecInitNestLoop
+
+Stock initialization (state node creation, child plan init, projection, join quals, null slot setup for outer joins) plus the custom parts: all the phase flags and cache cursors on the outer plan state are zeroed, `numOuterTuples` and `numInnerTuples` are captured from the planner's `plan_rows` estimates, and the statistics arrays are allocated with `palloc`: 100,000 `tupleInfo` structs, each pointing to 1,000 per-trial `estInfo` records. These are fixed sizes, so outer tables beyond 100,000 rows or tuples exceeding 1,000 recorded trials would overrun them.
+
+## ExecEndNestLoop
+
+Teardown in reverse: drops every allocated tuple slot (the left page, the exploitation cache, the stashed inner tuple, the right table cache, the current exploration tuple), frees the 100,000 `outerestinfo` arrays and then `outertupleinfo` itself, and shuts down both child plans.
+
+## ExecReScanNestLoop
+
+Unmodified from stock PostgreSQL: rewinds the outer child if needed and resets the need-new-outer flags. It does not reset any of the bandit or estimation state.

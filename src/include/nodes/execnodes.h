@@ -1820,6 +1820,7 @@ struct tupleInfo {
 	double mean_denr;
 	unsigned int total_trails;
 	unsigned int estimate_flag;
+	float cum_prob;
 	struct estInfo* outerestinfo;
 };
 
